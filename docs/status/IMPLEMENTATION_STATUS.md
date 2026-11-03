@@ -25,7 +25,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | Phase 0 — contracts | State machine v1.1, schemas, prompts, content, fixtures, ADR-011–020, threat-model addendum, OpenAPI, test plan, hygiene checks, CI | **Verified (local)**: `make checks`, `make contracts-test` (117 tests). Human review pending |
 | M2 — Go engine, config, logging | Pure flow engine from the embedded contract; ADR-020 config refusals; redacting logger; HTTP plumbing; architecture tests | **Verified (local)**: `make go-lint` (vet + staticcheck), `make go-test` (model-based walk over 3,000 seeds: 208 completions / 2,792 cancellations with every invariant checked; fuzzing; refusal matrix; log sentinels) |
 | M3 — Schema, roles, transition service | Phase-1 schema with DB-enforced INV-1/INV-9, append-only triggers, least-privilege roles; transactional transition service (row lock + `state_version`, per-step events and audit, outbox with contract validation); ingestion with speech-time attribution; completion protocol; leases with fencing | **Verified (local)**: `make go-test` against PostgreSQL 16 as the real application role (privilege matrix, lifecycle, button/deadline paths, pause/resume, withdrawal, expiry, consent, attribution, concurrency storms, compromised-agent suite) |
-| M4 — Auth, API, LiveKit, ingestion, completion | | Not started |
+| M4 — Auth, API, LiveKit, ingestion, completion | Two listeners; staff/candidate/agent authentication; idempotency keys; invitation rate limit; LiveKit rooms, mic-only tokens, server-side dispatch with nonce-only metadata, claim verification, signed and deduplicated webhooks; Tier-1 context via restricted views; metrics; sweepers; binaries | **Verified (local)** against PostgreSQL with a fake media layer: HTTP flow to completion, cross-candidate/tenant isolation, CSRF, listener separation, idempotency replay/reuse, claim attacks, fencing, webhook trust, rate limiting, log sentinels, OpenAPI route parity. Real LiveKit wiring: see M7 |
 | M5 — Recording | | Not started |
 | M6 — Tier-1 agent | | Not started |
 | M7 — Media E2E | | Not started |
@@ -52,11 +52,11 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | G14 | Rubric and weights (BP §7) | Contract **Verified (local)** (weights consistent across documents) | Phase 2 |
 | G15 | Tier-1 prompt and runtime context (BP §8, P&E §1) | Contract **Verified (local)** (verbatim prompt + sha256; context allowlist) | M6 |
 | G16 | Tier-2 prompt (P&E §2) | Contract **Verified (local)** (verbatim + sha256) | Phase 2 |
-| G17 | Adversarial controls (BP §9) | Contract **Verified (local)** (single request reachable by the model) | M4, M6 |
+| G17 | Adversarial controls (BP §9) | Backend **Verified (local)** (authZ per transition, compromised-agent suite, claim attacks, webhook spoofing) | Model-level prompt injection: M6, live model blocked |
 | G18 | Coding sandbox, whiteboard (BP §10) | Not started | Phase 4 |
 | G19 | HITL routing, override audit (BP §11) | Not started | Phase 2, 5 |
 | G20 | Data entities, transcript immutability (BP §13) | **Verified (local)** | Append-only grants + triggers tested even for the owner; answers bind exact segment IDs |
-| G21 | API surface (BP §17) | Contract **Verified (local)** (OpenAPI 3.1) | M4 |
+| G21 | API surface (BP §17) | **Verified (local)** for implemented endpoints | `internal/api` tests; text responses return 501 until M9 |
 | G22 | Observability (BP §16) | Not started | M2–M7 |
 | G23 | QA/chaos matrix (BP §18) | Plan **Verified (local)** ([TEST_PLAN.md](../qa/TEST_PLAN.md)) | Per test plan |
 | G24 | Text/non-audio fallback (TM §4–5) | Contract **Verified (local)** | M9 |

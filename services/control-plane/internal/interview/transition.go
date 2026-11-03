@@ -481,5 +481,13 @@ func (s *Service) persist(ctx context.Context, oc *opCtx) error {
 		}
 	}
 	oc.sess.StateVersion = oc.startVersion + n
+	if s.observer != nil {
+		steps := append([]step(nil), oc.steps...)
+		*oc.after = append(*oc.after, func(context.Context) {
+			for _, st := range steps {
+				s.observer(st.tr.ID, st.actor)
+			}
+		})
+	}
 	return nil
 }

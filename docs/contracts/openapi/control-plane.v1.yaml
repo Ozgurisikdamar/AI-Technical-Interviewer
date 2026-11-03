@@ -80,7 +80,12 @@ paths:
     post:
       tags: [candidate]
       operationId: exchangeInvitation
-      summary: Exchange a single-use invitation token for a candidate session cookie (user click only).
+      summary: Exchange an invitation token for a candidate session cookie (user click only).
+      description: |
+        Allowed until the invitation expires. Each exchange issues a fresh session cookie and revokes any earlier
+        candidate session; only the first exchange moves CREATED to CONSENT_PENDING. The Idempotency-Key header is
+        required for uniformity, but responses are never replayed from storage, because that would mean persisting
+        a session token. A retry simply yields a new valid cookie. Rate-limited per client address.
       security: []
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
@@ -285,6 +290,7 @@ paths:
       tags: [candidate]
       operationId: submitTextResponse
       summary: Text-mode answer bound to the open activation (ADR-018). Stored by the control plane as a candidate segment.
+      description: Returns 501 until text response mode is implemented (see docs/status/IMPLEMENTATION_STATUS.md).
       security: [{candidateSession: []}]
       parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
@@ -301,6 +307,7 @@ paths:
         '401': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
         '409': {$ref: '#/components/responses/Problem'}
+        '501': {$ref: '#/components/responses/Problem'}
 
   /internal/v1/tier1/claims:
     post:

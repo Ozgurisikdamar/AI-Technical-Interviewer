@@ -75,6 +75,9 @@ type Service struct {
 	now      func() time.Time
 	plans    *planCache
 	notices  *Notices
+	observer Observer
+
+	recordingActive func(ctx context.Context, sessionID string) bool
 }
 
 // New builds the service and verifies that every guard and effect of the contract is implemented.
