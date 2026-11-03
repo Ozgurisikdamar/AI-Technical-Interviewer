@@ -101,6 +101,7 @@ class InterviewController:
         self._delivery: tuple[str, float] | None = None  # (activation, playout start) of the prompt being played
         self._interviewer_segments: dict[str, dict[str, Any]] = {}  # provider item id -> queued segment
         self._confirmed_requests: set[str] = set()
+        self._handled_texts: set[str] = set()
         self._activation_keys: list[str] = []
         self._previous_state: str | None = None
         self._closing_spoken = False
@@ -253,7 +254,8 @@ class InterviewController:
                 self.session.input.set_audio_enabled(True)
             if state == "CALIBRATION" and (not self._greeted or prev == "PAUSED"):
                 self._greeted, self._calibration_heard = True, False
-                await self.engine.speak_free(self.session, prompt.GREETING.get(lang, prompt.GREETING["en"]))
+                greeting = prompt.GREETING_TEXT if ctx["input_mode"] == "text" else prompt.GREETING
+                await self.engine.speak_free(self.session, greeting.get(lang, greeting["en"]))
             if state == "INTERVIEW_COMPLETED":
                 if not self._closing_spoken:
                     self._closing_spoken = True
@@ -271,6 +273,16 @@ class InterviewController:
                     await self.engine.speak_free(self.session, prompt.WELCOME_BACK.get(lang, prompt.WELCOME_BACK["en"]))
                 handle = await self.engine.speak_prompt(self.session, active["text"], active["kind"])
                 self._watch_prompt(active["activation_id"], handle)
+            # Text mode: each written answer reaches the model once, as user input (ADR-018). The
+            # control plane already stored it; the agent never submits it again.
+            for text_input in ctx.get("pending_text_inputs", []):
+                if (
+                    active
+                    and text_input["activation_id"] == active["activation_id"]
+                    and text_input["segment_id"] not in self._handled_texts
+                ):
+                    self._handled_texts.add(text_input["segment_id"])
+                    await self.engine.reply_to_text(self.session, text_input["untrusted_text"])
             pending = ctx.get("pending_completion_request")
             if (
                 pending

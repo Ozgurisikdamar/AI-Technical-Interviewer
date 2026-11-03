@@ -89,3 +89,20 @@ def test_keyboard_only_with_device_loss_and_withdrawal(stack: dict[str, str], st
     reasons = {r[0] for r in db.rows("SELECT reason FROM ati.pause_intervals WHERE session_id = %s", sid)}
     assert "device_lost" in reasons
     assert db.one("SELECT count(*) FROM ati.outbox_events WHERE session_id = %s AND event_type = 'interview.completed'", sid) == 0
+
+
+@requires_playwright
+def test_text_mode_when_the_microphone_is_refused(stack: dict[str, str], staff_token: str, db: Db) -> None:
+    sid = run_flow(stack, staff_token, "text_flow.mjs")["interview_id"]
+    state, mode = db.rows("SELECT state, input_mode FROM ati.interview_sessions WHERE id = %s", sid)[0]
+    assert (state, mode) == ("INTERVIEW_COMPLETED", "text")
+    answers = db.rows(
+        "SELECT item_id, finalization_cause, segment_ids FROM ati.candidate_answers WHERE session_id = %s ORDER BY finalized_at", sid
+    )
+    assert [a[0] for a in answers] == ["q1", "q1f1", "q2", "q3"]
+    assert all(a[1] == "candidate_request" for a in answers)
+    sources = {
+        r[0] for r in db.rows("SELECT DISTINCT source FROM ati.transcript_segments WHERE session_id = %s AND speaker = 'candidate'", sid)
+    }
+    assert sources == {"candidate_text"}  # no speech was transcribed: nothing was published
+    assert db.one("SELECT count(*) FROM ati.audio_recordings WHERE session_id = %s", sid) == 0

@@ -85,18 +85,22 @@ export async function createInvitation() {
   return (await created.json()).invitation_url.split('#token=')[1];
 }
 
-/** Chromium with a fake microphone that loops the pitch-coded WAV; records policy violations. */
-export async function launch() {
+/**
+ * Chromium with a fake microphone that loops the pitch-coded WAV; records policy violations.
+ * microphone: 'granted' (default) or 'denied' (the permission request is refused).
+ */
+export async function launch({ microphone = 'granted' } = {}) {
+  const granted = microphone === 'granted';
   const browser = await chromium.launch({
     args: [
-      '--use-fake-ui-for-media-stream',
+      ...(granted ? ['--use-fake-ui-for-media-stream'] : []),
       '--use-fake-device-for-media-stream',
       `--use-file-for-fake-audio-capture=${FAKE_MIC}`,
       '--autoplay-policy=no-user-gesture-required',
       '--no-proxy-server',
     ],
   });
-  const context = await browser.newContext({ permissions: ['microphone'] });
+  const context = await browser.newContext({ permissions: granted ? ['microphone'] : [] });
   const page = await context.newPage();
   const seen = { violations: [], internalCalls: [], postsWithoutKey: [], pageErrors: [] };
   page.on('console', (m) => {
@@ -120,11 +124,11 @@ export function checkPolicies(seen) {
 }
 
 /** Runs a flow, prints one JSON result line and exits with its status. */
-export async function run(flow) {
+export async function run(flow, options = {}) {
   let browser;
   const result = { interview_id: '' };
   try {
-    const launched = await launch();
+    const launched = await launch(options);
     browser = launched.browser;
     await flow({ ...launched, result });
     checkPolicies(launched.seen);

@@ -91,6 +91,11 @@ GREETING = {
     "en": "Hello, and thank you for joining. Before we begin, could you say a few words so I can confirm I can hear you?",
     "tr": "Merhaba, katıldığınız için teşekkürler. Başlamadan önce sizi duyabildiğimi doğrulamak için birkaç kelime söyler misiniz?",
 }
+# Text mode (ADR-018): the candidate answers in writing and starts with the Begin button.
+GREETING_TEXT = {
+    "en": "Hello, and thank you for joining. You will answer in writing. When you are ready, select Begin.",
+    "tr": "Merhaba, katıldığınız için teşekkürler. Cevaplarınızı yazarak vereceksiniz. Hazır olduğunuzda Başla'yı seçin.",
+}
 CLOSING = {
     "en": "That was the last question. Thank you for your time today; the interview is now complete.",
     "tr": "Bu son soruydu. Bugün ayırdığınız zaman için teşekkürler; mülakat tamamlandı.",

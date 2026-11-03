@@ -127,6 +127,7 @@ class FakeEngine:
         self.session = FakeSession()
         self.spoken: list[tuple[str, str]] = []  # (kind, text)
         self.handles: list[FakeHandle] = []
+        self.user_inputs: list[str] = []  # text-mode answers passed to the model as user input
 
     def build_session(self, *, language: str) -> Any:
         self.language = language
@@ -139,6 +140,9 @@ class FakeEngine:
 
     async def speak_free(self, session: Any, text: str) -> None:
         self.spoken.append(("free", text))
+
+    async def reply_to_text(self, session: Any, untrusted_text: str) -> None:
+        self.user_inputs.append(untrusted_text)
 
 
 class FakeRoom:

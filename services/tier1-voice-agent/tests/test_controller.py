@@ -557,3 +557,30 @@ async def test_metrics_map_to_the_allowed_names(harness: Harness) -> None:
     emit("TTSMetrics", ttfb=-1.0)
     names = [(m["name"], m["value_ms"]) for m in c._metrics]
     assert names == [("voice_ttfa_ms", 210.0), ("voice_ttfb_ms", 400.0), ("voice_ttfb_ms", 300.0), ("voice_end_of_turn_ms", 600.0)]
+
+
+async def test_text_answers_reach_the_model_once_as_user_input(harness: Harness) -> None:
+    c, _, engine = harness(make_ctx("CANDIDATE_SPEAKING", version=20, input_mode="text"))
+    inputs = [
+        {"segment_id": "seg_0123456789abcdefAB", "activation_id": ACT1, "untrusted_text": f"{SENTINEL} first"},
+        {"segment_id": "seg_ABCDEFGHIJKLMNOPqr", "activation_id": ACT1, "untrusted_text": "second"},
+    ]
+    await c._apply(make_ctx("CANDIDATE_SPEAKING", version=21, input_mode="text", pending_text_inputs=inputs[:1]))
+    await c._apply(make_ctx("CANDIDATE_SPEAKING", version=21, input_mode="text", pending_text_inputs=inputs))
+    await c._apply(make_ctx("CANDIDATE_SPEAKING", version=22, input_mode="text", pending_text_inputs=inputs))
+    assert engine.user_inputs == [f"{SENTINEL} first", "second"]
+    assert c.agent is not None and SENTINEL not in c.agent.instructions
+
+
+async def test_text_inputs_of_another_question_are_ignored(harness: Harness) -> None:
+    c, _, engine = harness(make_ctx("CANDIDATE_SPEAKING", version=20, input_mode="text"))
+    stale = [{"segment_id": "seg_0123456789abcdefAB", "activation_id": ACT2, "untrusted_text": "old"}]
+    await c._apply(make_ctx("CANDIDATE_SPEAKING", version=21, input_mode="text", pending_text_inputs=stale))
+    assert engine.user_inputs == []
+
+
+async def test_text_mode_greeting_points_to_the_begin_button(harness: Harness) -> None:
+    c, _, engine = harness(make_ctx("CALIBRATION", input_mode="text"))
+    c._previous_state = None
+    await c._apply(make_ctx("CALIBRATION", version=7, input_mode="text", language="tr"))
+    assert engine.spoken == [("free", prompt.GREETING_TEXT["tr"])]

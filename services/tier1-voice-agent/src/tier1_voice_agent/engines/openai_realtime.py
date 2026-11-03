@@ -60,3 +60,6 @@ class OpenAIRealtimeEngine:
 
     async def speak_free(self, session: AgentSession[None], text: str) -> None:
         session.generate_reply(instructions=f"Say exactly this to the candidate, nothing more:\n«{text}»")
+
+    async def reply_to_text(self, session: AgentSession[None], untrusted_text: str) -> None:
+        session.generate_reply(user_input=untrusted_text)

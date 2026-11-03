@@ -360,9 +360,26 @@ func (s *Server) removeStaleAgents(sessionID string) func(ctx context.Context, r
 	}
 }
 
+// textResponse stores a text-mode answer (ADR-018). The text never travels over LiveKit.
 func (s *Server) textResponse(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.candidate(w, r); !ok {
+	p, ok := s.candidate(w, r)
+	if !ok {
 		return
 	}
-	httpx.WriteProblem(w, r, http.StatusNotImplemented, "not_implemented", "text responses are not available yet")
+	s.idempotent(w, r, p.idemKey(), func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ActivationID string `json:"activation_id"`
+			Text         string `json:"text"`
+		}
+		if err := httpx.DecodeJSON(w, r, &body, maxPublicBody); err != nil {
+			httpx.WriteDecodeError(w, r, err)
+			return
+		}
+		res, err := s.svc.SubmitTextResponse(r.Context(), actorFor(r.Context(), p), p.sessionID, body.ActivationID, body.Text)
+		if err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusCreated, res)
+	})
 }

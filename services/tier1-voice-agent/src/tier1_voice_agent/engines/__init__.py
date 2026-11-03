@@ -55,3 +55,6 @@ class VoiceEngine(Protocol):
         """Deliver an approved prompt; the returned handle identifies its playout (answer window, ADR-014)."""
 
     async def speak_free(self, session: AgentSession[None], text: str) -> None: ...
+
+    async def reply_to_text(self, session: AgentSession[None], untrusted_text: str) -> None:
+        """Text mode (ADR-018): the candidate's text goes to the model as user input, never as instructions."""

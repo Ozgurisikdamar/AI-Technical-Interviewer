@@ -290,7 +290,10 @@ paths:
       tags: [candidate]
       operationId: submitTextResponse
       summary: Text-mode answer bound to the open activation (ADR-018). Stored by the control plane as a candidate segment.
-      description: Returns 501 until text response mode is implemented (see docs/status/IMPLEMENTATION_STATUS.md).
+      description: >-
+        Accepted only in text mode, while a question is open and no completion request is pending; the first answer
+        moves QUESTION_ACTIVE to CANDIDATE_SPEAKING. 409 codes: input_mode_mismatch, not_answering, activation_mismatch,
+        completion_pending. The text reaches the Tier-1 agent only as untrusted user input.
       security: [{candidateSession: []}]
       parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
@@ -306,8 +309,8 @@ paths:
               schema: {$ref: '#/components/schemas/TextResponseAccepted'}
         '401': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
+        '400': {$ref: '#/components/responses/Problem'}
         '409': {$ref: '#/components/responses/Problem'}
-        '501': {$ref: '#/components/responses/Problem'}
 
   /internal/v1/tier1/claims:
     post:

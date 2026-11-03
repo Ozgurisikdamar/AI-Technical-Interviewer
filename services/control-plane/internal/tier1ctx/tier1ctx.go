@@ -97,7 +97,7 @@ func New(pool *pgxpool.Pool, now func() time.Time) *Builder {
 	if now == nil {
 		now = time.Now
 	}
-	return &Builder{pool: pool, now: now, recordingActive: recordingFromView}
+	return &Builder{pool: pool, now: now, recordingActive: recordingFromView, textInputs: textInputsFromView}
 }
 
 // Build returns the validated context for a session.
@@ -182,4 +182,25 @@ func recordingFromView(ctx context.Context, q pgx.Tx, sessionID string) (bool, e
 	var active bool
 	err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM ati.tier1_recording_v WHERE session_id = $1)`, sessionID).Scan(&active)
 	return active, err
+}
+
+// textInputsFromView reads tier1_text_inputs_v: the candidate's text answers to the open question
+// (text mode, ADR-018), oldest first, at most 20. They are untrusted user input for the model.
+func textInputsFromView(ctx context.Context, q pgx.Tx, sessionID string) ([]TextInput, error) {
+	rows, err := q.Query(ctx, `SELECT segment_id, activation_id, untrusted_text FROM (
+		SELECT segment_id, activation_id, untrusted_text, sequence FROM ati.tier1_text_inputs_v WHERE session_id = $1 ORDER BY sequence DESC LIMIT 20
+	) newest ORDER BY sequence`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TextInput{}
+	for rows.Next() {
+		var t TextInput
+		if err := rows.Scan(&t.SegmentID, &t.ActivationID, &t.UntrustedText); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
