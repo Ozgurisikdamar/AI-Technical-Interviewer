@@ -15,8 +15,8 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 
 | ID | Scenario | Phase | Test | Status |
 |---|---|---|---|---|
-| QA-AN-01 | Microphone permission denied | 1 | W: mic-denied path → text mode | Planned (M8) |
-| QA-AN-02 | No microphone device | 1 | W: device check | Planned (M8) |
+| QA-AN-01 | Microphone permission denied | 1 | W: `text_flow.mjs` (permission refused → text mode → completion) | Verified (scripted, loopback) |
+| QA-AN-02 | No microphone device | 1 | W: `mediaErrors.test.ts` (NotFoundError → no device → text mode offered) | Partial: unit-tested; no browser run without a device |
 | QA-AN-03 | Device removed mid-session | 1 | W: `keyboard_flow.mjs` (capture track ends → `device_lost` pause, mic unpublished) | Verified (scripted, loopback) |
 | QA-AN-04 | Browser tab suspended | 6 | — | Phase 6 |
 | QA-AN-05 | 1/5/10% packet loss | 6 | — | Blocked: no `tc`/netem in this environment |
@@ -73,8 +73,8 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | QA-FA-01 | Turkish and English sessions | 1 | C: en/tr plans + notices; A: `test_language_instruction_follows_the_context`, `test_openai_provider_configuration` | Verified (configuration); Turkish speech quality Phase 6 |
 | QA-FA-02 | Code-switching | 6 | — | Phase 6 (needs consented recordings) |
 | QA-FA-03 | Varied accents and speech rates | 6 | — | Phase 6 |
-| QA-FA-04 | Speech disability accommodations | 1 | W: text mode; ADR-018 | Planned (M9) |
-| QA-FA-05 | Text-only alternative | 1 | G + A + W: text responses | Planned (M9) |
+| QA-FA-04 | Speech disability accommodations | 1 | W: text mode; ADR-018 | Text mode Verified (scripted, loopback); broader accommodations Phase 5–6 |
+| QA-FA-05 | Text-only alternative | 1 | G: `TestTextResponsesAreBoundToTheOpenQuestionAndReachTier1AsUntrustedInput`, `TestTextResponsesAreRefusedInVoiceMode`; A: `test_text_answers_reach_the_model_once_as_user_input`; W: `text_flow.mjs` | Verified (W scripted, loopback) |
 | QA-FA-06 | Long thinking pauses | 1 | G/A: answers close only by the tool or the candidate's button, never by silence; A: tool refuses while the candidate speaks | Verified; per-question turn profile not yet applied to the provider |
 | QA-FA-07 | Low-quality microphone | 6 | — | Phase 6 |
 | QA-FA-08 | Screen reader and keyboard navigation | 1 | W: `keyboard_flow.mjs` (keyboard-only path, `aria-live` status, dialog focus) | Verified for keyboard and ARIA wiring; no screen-reader run |
@@ -86,7 +86,7 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | ID | Scenario | Maps to | Status |
 |---|---|---|---|
 | BP18-01 | 1/5/10% loss, high jitter | QA-AN-05/06 | Blocked |
-| BP18-02 | Mic denied, device switch | QA-AN-01/03 | Device loss Verified (W); mic denied → text mode Planned (M9) |
+| BP18-02 | Mic denied, device switch | QA-AN-01/03 | Verified (W, scripted, loopback) |
 | BP18-03 | Refresh and reconnect | QA-AN-08 | Verified (E and W, scripted, loopback) |
 | BP18-04 | Barge-in during speech | QA-AN-09 | Verified (scripted, loopback) |
 | BP18-05 | Duplicate/out-of-order transcript events | QA-SD-01/03 | Verified (G: `TestSegmentIdempotencyAndConflicts` + QA-SD-01/03) |
@@ -99,7 +99,7 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | BP18-12 | Unauthorized API/tool access | G: authZ, cross-tenant, compromised agent | Verified (G: `TestCandidateIsolationAndTenantScoping`, `TestAgentRequestsNeedServiceTokenGrantAndCurrentFencing`, `TestClaimRequiresRealDispatchAndAgentParticipant`, `TestCompromisedAgentCannotEscalate`) |
 | BP18-13 | Concurrent session creation | G: idempotency replay and key reuse | Partial: `TestIdempotencyKeys` Verified; concurrent creation not yet tested |
 | BP18-14 | Appeal after report | — | Phase 5 |
-| BP18-15 | Accessibility and non-audio fallback | QA-FA-05/08 | Planned (M8, M9) |
+| BP18-15 | Accessibility and non-audio fallback | QA-FA-05/08 | Verified: text mode and keyboard/ARIA wiring (W); no screen-reader run |
 | BP18-INV | Voice failure must not corrupt evaluation state | E: provider failure → PAUSED, no finalization | Verified (scripted, loopback) |
 
 ## PROMPT_AND_EVALUATION §8 required automated tests
@@ -117,10 +117,10 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | PE8-09 | Confidence routing | 2 | Phase 2 |
 | PE8-10 | Transcript revision creates new evaluation version | 2 | Phase 2 |
 | PE8-11 | Unsupported claim with no source | 2 | Phase 2 |
-| PE8-12 | Prompt injection in every untrusted input channel | 1–3 | Speech/text Planned (M6, M9); docs/retrieval Phase 2/3 |
+| PE8-12 | Prompt injection in every untrusted input channel | 1–3 | Speech and text: never in instructions (A), scripted injection over media (E); live model Blocked; docs/retrieval Phase 2/3 |
 | PE8-13 | Evaluator disagreement | 2 | Phase 2 |
 | PE8-14 | Human override audit integrity | 5 | Phase 5 |
 
-## Phase-0 contract tests (all Verified, `make contracts-test`)
+## Phase-0 contract tests (all Verified, `make contracts-test`, 120 tests)
 
 Schema meta-validation and fixtures; state-machine structure (closure, determinism, reachability, transient chains, activation balance, INV-3/5/6/8/10, ADR-012 completeness, recording stops); doc drift (diagram ⊆ contract with ADR citations, verbatim prompts with sha256 pins, evaluation schema = document, weights across three documents, accepted ADRs unchanged, generated diagram current); isolation (Tier-1 context forbidden concepts and closed objects, no post-interview states for Tier-1, agent cannot self-attribute, ID-only events); OpenAPI (valid 3.1 with external refs, explicit security, idempotency keys, fencing on lease-bound calls, no scoring surface, problem+json).

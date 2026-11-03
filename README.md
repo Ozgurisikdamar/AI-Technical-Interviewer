@@ -30,14 +30,21 @@ Machine-readable contracts (state machine, JSON Schemas, prompts) live in [contr
 **Pre-production. Not for use with real candidates.** What is built, verified, blocked or not started is tracked in [docs/status/IMPLEMENTATION_STATUS.md](./docs/status/IMPLEMENTATION_STATUS.md), and the test-to-requirement mapping is in [docs/qa/TEST_PLAN.md](./docs/qa/TEST_PLAN.md).
 
 - Phase 0 contracts are implemented and covered by automated tests. They are **Proposed** until human architecture review.
+- The Phase 1 voice MVP (control plane, Tier-1 voice agent, candidate web UI, optional fail-closed recording, text response mode) runs end to end locally with a deterministic **scripted** voice engine over loopback WebRTC. The OpenAI Realtime engine, real recording egress and real networks are not verified here.
 - Latency targets, rubric weights and confidence thresholds remain hypotheses that require benchmarks and human validation.
-- No component makes or recommends hiring decisions.
+- No component makes or recommends hiring decisions; Tier-2 evaluation begins in Phase 2.
 
 ## Development
 
-Requirements: Python 3.12+ with [uv](https://docs.astral.sh/uv/), plus Go 1.26, Node 22 and PostgreSQL 16 as the services land.
+Requirements: Python 3.12+ with [uv](https://docs.astral.sh/uv/), Go 1.26 (the toolchain downloads itself), Node 22 with pnpm, and PostgreSQL 16 binaries for the local test cluster.
 
 ```bash
 make checks          # repository hygiene and import boundaries (standard library only)
 make contracts-test  # contract, drift, isolation and OpenAPI tests
+make go-lint go-test # control plane: gofmt, vet, staticcheck; tests against an ephemeral PostgreSQL
+make agent-test      # Tier-1 agent: ruff, mypy (strict), pytest
+make web-test        # web UI: eslint, tsc, unit tests, production build, bundle scan
+make e2e             # local stack (PostgreSQL, LiveKit OSS, control plane, scripted agent, web UI) and media/browser E2E
 ```
+
+`make stack-up` starts the same local stack for manual use (`tools/dev/stack.sh`, development placeholders only). Each service has its own README.

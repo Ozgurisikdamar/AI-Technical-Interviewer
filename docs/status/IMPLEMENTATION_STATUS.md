@@ -1,6 +1,6 @@
 # Implementation status and repository audit
 
-**Last updated:** 2026-11-03 (Phase 0 milestone)
+**Last updated:** 2026-11-03 (Phase 0 and Phase 1 milestones M1–M9)
 **Rule:** a capability counts as implemented only when its code, tests and integration are verified. Status labels:
 
 | Label | Meaning |
@@ -12,6 +12,8 @@
 
 All contracts and ADR-011 to ADR-020 are **Proposed**. The Phase 0 exit gate ("contracts reviewed") requires human architecture review, which automation cannot provide. Phase 1 work builds on Proposed contracts.
 
+**Summary.** The Phase 1 voice MVP runs end to end in this repository with the deterministic scripted voice engine: a candidate opens an invitation in Chromium, consents per purpose, checks the microphone, and completes a voice or text interview against the real control plane, PostgreSQL, LiveKit OSS and the Tier-1 agent, with pause, refresh, disconnect, agent crash, provider failure, barge-in and withdrawal handled by the backend-enforced state machine. What is **not** verified: the OpenAI Realtime engine against the live provider (no credentials), real recording egress (no egress service), real networks (no TURN, loss or jitter emulation), container images (no Docker daemon), and every human gate (architecture, legal, benchmarks, production gates). Nothing here is cleared for real candidates (ADR-020).
+
 ## 1. Baseline audit (repository state before implementation)
 
 The repository contained architecture documents only: `README.md`, `LICENSE` (Apache-2.0) and six files in `docs/architecture/` (about 1,500 lines). There were no source files, build files, tests, CI or infrastructure definitions.
@@ -22,23 +24,23 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 
 | Milestone | Scope | Status |
 |---|---|---|
-| Phase 0 — contracts | State machine v1.1, schemas, prompts, content, fixtures, ADR-011–020, threat-model addendum, OpenAPI, test plan, hygiene checks, CI | **Verified (local)**: `make checks`, `make contracts-test` (117 tests). Human review pending |
+| Phase 0 — contracts | State machine v1.1, schemas, prompts, content, fixtures, ADR-011–020, threat-model addendum, OpenAPI, test plan, hygiene checks, CI | **Verified (local)**: `make checks`, `make contracts-test` (120 tests). Human review pending |
 | M2 — Go engine, config, logging | Pure flow engine from the embedded contract; ADR-020 config refusals; redacting logger; HTTP plumbing; architecture tests | **Verified (local)**: `make go-lint` (vet + staticcheck), `make go-test` (model-based walk over 3,000 seeds: 208 completions / 2,792 cancellations with every invariant checked; fuzzing; refusal matrix; log sentinels) |
 | M3 — Schema, roles, transition service | Phase-1 schema with DB-enforced INV-1/INV-9, append-only triggers, least-privilege roles; transactional transition service (row lock + `state_version`, per-step events and audit, outbox with contract validation); ingestion with speech-time attribution; completion protocol; leases with fencing | **Verified (local)**: `make go-test` against PostgreSQL 16 as the real application role (privilege matrix, lifecycle, button/deadline paths, pause/resume, withdrawal, expiry, consent, attribution, concurrency storms, compromised-agent suite) |
 | M4 — Auth, API, LiveKit, ingestion, completion | Two listeners; staff/candidate/agent authentication; idempotency keys; invitation rate limit; LiveKit rooms, mic-only tokens, server-side dispatch with nonce-only metadata, claim verification, signed and deduplicated webhooks; Tier-1 context via restricted views; metrics; sweepers; binaries | **Verified (local)** against PostgreSQL with a fake media layer: HTTP flow to completion, cross-candidate/tenant isolation, CSRF, listener separation, idempotency replay/reuse, claim attacks, fencing, webhook trust, rate limiting, log sentinels, OpenAPI route parity. Real LiveKit wiring: see M7 |
 | M5 — Recording | Fail-closed policy (deployment flag and encryption attestation, tenant opt-in, candidate consent, explicit retention, voice mode, open question, microphone track), `start_recording` on T05/T13, stop on pause/withdraw/complete and track unpublish, LiveKit TrackEgress client, egress webhooks, `audio_ref` on candidate segments, Tier-1 `recording_active` view, purge with audited tombstones (`ati-admin recordings purge-expired`), tenant policy command | **Verified (local)** with a fake egress and an in-process S3 server (gofakes3): policy matrix (each precondition alone), lifecycle, audio refs, failures, idempotent purge, webhook routing; mutation-checked. **Real egress unverified**: no egress service in this environment |
 | M6 — Tier-1 agent | LiveKit worker on explicit dispatch; claim, lease and fenced writes over the internal API (no database access); interview controller; single parameterless tool with grace, pending-transcript wait and flushed manifest; answer windows tied to the prompt's own playout; prompt-delivery marking; scripted engine (fake VAD/STT/LLM/TTS inside `AgentSession`, pitch-coded intents) and OpenAI Realtime engine; local-only turn handling (no hosted LiveKit Inference); redacting JSON logs | **Verified (local)**: `make agent-test` (ruff, mypy strict, 139 pytest tests incl. mutation-checked properties). OpenAI engine: configuration unit-tested only, **not verified against the provider** (no credentials) |
-| M7 — Media E2E | `tools/dev/stack.sh` (PostgreSQL, checksum-verified LiveKit OSS 1.13.11, control plane, agent); synthetic candidate over real WebRTC (`tests/e2e`); missing-agent sweeper, resume re-dispatch, room deletion after the closing remark | **Verified — scripted engine, loopback only**: `make e2e`, 8/8 (full plan, barge-in, disconnect/resume, pause intake, injection, provider failure, button path, agent crash) plus post-run log and audio-file scans. Barge-in stop latency at the candidate: n=5, p50 406 ms, max 417 ms (loopback, uncalibrated 200 ms interruption threshold) |
-| M8 — Web UI | Next.js 16 / React 19 candidate UI (`apps/web`): fragment-only invitation exchanged on click, purpose-level DRAFT consent, device check, live room (mic-only publishing, unpublished while paused, captions from interviewer transcription, ARIA live status), pause/resume/finish/withdraw from `allowed_actions`, refresh rejoin, device-loss pause; per-request CSP nonce, strict security headers, lint guardrails, bundle secret scan | **Verified (local)**: `make web-test` (eslint, tsc, 222 unit tests, production build, bundle scan). **Verified — scripted engine, loopback only** in Chromium against the real stack: voice flow to completion and keyboard/device-loss/withdrawal flow (`tests/e2e/test_browser.py`). Text answers wait for M9 |
-| M9 — Text mode | | Not started |
+| M7 — Media E2E | `tools/dev/stack.sh` (PostgreSQL, checksum-verified LiveKit OSS 1.13.11, control plane, agent); synthetic candidate over real WebRTC (`tests/e2e`); missing-agent sweeper, resume re-dispatch, room deletion after the closing remark | **Verified (scripted, loopback)**: `make e2e`, 8/8 (full plan, barge-in, disconnect/resume, pause intake, injection, provider failure, button path, agent crash) plus post-run log and audio-file scans. Barge-in stop latency at the candidate, two runs of n=5: p50 406 and 408 ms, max 417 ms (loopback, uncalibrated 200 ms minimum interruption) |
+| M8 — Web UI | Next.js 16 / React 19 candidate UI (`apps/web`): fragment-only invitation exchanged on click, purpose-level DRAFT consent, device check, live room (mic-only publishing, unpublished while paused, captions from interviewer transcription, ARIA live status), pause/resume/finish/withdraw from `allowed_actions`, refresh rejoin, device-loss pause; per-request CSP nonce, strict security headers, lint guardrails, bundle secret scan | **Verified (local)**: `make web-test` (eslint, tsc, 222 unit tests, production build, bundle scan). **Verified (scripted, loopback)** in Chromium against the real stack: voice flow to completion and keyboard/device-loss/withdrawal flow (`tests/e2e/test_browser.py`). Text answers wait for M9 |
+| M9 — Text mode | `POST /text-responses` (text mode only, activation-bound, refused during a pending completion; control-plane-written `candidate_text` segments; audit without text); Tier-1 view of the open question's text answers; agent passes each once as user input; text-mode greeting; UI offers text mode without a microphone | **Verified (local)**: G API tests (binding, mode, length, ordering, contract-valid context, manifest-free confirmation, no text in logs), A tests (user input only, once, other activations ignored). **Verified (scripted, loopback)** in Chromium with the microphone refused (`text_flow.mjs`): captions, no published track, completion |
 
 ## 3. Gap analysis (requirement → status)
 
 | ID | Requirement (source) | Status | Evidence / target |
 |---|---|---|---|
-| G1 | Tier-1/Tier-2 isolation (ADR-001, BP §3.1) | Contract level **Verified (local)**; runtime Not started | `contracts/tests/test_isolation_contracts.py`, import-boundary check; runtime controls M3–M6 |
-| G2 | Modular control plane, contract tests (ADR-002) | Partial: module boundaries **Verified (local)** | `internal/archtest`; API M4 |
-| G3 | LiveKit/WebRTC media (ADR-003) | **Verified — scripted engine, loopback only** (`make e2e`) | TURN, loss and jitter Blocked (no netem) |
+| G1 | Tier-1/Tier-2 isolation (ADR-001, BP §3.1) | **Verified (local)**: separate deployables and lockfiles; the agent has no database driver or credentials (dependency test, import boundaries); Tier-1 reads only allowlisted views through `ati_tier1_ctx`; evaluator role NOLOGIN with no live-table writes; ID-only outbox payloads; compromised-agent suite | Tier-2 workers Phase 2 |
+| G2 | Modular control plane, contract tests (ADR-002) | **Verified (local)**: package boundaries (`internal/archtest`), embedded-contract drift test, OpenAPI route parity | — |
+| G3 | LiveKit/WebRTC media (ADR-003) | **Verified (scripted, loopback)** (`make e2e`) | TURN, loss and jitter Blocked (no netem) |
 | G4 | App-owned provider adapter (ADR-004) | `VoiceEngine` with scripted and OpenAI Realtime engines; scripted **Verified (local + E2E)**; OpenAI **Implemented — unverified** | Live provider blocked: no credentials. Per-question turn profiles are passed to the agent but not yet applied to the provider's turn detection |
 | G5 | PostgreSQL canonical; Qdrant projection (ADR-005) | PostgreSQL **Verified (local)** | `internal/store`, `internal/interview`; Qdrant Phase 2 |
 | G6 | Durable jobs, DLQ (ADR-006) | Transactional outbox **Verified (local)** (contract-validated payloads, insertion order) | Relay/consumers/DLQ Phase 2 |
@@ -46,32 +48,32 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | G8 | Human accountability (ADR-008) | Contract **Verified (local)** (INV-6, no decision fields) | Workflow Phase 5 |
 | G9 | Privacy by design (ADR-009) | **Verified (local)**: purpose-level DRAFT notices; recording optional, fail-closed, retention-bound with audited purge; PII-minimal schema; redacted logs; E2E log and audio-file scans | Access, export and deletion workflows Phase 5; legal review open; real egress unverified |
 | G10 | No cheating inference (ADR-010) | Contract **Verified (local)** (no timing in handoff events) | — |
-| G11 | State machine + invariants (BP §4) | Contract and engine **Verified (local)** | `internal/flow` model-based + fuzz tests; persistence M3 |
+| G11 | State machine + invariants (BP §4) | **Verified (local)**: contract, pure engine (model-based walk, fuzzing), persisted transitions with per-step events and audit, database-enforced invariants | — |
 | G12 | Latency metrics (BP §5, §16) | Agent histograms (TTFB, TTFA, end of turn, full response, barge-in) reported to Prometheus; candidate-side barge-in measured in E2E | Loopback and scripted only; no provider or network figures |
-| G13 | Barge-in, turn policy (BP §6) | **Verified — scripted engine, loopback only**: barge-in stops playback without closing the answer; received-silence grace; frame starvation never ends a turn | Thresholds uncalibrated (Phase 6) |
+| G13 | Barge-in, turn policy (BP §6) | **Verified (scripted, loopback)**: barge-in stops playback without closing the answer; received-silence grace; frame starvation never ends a turn | Thresholds uncalibrated (Phase 6) |
 | G14 | Rubric and weights (BP §7) | Contract **Verified (local)** (weights consistent across documents) | Phase 2 |
 | G15 | Tier-1 prompt and runtime context (BP §8, P&E §1) | **Verified (local)**: pinned prompt checked at startup; allowlisted context validated before use; candidate text never enters instructions | Live model behaviour unverified |
 | G16 | Tier-2 prompt (P&E §2) | Contract **Verified (local)** (verbatim + sha256) | Phase 2 |
-| G17 | Adversarial controls (BP §9) | Backend **Verified (local)**; scripted injection and forbidden tool call over real media change nothing (**Verified — scripted, loopback**) | Live-model injection suite blocked (no credentials) |
+| G17 | Adversarial controls (BP §9) | Backend **Verified (local)**; scripted injection and forbidden tool call over real media change nothing (**Verified (scripted, loopback)**) | Live-model injection suite blocked (no credentials) |
 | G18 | Coding sandbox, whiteboard (BP §10) | Not started | Phase 4 |
-| G19 | HITL routing, override audit (BP §11) | Not started | Phase 2, 5 |
+| G19 | HITL routing, override audit (BP §11) | Integrity flags for future routing **Verified (local)** (missing segments, echo, prompt deviation, unassigned and late speech, synthetic source) | Routing and review workflow Phases 2 and 5 |
 | G20 | Data entities, transcript immutability (BP §13) | **Verified (local)** | Append-only grants + triggers tested even for the owner; answers bind exact segment IDs |
-| G21 | API surface (BP §17) | **Verified (local)** for implemented endpoints | `internal/api` tests; text responses return 501 until M9 |
+| G21 | API surface (BP §17) | **Verified (local)** for every Phase-1 endpoint, including text responses | Evaluations, report, appeals, reviews: Phases 2 and 5 |
 | G22 | Observability (BP §16) | Prometheus metrics (HTTP, transitions, voice latency, webhooks, sweepers, policy flags); correlation IDs; redacted JSON logs in every process, checked by the E2E log scan | Dashboards and OTel export Phase 6 |
 | G23 | QA/chaos matrix (BP §18) | Plan **Verified (local)** ([TEST_PLAN.md](../qa/TEST_PLAN.md)) | Per test plan |
-| G24 | Text/non-audio fallback (TM §4–5) | Contract **Verified (local)** | M9 |
+| G24 | Text/non-audio fallback (TM §4–5) | **Verified (local; browser: scripted, loopback)**: text response mode end to end | A fully text interviewer (no audio output) and a broader accommodations process are Phase 5–6 |
 | G25 | Threat model for new boundaries | Document written ([addendum](../architecture/THREAT_MODEL_ADDENDUM_PHASE1.md)) | Human review pending |
-| G26 | Cost model usage capture (STACK §5) | Per-session usage recorded (**Verified — scripted**: engine and audio durations) | Provider token counts need the live engine |
+| G26 | Cost model usage capture (STACK §5) | Per-session usage recorded (**Verified (scripted, loopback)**: engine and audio durations) | Provider token counts need the live engine |
 | G27 | Repository conventions | **Verified (local)** | `tools/checks/*`, ADR immutability pin test |
-| G28 | MVP acceptance criteria and production gates | 0/12, 0/5 | See section 4 |
+| G28 | MVP acceptance criteria and production gates | Phase-1 criteria 1–4 and 10–12 verified (1–3 with the scripted engine, loopback only); 5–9 belong to Phases 2 and 5; production gates 0/5 | See section 4 |
 
 ## 4. MVP acceptance criteria (DECISIONS_AND_ROADMAP)
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | Consented voice interview in a supported browser | Voice interview over real WebRTC **Verified — scripted, loopback** (synthetic participant, M7); browser path M8 |
-| 2 | State survives reconnect without duplicates or corruption | **Verified — scripted, loopback**: disconnect, agent crash and provider failure each pause and resume as a new activation; one answer per item (G concurrency suites + E) |
-| 3 | Interruption stops playback and preserves state | **Verified — scripted, loopback** (barge-in E2E) |
+| 1 | Consented voice interview in a supported browser | **Verified (scripted, loopback)** in Chromium against the real stack (M8) and with a synthetic WebRTC participant (M7); live provider unverified |
+| 2 | State survives reconnect without duplicates or corruption | **Verified (scripted, loopback)**: disconnect, agent crash and provider failure each pause and resume as a new activation; one answer per item (G concurrency suites + E) |
+| 3 | Interruption stops playback and preserves state | **Verified (scripted, loopback)** (barge-in E2E) |
 | 4 | Transcript persisted with speaker, timestamps, sequence, version | **Verified (local)** (G ingestion tests; E2E data checks) |
 | 5 | Evaluation asynchronous, never blocks voice | Phase 2 (handoff contract Verified) |
 | 6 | Every claim links to transcript evidence and rubric criteria | Phase 2 (schema Verified) |
@@ -92,14 +94,14 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | Node | 22.23 with pnpm; Next 16.4, React 19.3, livekit-client 2.23 | Pin TypeScript 6.0.x (not the native TS 7 compiler) |
 | PostgreSQL | 16.15 server binaries (`/usr/lib/postgresql/16/bin`, refuse to run as root) | Ephemeral cluster via `runuser -u postgres` in a postgres-owned temp directory |
 | LiveKit server | OSS v1.13.11 release (sha256 `1e9ee90c…43fb`) | Local dev server: `rtc.node_ip` set to the container address, `room.auto_create: false`, dedicated webhook key |
-| Media path in container | Verified by a throwaway spike: explicit dispatch with metadata, two-way audio between Python rtc clients and Chromium, refresh/rejoin, signed webhooks | Basis for E2E (M7) |
+| Media path in container | Spike first, then `tools/dev/stack.sh` and `tests/e2e` | Explicit dispatch, two-way audio, refresh/rejoin and signed webhooks run in every `make e2e` |
 | Agent worker proxy | `AgentServer` inherits `HTTPS_PROXY` and ignores `NO_PROXY` | Pass `http_proxy` explicitly from configuration |
 | Object storage / egress | MinIO server binaries discontinued (HTTP 410); egress needs GStreamer and Docker | minio-go against an in-process S3 server (gofakes3); real egress unverified |
 | OpenAI / LiveKit Cloud | Network reachable; no credentials in the environment | Live paths unverified |
 | Docker | CLI and compose present; no daemon | Images and compose deferred |
 | Browser | Playwright 1.63 with Chromium preinstalled | Reuse |
 | Network emulation | No `tc` / `ip` | Packet-loss, jitter and TURN tests blocked |
-| Linters | golangci-lint 2.5 built with Go 1.25 | Fall back to `go vet` / staticcheck if it rejects Go 1.26 modules |
+| Linters | golangci-lint 2.5 (built with Go 1.25) rejects Go 1.26 modules | `gofmt` + `go vet` + staticcheck v0.8.2 (`make go-lint`); ruff + mypy strict (agent); eslint + tsc (web) |
 | Unrelated credentials in the environment | Present (other projects' databases and services) | Never used; tests use ephemeral local services only |
 
 ## 6. Prioritized implementation plan (relative sizing; no calendar estimates without team-capacity data, BP §19)
@@ -139,3 +141,26 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | No egress service | Real recording | Egress deployment (Docker) |
 | No `tc` / netem | Packet loss, jitter, TURN chaos | Lab or CI runner with NET_ADMIN |
 | Human review required | Phase 0 gate, legal notice approval, benchmarks, production gates | Architecture, legal and qualified reviewers |
+| GitHub Actions jobs are never assigned a runner | CI results (`ci.yml` defines checks, contracts, control-plane, Tier-1 agent and web jobs) | Repository or account Actions settings and billing; until then `make test` and `make e2e` are the evidence |
+
+## 9. How to verify
+
+| Command | What it runs | Result at this revision |
+|---|---|---|
+| `make checks` | repository hygiene (secrets, media files, PII patterns), Python import boundaries, generated state diagram | pass |
+| `make contracts-test` | schema meta-validation and fixtures, state-machine structure, doc drift, isolation, OpenAPI | 120 passed |
+| `make go-lint` / `make go-test` | gofmt, vet, staticcheck; Go tests with the race detector against PostgreSQL 16 | pass (13 packages with tests) |
+| `make agent-test` | ruff, mypy (strict), pytest for the Tier-1 agent | 144 passed |
+| `make web-test` | eslint, tsc, vitest, production build, bundle secret scan | 222 passed; build and scan pass |
+| `make e2e` | local stack; synthetic WebRTC candidate (8 tests) and Chromium flows (3 tests); log and audio-file scans | 11 passed from a fresh stack in about 8 minutes (scripted engine, loopback) |
+
+## 10. Known gaps and follow-ups (Phase 1 scope)
+
+- Per-question turn profiles (`extended_pause`) reach the agent but are not yet applied to the provider's turn detection.
+- The OpenAI Realtime engine is configuration-tested only; a recorded live run is part of the Phase 1 exit criteria.
+- Interruption, grace and dispatch-timeout thresholds are uncalibrated placeholders (barge-in stop latency at the candidate: p50 about 0.4 s on loopback, dominated by the 200 ms minimum interruption duration).
+- Concurrent session creation is not load-tested; idempotent replay is.
+- The agent uses the deprecated `metrics_collected` event of livekit-agents 1.8 for latency metrics.
+- No screen-reader run; keyboard and ARIA wiring are browser-tested.
+- Container images and deployment manifests are not built (no Docker daemon).
+
