@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import sys
+import time
 from typing import Any
 
 REDACTED = "[REDACTED]"
@@ -23,6 +24,8 @@ _SENSITIVE_VALUE = re.compile(
 )
 # Third-party loggers that may emit transcripts at debug level are capped at INFO.
 _NOISY = ("livekit", "livekit.agents", "livekit.plugins", "openai", "httpx", "httpcore", "websockets", "aiohttp")
+# Per-request lines (every context poll, every segment) are noise and carry URLs; keep warnings only.
+_QUIET = ("httpx", "httpcore", "aiohttp.access")
 
 
 def scrub(value: str) -> str:
@@ -55,8 +58,15 @@ _STANDARD = set(logging.LogRecord("x", 0, "x", 0, "x", None, None).__dict__) | {
 
 
 class JsonFormatter(logging.Formatter):
+    converter = time.gmtime  # type: ignore[assignment]  # UTC timestamps (documented logging idiom)
+
     def format(self, record: logging.LogRecord) -> str:
-        out: dict[str, Any] = {"level": record.levelname, "logger": record.name, "msg": record.getMessage()}
+        out: dict[str, Any] = {
+            "time": self.formatTime(record, "%Y-%m-%dT%H:%M:%S") + f".{int(record.msecs):03d}Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
         for key, value in record.__dict__.items():
             if key not in _STANDARD and not key.startswith("_"):
                 out[key] = REDACTED if _SENSITIVE_KEY.search(key) else _scrub_any(value) if isinstance(value, str) else value
@@ -80,4 +90,6 @@ def setup(level: str = "INFO", stream: Any = None) -> logging.Handler:
         logger.propagate = True
         for h in list(logger.handlers):  # third-party handlers would bypass redaction
             logger.removeHandler(h)
+    for name in _QUIET:
+        logging.getLogger(name).setLevel(logging.WARNING)
     return handler

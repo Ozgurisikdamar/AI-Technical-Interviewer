@@ -31,10 +31,22 @@ class Config:
     openai_voice: str
     openai_transcription_model: str
     health_port: int
+    max_sessions: int
 
     @property
     def production(self) -> bool:
         return self.app_env == "production"
+
+
+def _int(raw: str, problems: list[str], key: str, low: int, high: int) -> int:
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if not low <= value <= high:
+        problems.append(f"{key} must be an integer between {low} and {high}")
+        return low
+    return value
 
 
 def load(env: Mapping[str, str]) -> Config:
@@ -70,7 +82,13 @@ def load(env: Mapping[str, str]) -> Config:
         openai_voice=env.get("ATI_OPENAI_VOICE", "marin").strip(),
         openai_transcription_model=env.get("ATI_OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-transcribe").strip(),
         health_port=int(env.get("ATI_AGENT_HEALTH_PORT", "18081")),
+        # Concurrent interviews per worker process: an uncalibrated placeholder until capacity tests (Phase 6).
+        max_sessions=_int(env.get("ATI_AGENT_MAX_SESSIONS", "4"), problems, "ATI_AGENT_MAX_SESSIONS", 1, 64),
     )
+    override = env.get("LIVEKIT_AGENT_NAME_OVERRIDE", "").strip()
+    if override and override != cfg.agent_name:
+        # livekit-agents would silently register under this name instead of ATI_AGENT_NAME.
+        problems.append("LIVEKIT_AGENT_NAME_OVERRIDE differs from ATI_AGENT_NAME; refusing an ambiguous agent name")
     if cfg.engine == "openai" and not cfg.openai_api_key:
         problems.append("the openai engine needs OPENAI_API_KEY; refusing to start without provider credentials")
     if cfg.production:

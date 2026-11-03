@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -237,7 +238,15 @@ func (s *Server) candidatePause(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 	mutate(s, w, r, http.StatusOK, func(p principal, b *versionBody) error {
-		return s.svc.Resume(r.Context(), actorFor(r.Context(), p), p.sessionID, b.StateVersion)
+		if err := s.svc.Resume(r.Context(), actorFor(r.Context(), p), p.sessionID, b.StateVersion); err != nil {
+			return err
+		}
+		// The interviewer may have been lost (crash, provider failure); a resumed interview needs one.
+		// Best effort: if no agent claims in time, the missing-agent sweeper pauses again (ADR-016).
+		if err := s.ensureInterviewer(r.Context(), p.sessionID); err != nil {
+			s.log.Warn("agent dispatch after resume failed", "session_id", p.sessionID, "error", err)
+		}
+		return nil
 	})
 }
 
@@ -295,17 +304,9 @@ func (s *Server) realtimeSession(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeTransitionNotAllowed, "the interview is not live")
 			return
 		}
-		if err := s.media.EnsureRoom(ctx, room); err != nil {
-			s.log.Warn("ensure room failed", "session_id", p.sessionID, "error", err)
-			httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "media service unavailable")
-			return
-		}
-		if _, err := s.svc.EnsureAgentDispatch(ctx, p.sessionID, interview.MediaOps{
-			RemoveStaleAgents: s.removeStaleAgents(p.sessionID),
-			Dispatch:          s.media.Dispatch,
-		}); err != nil {
-			s.log.Warn("agent dispatch failed", "session_id", p.sessionID, "error", err)
-			httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "interviewer unavailable")
+		if err := s.ensureInterviewer(ctx, p.sessionID); err != nil {
+			s.log.Warn("media setup failed", "session_id", p.sessionID, "error", err)
+			httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "media service or interviewer unavailable")
 			return
 		}
 		token, expires, err := s.media.CandidateToken(room, mode == "voice")
@@ -318,6 +319,22 @@ func (s *Server) realtimeSession(w http.ResponseWriter, r *http.Request) {
 			"can_publish_audio": mode == "voice", "expires_at": expires.UTC(),
 		})
 	})
+}
+
+// ensureInterviewer makes sure the session's room exists and an agent holds or is about to claim
+// the session (explicit dispatch only; ADR-011, ADR-016).
+func (s *Server) ensureInterviewer(ctx context.Context, sessionID string) error {
+	room, _, _, err := s.svc.RoomFor(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if err := s.media.EnsureRoom(ctx, room); err != nil {
+		return fmt.Errorf("ensure room: %w", err)
+	}
+	if _, err := s.svc.EnsureAgentDispatch(ctx, sessionID, interview.MediaOps{RemoveStaleAgents: s.removeStaleAgents(sessionID), Dispatch: s.media.Dispatch}); err != nil {
+		return fmt.Errorf("agent dispatch: %w", err)
+	}
+	return nil
 }
 
 // removeStaleAgents removes agent participants that do not hold the session's lease, so a

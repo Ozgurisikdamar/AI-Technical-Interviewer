@@ -14,6 +14,7 @@ from tier1_voice_agent.engines import LOCAL_INTERRUPTION_MODE, turn_handling
 from tier1_voice_agent.engines.openai_realtime import OpenAIRealtimeEngine
 from tier1_voice_agent.engines.scripted import (
     END_SILENCE_S,
+    INTENT_TONES_HZ,
     SCRIPTED_TEXT,
     EnergyVAD,
     ScriptedEngine,
@@ -79,9 +80,32 @@ def test_turn_handling_refuses_non_local_modes() -> None:
         turn_handling("stt", min_interruption_s=0.2)
 
 
-@pytest.mark.parametrize(("seconds", "label"), [(0.5, "part"), (1.5, "done"), (2.4, "inject"), (3.0, "fail_llm"), (5.0, "long")])
-def test_burst_duration_encodes_the_scripted_intent(seconds: float, label: str) -> None:
-    assert classify(seconds) == label
+def tone(hz: float, seconds: float, rate: int = 24000) -> np.ndarray:
+    n = int(rate * seconds)
+    return (np.sin(2 * np.pi * hz * np.arange(n) / rate) * 8000).astype(np.int16)
+
+
+@pytest.mark.parametrize("label", sorted(INTENT_TONES_HZ))
+@pytest.mark.parametrize("seconds", [0.3, 1.0, 3.7])
+def test_tone_pitch_encodes_the_scripted_intent_at_any_duration(label: str, seconds: float) -> None:
+    assert classify(tone(INTENT_TONES_HZ[label], seconds), 24000) == label
+
+
+def test_time_stretched_and_noisy_bursts_keep_their_intent() -> None:
+    # A jitter buffer stretches audio by repeating short chunks (pitch is preserved), unlike resampling.
+    rng = np.random.default_rng(7)
+    burst = tone(INTENT_TONES_HZ["done"], 1.0)
+    chunks = np.array_split(burst, 100)
+    stretched = np.concatenate([c for i, c in enumerate(chunks) for _ in range(2 if i % 2 else 1)])  # 1.5x longer
+    noisy = (stretched.astype(np.float64) + rng.normal(0, 800, stretched.size)).astype(np.int16)
+    assert noisy.size > 1.4 * burst.size
+    assert classify(noisy, 24000) == "done"
+
+
+def test_unknown_pitch_and_the_interviewer_tone_are_not_intents() -> None:
+    assert classify(tone(440.0, 1.0), 24000) == "part"
+    assert classify(tone(2000.0, 1.0), 24000) == "part"
+    assert classify(np.zeros(100, dtype=np.int16), 24000) == "part"
 
 
 async def collect_vad(frames: list[rtc.AudioFrame], *, end: bool = True) -> list[vad.VADEvent]:

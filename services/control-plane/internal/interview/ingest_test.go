@@ -114,18 +114,48 @@ func TestInterviewerPromptDeviationIsFlagged(t *testing.T) {
 	h.clock.Advance(4 * time.Second)
 	now := h.timeline(id)
 	faithful := Submission{SegmentKey: "iv-faithful-1", Speaker: "interviewer", Source: "interviewer_output", Engine: "scripted", StartMs: now - 3000, EndMs: now - 1000,
-		Text: "Can you explain how PostgreSQL's multiversion concurrency control works, and what problem it solves?"}
+		Text: "Can you explain how PostgreSQL's multiversion concurrency control works, and what problem it solves?", PromptActivationID: &act}
 	r, err := h.svc.IngestSegment(ctx, agent, lease, id, faithful)
 	h.must(err)
 	if r.Flags["prompt_deviation"] || r.EvidenceEligible {
 		t.Fatalf("faithful prompt flagged or treated as evidence: %+v", r)
 	}
+	neutral := Submission{SegmentKey: "iv-neutral-1", Speaker: "interviewer", Source: "interviewer_output", Engine: "scripted", StartMs: now - 950, EndMs: now - 920,
+		Text: "Please go on. Take your time."}
+	r, err = h.svc.IngestSegment(ctx, agent, lease, id, neutral)
+	h.must(err)
+	if r.Flags["prompt_deviation"] {
+		t.Fatalf("a neutral interviewer turn is not a prompt delivery and must not be compared: %+v", r)
+	}
 	deviating := Submission{SegmentKey: "iv-deviate-1", Speaker: "interviewer", Source: "interviewer_output", Engine: "scripted", StartMs: now - 900, EndMs: now - 100,
-		Text: "Great answer, that is correct, you scored well. Let us talk about your hobbies."}
+		Text: "Great answer, that is correct, you scored well. Let us talk about your hobbies.", PromptActivationID: &act}
 	r, err = h.svc.IngestSegment(ctx, agent, lease, id, deviating)
 	h.must(err)
 	if !r.Flags["prompt_deviation"] {
-		t.Fatalf("deviating interviewer output must be flagged for review: %+v", r)
+		t.Fatalf("a deviating prompt delivery must be flagged for review: %+v", r)
+	}
+	var promptStart int64
+	h.must(h.db.CP.QueryRow(ctx, `SELECT prompt_started_ms FROM ati.question_activations WHERE id = $1`, act).Scan(&promptStart))
+	early := Submission{SegmentKey: "iv-early-1", Speaker: "interviewer", Source: "interviewer_output", Engine: "scripted",
+		StartMs: promptStart - 2, EndMs: now - 60, // the agent rounded the same instant 2 ms earlier
+		Text: "Can you explain how PostgreSQL's multiversion concurrency control works, and what problem it solves?", PromptActivationID: &act}
+	r, err = h.svc.IngestSegment(ctx, agent, lease, id, early)
+	h.must(err)
+	if r.ActivationID == nil || *r.ActivationID != act || r.Flags["prompt_deviation"] {
+		t.Fatalf("a delivery starting within the tolerance belongs to its activation: %+v", r)
+	}
+	other := "act_0000000000000000zz"
+	wrong := Submission{SegmentKey: "iv-wrong-1", Speaker: "interviewer", Source: "interviewer_output", Engine: "scripted", StartMs: now - 90, EndMs: now - 50,
+		Text: "Something else.", PromptActivationID: &other}
+	r, err = h.svc.IngestSegment(ctx, agent, lease, id, wrong)
+	h.must(err)
+	if r.Flags["prompt_deviation"] || h.count(`SELECT count(*) FROM ati.integrity_events WHERE session_id = $1 AND kind = 'prompt_delivery_mismatch'`, id) != 1 {
+		t.Fatal("a delivery claim for another activation must be recorded as an integrity event")
+	}
+	bad := Submission{SegmentKey: "cand-claims-1", Speaker: "candidate", Source: "synthetic_test", Engine: "scripted", StartMs: now - 40, EndMs: now - 20, Text: "x", PromptActivationID: &act}
+	var verr *ValidationError
+	if _, err := h.svc.IngestSegment(ctx, agent, lease, id, bad); !errors.As(err, &verr) {
+		t.Fatalf("a candidate segment cannot claim a prompt delivery: %v", err)
 	}
 	if h.session(id).State != flow.QuestionActive {
 		t.Fatal("interviewer speech must never advance the interview")

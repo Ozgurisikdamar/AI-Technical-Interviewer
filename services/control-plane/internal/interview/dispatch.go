@@ -154,8 +154,76 @@ func (s *Service) AgentLeft(ctx context.Context, sessionID, identity string) err
 			oc.pauseReason, oc.closeReason, oc.cause = "agent_unavailable", "paused", "agent_left"
 			return s.fire(ctx, oc, flow.EvPause)
 		}
-		return nil
+		return s.closeRoomAfterInterview(ctx, tx, sess, after, "agent_left")
 	})
+}
+
+// postInterview states have no live media: the closing remark has been delivered (or the agent is
+// gone), so the room is deleted and the candidate's media connection ends (ADR-016).
+var postInterview = map[flow.State]bool{flow.InterviewCompleted: true, flow.EvaluationPending: true, flow.HumanReview: true, flow.ReportReady: true}
+
+func (s *Service) closeRoomAfterInterview(ctx context.Context, tx pgx.Tx, sess *sessionRow, after *[]func(context.Context), reason string) error {
+	if !postInterview[sess.State] {
+		return nil
+	}
+	id, room := sess.ID, sess.RoomName
+	*after = append(*after, func(c context.Context) { s.effects.DeleteRoom(c, id, room) })
+	return s.audit(ctx, tx, sess.TenantID, Actor{Type: flow.ActorSystem}, "media.room_deleted", "interview_session", id, "allowed", map[string]any{"reason": reason})
+}
+
+// SweepMissingAgents pauses live sessions that have had no interviewer for longer than the
+// dispatch timeout: an unclaimed dispatch, a failed dispatch, or an agent that stopped without
+// pausing. The candidate can resume, which dispatches a new agent (ADR-016).
+func (s *Service) SweepMissingAgents(ctx context.Context) (int, error) {
+	now := s.now().UTC()
+	cutoff := now.Add(-s.settings.AgentDispatchTimeout)
+	const stranded = `s.state IN ('CALIBRATION','QUESTION_ACTIVE','CANDIDATE_SPEAKING') AND s.updated_at <= $2
+		AND NOT EXISTS (SELECT 1 FROM ati.agent_leases l WHERE l.session_id = s.id AND l.ended_at IS NULL AND l.expires_at > $1)
+		AND NOT EXISTS (SELECT 1 FROM ati.agent_dispatches d WHERE d.session_id = s.id AND d.claimed_at IS NULL AND d.superseded_at IS NULL AND d.created_at > $2)`
+	rows, err := s.pool.Query(ctx, `SELECT s.id FROM ati.interview_sessions s WHERE `+stranded, now, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	var list []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		list = append(list, id)
+	}
+	rows.Close()
+	paused := 0
+	for _, id := range list {
+		err := s.inTx(ctx, func(tx pgx.Tx, after *[]func(context.Context)) error {
+			sess, err := s.lockSession(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			var still bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM ati.interview_sessions s WHERE s.id = $3 AND `+stranded+`)`, now, cutoff, id).Scan(&still); err != nil || !still {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE ati.agent_dispatches SET superseded_at = $2 WHERE session_id = $1 AND claimed_at IS NULL AND superseded_at IS NULL`, id, now); err != nil {
+				return err
+			}
+			oc, err := s.newOp(ctx, tx, sess, Actor{Type: flow.ActorSystem}, after)
+			if err != nil {
+				return err
+			}
+			oc.pauseReason, oc.closeReason, oc.cause = "agent_unavailable", "paused", "agent_missing"
+			if err := s.fire(ctx, oc, flow.EvPause); err != nil {
+				return err
+			}
+			paused++
+			return nil
+		})
+		if err != nil {
+			return paused, err
+		}
+	}
+	return paused, nil
 }
 
 // ActiveAgentIdentity returns the identity holding the current lease, if any.

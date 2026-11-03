@@ -65,7 +65,7 @@ func run() error {
 	})
 	svc, err := interview.New(pool, machine, interview.Settings{
 		CompletionDeadline: cfg.CompletionDeadline, PauseTimeout: cfg.PauseTimeout, InvitationTTL: cfg.InvitationTTL,
-		CandidateSessionTTL: cfg.CandidateSessionTTL, LeaseTTL: cfg.LeaseTTL, Retention: cfg.Retention,
+		CandidateSessionTTL: cfg.CandidateSessionTTL, LeaseTTL: cfg.LeaseTTL, AgentDispatchTimeout: cfg.AgentDispatchTimeout, Retention: cfg.Retention,
 		RecordingEnabled: cfg.Recording.Enabled, RecordingAttested: cfg.Recording.EncryptionAttested,
 		NoticeID: cfg.NoticeID, NoticeVersion: cfg.NoticeVersion,
 	}, api.Effects{Media: media, Log: log}, log, nil)

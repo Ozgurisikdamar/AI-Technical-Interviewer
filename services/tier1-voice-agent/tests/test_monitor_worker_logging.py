@@ -5,13 +5,14 @@ from __future__ import annotations
 import io
 import json
 import logging
+import pickle
 from importlib import metadata
 
 import pytest
 
-from tier1_voice_agent import logging_setup, monitor
+from tier1_voice_agent import logging_setup, monitor, worker
 from tier1_voice_agent.config import load
-from tier1_voice_agent.worker import MetadataError, make_engine, parse_metadata
+from tier1_voice_agent.worker import MetadataError, build_server, make_engine, parse_metadata
 
 from .test_config import BASE
 
@@ -65,6 +66,32 @@ def test_metadata_parses() -> None:
 def test_malformed_metadata_is_refused(raw: str) -> None:
     with pytest.raises(MetadataError):
         parse_metadata(raw)
+
+
+def test_registered_entrypoint_can_be_sent_to_job_processes() -> None:
+    # Job processes (forkserver/spawn) import the entrypoint by reference; a closure fails at runtime.
+    server = build_server(load(BASE))
+    entry = server._entrypoint_fnc
+    assert entry is worker.entrypoint
+    assert pickle.loads(pickle.dumps(entry)) is worker.entrypoint  # noqa: S301  (round-trip of our own object)
+    assert server._agent_name == "ati-tier1-interviewer"
+
+
+def test_worker_capacity_is_counted_in_interviews() -> None:
+    server = build_server(load({**BASE, "ATI_AGENT_MAX_SESSIONS": "2"}))
+    calc = server.load_fnc
+    assert isinstance(calc, worker.SessionLoad) and server._load_threshold == worker.FULL_AT
+
+    class Fake:
+        def __init__(self) -> None:
+            self.active_jobs: list[object] = []
+
+    fake = Fake()
+    assert calc(fake) == 0.0  # type: ignore[arg-type]
+    fake.active_jobs = [object()]
+    assert calc(fake) == 0.5 and calc(fake) < worker.FULL_AT  # type: ignore[arg-type]
+    fake.active_jobs = [object(), object()]
+    assert calc(fake) >= worker.FULL_AT  # type: ignore[arg-type]
 
 
 def test_make_engine_refuses_scripted_in_production() -> None:

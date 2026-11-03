@@ -5,7 +5,7 @@ CP := services/control-plane
 AGENT := services/tier1-voice-agent
 STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.2
 
-.PHONY: help checks contracts-test sync-contracts go-lint go-test agent-test pg-start pg-stop test
+.PHONY: help checks contracts-test sync-contracts go-lint go-test agent-test e2e stack-up stack-down pg-start pg-stop test
 
 help:
 	@echo "make checks          repository hygiene, Python import boundaries, generated diagram"
@@ -14,6 +14,8 @@ help:
 	@echo "make go-lint         go vet + staticcheck for the control plane"
 	@echo "make go-test         control-plane tests (race detector; starts a local PostgreSQL)"
 	@echo "make agent-test      Tier-1 agent: ruff, mypy (strict), pytest"
+	@echo "make e2e             media E2E over real WebRTC (starts the local stack; scripted engine, loopback)"
+	@echo "make stack-up|stack-down  local stack: PostgreSQL, LiveKit, control plane, scripted agent"
 	@echo "make pg-start|pg-stop ephemeral PostgreSQL 16 for tests"
 	@echo "make test            everything available"
 
@@ -47,5 +49,14 @@ agent-test:
 	cd $(AGENT) && uv run --frozen ruff check src tests && uv run --frozen ruff format --check src tests
 	cd $(AGENT) && uv run --frozen mypy
 	cd $(AGENT) && uv run --frozen pytest -q
+
+stack-up:
+	tools/dev/stack.sh up
+
+stack-down:
+	tools/dev/stack.sh down
+
+e2e:
+	cd tests/e2e && uv run --frozen pytest -q
 
 test: checks contracts-test go-lint go-test agent-test

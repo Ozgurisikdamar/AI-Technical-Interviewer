@@ -33,6 +33,7 @@ log = logging.getLogger("tier1.controller")
 
 CANDIDATE = "candidate"
 GRACE_S = 0.8  # speech-free period before acting on the model's completion request (uncalibrated)
+SKEW_RESYNC_S = 0.25  # clock offset changes smaller than this are response-latency jitter, not drift
 GRACE_MAX_WAIT_S = 6.0
 TRANSCRIPT_WAIT_S = 3.0  # how long completion waits for transcripts of speech that already ended
 CLOSING_HOLD_S = 8.0  # time for the closing remark before the agent leaves
@@ -85,7 +86,7 @@ class InterviewController:
         self.session: AgentSession[None] | None = None
         self.agent: InterviewerAgent | None = None
         self.ctx: dict[str, Any] = {}
-        self._skew_s = 0.0
+        self._skew_s: float | None = None
         self._lock = asyncio.Lock()
         self._done = asyncio.Event()
         self._segments: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -95,7 +96,10 @@ class InterviewController:
         self._greeted = False
         self._calibration_heard = False
         self._spoken_activation: str | None = None
-        self._awaiting_prompt_start: str | None = None
+        self._prompt_handle: Any = None  # SpeechHandle of the approved prompt awaiting its playout start
+        self._prompt_activation: str | None = None
+        self._delivery: tuple[str, float] | None = None  # (activation, playout start) of the prompt being played
+        self._interviewer_segments: dict[str, dict[str, Any]] = {}  # provider item id -> queued segment
         self._confirmed_requests: set[str] = set()
         self._activation_keys: list[str] = []
         self._previous_state: str | None = None
@@ -126,13 +130,18 @@ class InterviewController:
         epoch = self.ctx.get("timeline", {}).get("epoch_unix_ms")
         if epoch is None:
             return 0
-        t = (at if at is not None else self.clock()) + self._skew_s
+        t = (at if at is not None else self.clock()) + (self._skew_s or 0.0)
         return max(0, int(t * 1000) - int(epoch))
 
     def _update_skew(self, ctx: dict[str, Any]) -> None:
+        """Offset of the server clock. Kept stable: every timestamp the agent reports (prompt start,
+        segment bounds) must be on one consistent timeline, so response-latency jitter is ignored and
+        only real drift resynchronizes."""
         server_now = ctx.get("timeline", {}).get("server_now_unix_ms")
         if server_now:
-            self._skew_s = server_now / 1000.0 - self.clock()
+            estimate = server_now / 1000.0 - self.clock()
+            if self._skew_s is None or abs(estimate - self._skew_s) > SKEW_RESYNC_S:
+                self._skew_s = estimate
 
     def _spawn(self, coro: Any) -> None:
         task = asyncio.create_task(coro)
@@ -156,6 +165,7 @@ class InterviewController:
             room_options=room_options(),
             record=False,  # no framework-level recording; consented recording is egress (ADR-017)
         )
+        self._wire_playback(self.session)
         self._tasks = [
             asyncio.create_task(self._segment_worker()),
             asyncio.create_task(self._lease_loop()),
@@ -259,8 +269,8 @@ class InterviewController:
                 await self.agent.update_instructions(prompt.render_instructions(ctx))
                 if prev == "PAUSED":
                     await self.engine.speak_free(self.session, prompt.WELCOME_BACK.get(lang, prompt.WELCOME_BACK["en"]))
-                self._awaiting_prompt_start = active["activation_id"]
-                await self.engine.speak_prompt(self.session, active["text"], active["kind"])
+                handle = await self.engine.speak_prompt(self.session, active["text"], active["kind"])
+                self._watch_prompt(active["activation_id"], handle)
             pending = ctx.get("pending_completion_request")
             if (
                 pending
@@ -283,10 +293,6 @@ class InterviewController:
 
     # -- the model's only tool -----------------------------------------------------------------
     async def on_tool_mark_answer_complete(self) -> str:
-        ctx = self.ctx
-        active = ctx.get("active_prompt")
-        if ctx.get("state") != "CANDIDATE_SPEAKING" or not active:
-            return "Not possible now: the candidate has not started answering this question. Keep listening."
         if self._audio_degraded:
             return "The candidate's audio is unavailable, so the answer cannot be closed now. Wait."
         if not await self._wait_grace():
@@ -294,6 +300,14 @@ class InterviewController:
         await self._flush_for_completion()
         if self._user_speaking:
             return "The candidate is still speaking. Keep listening and do not interrupt."
+        # The flushed speech may itself have opened the answer (QUESTION_ACTIVE -> CANDIDATE_SPEAKING),
+        # e.g. "that is all" as the first words after a resume: decide on the server's current state.
+        with contextlib.suppress(ControlPlaneError):
+            await self._apply(await self.cp.context())
+        ctx = self.ctx
+        active = ctx.get("active_prompt")
+        if ctx.get("state") != "CANDIDATE_SPEAKING" or not active:
+            return "Not possible now: the candidate has not started answering this question. Keep listening."
         try:
             new_ctx = await self.cp.answer_complete(
                 ctx["state_version"], active["activation_id"], list(self._activation_keys), "agent_tool"
@@ -427,9 +441,6 @@ class InterviewController:
         if ev.new_state == "speaking":
             self._agent_speaking, self._agent_speech_start = True, now
             self._barge_latency_ms = None
-            if self._awaiting_prompt_start:
-                act, self._awaiting_prompt_start = self._awaiting_prompt_start, None
-                self._spawn(self._report_prompt_started(act, self._session_ms(now)))
         elif ev.old_state == "speaking":
             self._agent_speaking = False
             if self._agent_speech_start is not None:
@@ -438,6 +449,46 @@ class InterviewController:
             if self._barge_in_at is not None:
                 # Recorded only if the interviewer's item reports an interruption (see _on_item).
                 self._barge_latency_ms, self._barge_in_at = (now - self._barge_in_at) * 1000, None
+
+    # -- answer window: the moment the approved prompt itself starts playing (ADR-014) -------------
+    # Consecutive speeches (a neutral reply, then the prompt) can play back to back without an agent
+    # state change, so the window is tied to the prompt's own SpeechHandle, never to "agent speaking".
+    def _wire_playback(self, session: AgentSession[None]) -> None:
+        audio_out = getattr(session.output, "audio", None)
+        if audio_out is not None:
+            audio_out.on("playback_started", self._on_playback_started)
+
+    def _watch_prompt(self, activation_id: str, handle: Any) -> None:
+        if handle is None:
+            return
+        self._prompt_handle, self._prompt_activation = handle, activation_id
+        handle.add_done_callback(self._on_prompt_done)
+
+    def _on_playback_started(self, ev: Any) -> None:
+        handle = self._prompt_handle
+        if handle is not None and self.session is not None and self.session.current_speech is handle:
+            self._report_prompt(handle, float(ev.created_at))
+
+    def _on_prompt_done(self, handle: Any) -> None:
+        if self._prompt_handle is not handle:
+            return  # already reported, or superseded by a newer prompt
+        for item in getattr(handle, "chat_items", []) or []:
+            started = (getattr(item, "metrics", None) or {}).get("started_speaking_at")
+            if getattr(item, "role", None) == "assistant" and started:
+                activation = self._prompt_activation
+                self._report_prompt(handle, float(started))
+                queued = self._interviewer_segments.get(str(getattr(item, "id", "")))
+                if queued is not None and activation is not None and not queued.get("sent"):
+                    queued["prompt_activation_id"] = activation  # the item was queued before the handle finished
+                return
+        self._prompt_handle = None  # never played (interrupted before audio): the server keeps its default window
+
+    def _report_prompt(self, handle: Any, at_wall: float) -> None:
+        if self._prompt_handle is not handle or self._prompt_activation is None:
+            return
+        self._prompt_handle = None
+        self._delivery = (self._prompt_activation, at_wall)
+        self._spawn(self._report_prompt_started(self._prompt_activation, self._session_ms(at_wall)))
 
     async def _report_prompt_started(self, activation_id: str, at_ms: int) -> None:
         with contextlib.suppress(ControlPlaneError):
@@ -454,21 +505,34 @@ class InterviewController:
         text = getattr(item, "text_content", None) or ""
         if not text.strip():
             return
-        end = self.clock()
-        start = self._agent_speech_start or end
-        self._enqueue(
-            {
-                "speaker": "interviewer",
-                "text": text,
-                "start": start,
-                "end": end,
-                "source": "interviewer_output",
-                "interrupted": interrupted,
-                "provider_item_id": getattr(item, "id", None),
-                "overlap": False,
-                "language": self.ctx.get("language"),
-            }
-        )
+        # Per-item playout timing measured by the framework; agent state alone cannot separate
+        # back-to-back speeches.
+        timing = getattr(item, "metrics", None) or {}
+        end = float(timing.get("stopped_speaking_at") or self.clock())
+        started = timing.get("started_speaking_at")
+        start = float(started or self._agent_speech_start or end)
+        # The item whose playout began when the prompt began is the prompt delivery: both timestamps
+        # come from the same first-frame event. Only that segment is compared with the approved text.
+        delivered: str | None = None
+        if self._delivery is not None and started is not None and abs(float(started) - self._delivery[1]) < 0.05:
+            delivered, self._delivery = self._delivery[0], None
+        seg = {
+            "speaker": "interviewer",
+            "text": text,
+            "start": start,
+            "end": end,
+            "source": "interviewer_output",
+            "interrupted": interrupted,
+            "provider_item_id": getattr(item, "id", None),
+            "overlap": False,
+            "language": self.ctx.get("language"),
+            "prompt_activation_id": delivered,
+        }
+        if seg["provider_item_id"]:
+            self._interviewer_segments[str(seg["provider_item_id"])] = seg
+            if len(self._interviewer_segments) > 64:
+                self._interviewer_segments.pop(next(iter(self._interviewer_segments)))
+        self._enqueue(seg)
         active = self.ctx.get("active_prompt") or {}
         for flag in monitor.scan(text):
             self._flags.append({"flag": flag, "activation_id": active.get("activation_id")})
@@ -539,13 +603,16 @@ class InterviewController:
             "asr_model": self.engine.asr_model if seg["speaker"] == "candidate" else None,
             "engine": self.engine.name,
             "signals": {"overlapped_interviewer_audio": bool(seg["overlap"]), "low_energy": False},
+            "prompt_activation_id": seg.get("prompt_activation_id") if seg["speaker"] == "interviewer" else None,
         }
 
     async def _segment_worker(self) -> None:
         while True:
             seg = await self._segments.get()
             try:
-                await self.cp.submit_segment(self.submission(seg))
+                body = self.submission(seg)
+                seg["sent"] = True
+                await self.cp.submit_segment(body)
             except ControlPlaneError as e:
                 if 400 <= e.status < 500:
                     # Refused for good (e.g. inside a pause): it is not part of any answer, so the

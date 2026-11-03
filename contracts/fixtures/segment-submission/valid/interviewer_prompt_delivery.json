@@ -1,0 +1,19 @@
+{
+  "segment_key": "AJ_1:i:000004",
+  "speaker": "interviewer",
+  "text": "Can you explain how PostgreSQL's multiversion concurrency control works, and what problem it solves?",
+  "start_ms": 10039,
+  "end_ms": 14061,
+  "source": "interviewer_output",
+  "confidence": null,
+  "language": "en",
+  "interrupted": false,
+  "provider_item_id": "item_def",
+  "asr_model": null,
+  "engine": "openai_realtime",
+  "signals": {
+    "overlapped_interviewer_audio": false,
+    "low_energy": false
+  },
+  "prompt_activation_id": "act_0123456789abcdefAB"
+}

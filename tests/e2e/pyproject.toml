@@ -1,0 +1,37 @@
+[project]
+name = "ati-e2e"
+version = "0.1.0"
+description = "End-to-end media tests: synthetic candidate over real WebRTC against the local stack (tools/dev/stack.sh)."
+requires-python = ">=3.12,<3.15"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "livekit==1.1.21",
+  "livekit-api==1.2.2",
+  "httpx>=0.28,<1",
+  "numpy>=2.1",
+  "psycopg[binary]>=3.2,<4",
+  "pytest>=9.1,<10",
+  "pytest-asyncio>=1.2",
+  "ruff>=0.16",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+addopts = "-ra --strict-markers -p no:cacheprovider"
+
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "RUF"]
+# Test helpers take explicit wait budgets.
+ignore = ["ASYNC109"]

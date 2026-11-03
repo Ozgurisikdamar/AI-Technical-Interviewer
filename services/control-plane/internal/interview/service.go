@@ -27,11 +27,14 @@ type Settings struct {
 	InvitationTTL       time.Duration
 	CandidateSessionTTL time.Duration
 	LeaseTTL            time.Duration
-	Retention           config.Retention
-	RecordingEnabled    bool
-	RecordingAttested   bool
-	NoticeID            string
-	NoticeVersion       string
+	// AgentDispatchTimeout bounds how long a live session may wait for an interviewer agent
+	// before it is paused as agent_unavailable (ADR-016). Default 30s.
+	AgentDispatchTimeout time.Duration
+	Retention            config.Retention
+	RecordingEnabled     bool
+	RecordingAttested    bool
+	NoticeID             string
+	NoticeVersion        string
 	// FutureToleranceMs bounds clock skew for agent-reported timestamps.
 	FutureToleranceMs int64
 	// PromptDeviationThreshold is an uncalibrated placeholder (ADR-014).
@@ -93,6 +96,9 @@ func New(pool *pgxpool.Pool, machine *flow.Machine, settings Settings, effects E
 	}
 	if settings.PromptDeviationThreshold == 0 {
 		settings.PromptDeviationThreshold = 0.6
+	}
+	if settings.AgentDispatchTimeout == 0 {
+		settings.AgentDispatchTimeout = 30 * time.Second
 	}
 	implemented := map[string]bool{}
 	for _, g := range implementedGuards {

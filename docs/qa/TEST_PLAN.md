@@ -22,23 +22,23 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | QA-AN-05 | 1/5/10% packet loss | 6 | — | Blocked: no `tc`/netem in this environment |
 | QA-AN-06 | High jitter, bandwidth throttling | 6 | — | Blocked: no `tc`/netem |
 | QA-AN-07 | TURN relay path | 6 | — | Blocked: no TURN/relay lab |
-| QA-AN-08 | Reconnect after temporary disconnect | 1 | E + W: refresh/disconnect → PAUSED → resume | Planned (M7, M8) |
-| QA-AN-09 | Candidate speaks while AI output is active (barge-in) | 1 | E: barge-in stop latency, state preserved | Planned (M7) |
-| QA-AN-10 | Candidate silence vs packet loss | 1 | A: frame starvation ≠ silence; E: track loss pauses turn-taking | Planned (M6, M7) |
+| QA-AN-08 | Reconnect after temporary disconnect | 1 | E: `test_disconnect_pauses_and_resume_reasks_as_a_new_activation`; W: refresh (M8) | E: Verified (scripted, loopback); W: Planned (M8) |
+| QA-AN-09 | Candidate speaks while AI output is active (barge-in) | 1 | E: `test_barge_in_stops_the_interviewer_and_keeps_the_answer_open` | Verified (scripted, loopback) |
+| QA-AN-10 | Candidate silence vs packet loss | 1 | A: `test_missing_frames_never_end_a_turn`, `test_tool_refuses_while_candidate_audio_is_degraded`; E: participant loss pauses | Verified (A); E: Verified (scripted, loopback) for participant loss; packet loss Blocked |
 | QA-AN-11 | Multiple browsers and devices | 6 | — | Phase 6 (Chromium only in Phase 1) |
 
 ## State and data integrity (TM §5)
 
 | ID | Scenario | Phase | Test | Status |
 |---|---|---|---|---|
-| QA-SD-01 | Duplicate answer event | 1 | G: concurrent/duplicate completion requests | Planned (M3, M4) |
+| QA-SD-01 | Duplicate answer event | 1 | G: `TestConcurrentCompletionFinalizesExactlyOnce`; E: one answer per item | Verified |
 | QA-SD-02 | Duplicate evaluation job | 2 | — | Phase 2 |
-| QA-SD-03 | Out-of-order transcript segments | 1 | G: ingestion ordering | Planned (M4) |
-| QA-SD-04 | Missing transcript segment | 1 | G: flush deadline → `missing_segments=true` | Planned (M4) |
+| QA-SD-03 | Out-of-order transcript segments | 1 | G: `TestAttributionUsesSpeechTimeNotArrivalTime`, `TestConcurrentIngestionAssignsGaplessSequences` | Verified |
+| QA-SD-04 | Missing transcript segment | 1 | G: `TestCandidateButtonPathWaitsForFlushOrDeadline`; A: undelivered segments keep the manifest incomplete | Verified |
 | QA-SD-05 | Transcript revision after evaluation | 2 | — | Phase 2 (append-only versions in place from M3) |
-| QA-SD-06 | Concurrent state transition requests | 1 | G: `-race` concurrency suite | Planned (M3) |
-| QA-SD-07 | Session pause/resume race | 1 | G: concurrent pause/resume | Planned (M3) |
-| QA-SD-08 | Worker restart during processing | 1 | E: agent crash → lease expiry → re-dispatch | Planned (M7) |
+| QA-SD-06 | Concurrent state transition requests | 1 | G: `TestConcurrentPauseResumeStorm`, `TestStaleVersionsAreRejected` (race detector) | Verified |
+| QA-SD-07 | Session pause/resume race | 1 | G: `TestConcurrentPauseResumeStorm` | Verified |
+| QA-SD-08 | Worker restart during processing | 1 | E: `test_agent_crash_is_replaced_without_duplicate_agents`; G: `TestLeaseExpiryPausesTheInterview`, `TestMissingAgentPausesAfterTheDispatchTimeout` | Verified (G); E: Verified (scripted, loopback) |
 | QA-SD-09 | Database timeout and recovery | 6 | — | Phase 6 |
 | QA-SD-10 | Queue consumer crash and reclaim | 2 | — | Phase 2 |
 | QA-SD-11 | Qdrant unavailability, canonical fallback | 2 | — | Phase 2 |
@@ -47,13 +47,13 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 
 | ID | Scenario | Phase | Test | Status |
 |---|---|---|---|---|
-| QA-AI-01 | Spoken "ignore all previous instructions" | 1 | A + E: adversarial scripted transcripts (system-level blast radius); live model | Planned (M6); live model Blocked: no provider credentials |
-| QA-AI-02 | Ask for system prompt or hidden rubric | 1 | A: rubric never in context; output monitor flags disclosure | Planned (M6) |
+| QA-AI-01 | Spoken "ignore all previous instructions" | 1 | A: candidate text never in instructions; E: `test_prompt_injection_changes_nothing` | Verified (A); E: Verified (scripted, loopback); live model Blocked: no provider credentials |
+| QA-AI-02 | Ask for system prompt or hidden rubric | 1 | C/G: rubric never in the Tier-1 context; A: `test_monitor_flags_disclosures` | Verified (heuristic monitor, uncalibrated) |
 | QA-AI-03 | Attempt to change score | 1 | C: no score field or endpoint exists; G: no score route | Verified (C: `test_api_exposes_no_scoring_or_decision_surface`, `test_tier1_context_contains_no_evaluation_concepts`) |
 | QA-AI-04 | Prompt injection in resume | 3 | — | Phase 3 |
 | QA-AI-05 | Prompt injection in job description | 3 | — | Phase 3 |
 | QA-AI-06 | Instruction embedded in retrieved reference | 2 | — | Phase 2 |
-| QA-AI-07 | Tool invocation without authorization | 1 | G: compromised-agent suite; A: tool schema has no args | Planned (M4, M6) |
+| QA-AI-07 | Tool invocation without authorization | 1 | G: `TestCompromisedAgentCannotEscalate`; A: `test_the_model_has_exactly_one_tool_without_parameters`; E: forbidden tool call has no effect | Verified |
 | QA-AI-08 | Malformed evaluator JSON | 2 | C: schema rejects malformed fixtures; validator Phase 2 | Partial: schema fixtures Verified (C) |
 | QA-AI-09 | Fabricated evidence timestamps | 2 | — | Phase 2 (schema requires segment IDs + quote: Verified C) |
 | QA-AI-10 | Unsupported technical claims | 2 | — | Phase 2 |
@@ -70,12 +70,12 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 
 | ID | Scenario | Phase | Test | Status |
 |---|---|---|---|---|
-| QA-FA-01 | Turkish and English sessions | 1 | C: en/tr plans + notices; A: language propagated to engine | Partial: content Verified (C); engine Planned (M6) |
+| QA-FA-01 | Turkish and English sessions | 1 | C: en/tr plans + notices; A: `test_language_instruction_follows_the_context`, `test_openai_provider_configuration` | Verified (configuration); Turkish speech quality Phase 6 |
 | QA-FA-02 | Code-switching | 6 | — | Phase 6 (needs consented recordings) |
 | QA-FA-03 | Varied accents and speech rates | 6 | — | Phase 6 |
 | QA-FA-04 | Speech disability accommodations | 1 | W: text mode; ADR-018 | Planned (M9) |
 | QA-FA-05 | Text-only alternative | 1 | G + A + W: text responses | Planned (M9) |
-| QA-FA-06 | Long thinking pauses | 1 | A: `extended_pause` turn profile; no time-based auto-finalization | Planned (M6) |
+| QA-FA-06 | Long thinking pauses | 1 | G/A: answers close only by the tool or the candidate's button, never by silence; A: tool refuses while the candidate speaks | Verified; per-question turn profile not yet applied to the provider |
 | QA-FA-07 | Low-quality microphone | 6 | — | Phase 6 |
 | QA-FA-08 | Screen reader and keyboard navigation | 1 | W: keyboard path, ARIA live region | Planned (M8) |
 | QA-FA-09 | No scoring on accent or vocal traits | 1–2 | C: no such fields; recordings never used for voice assessment | Verified (C) structurally |
@@ -87,20 +87,20 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 |---|---|---|---|
 | BP18-01 | 1/5/10% loss, high jitter | QA-AN-05/06 | Blocked |
 | BP18-02 | Mic denied, device switch | QA-AN-01/03 | Planned (M8) |
-| BP18-03 | Refresh and reconnect | QA-AN-08 | Planned (M7, M8) |
-| BP18-04 | Barge-in during speech | QA-AN-09 | Planned (M7) |
-| BP18-05 | Duplicate/out-of-order transcript events | QA-SD-01/03 | Planned (M4) |
-| BP18-06 | Realtime, STT, evaluator timeout | A: failure injection → PAUSED | Planned (M6, M7); evaluator Phase 2 |
-| BP18-07 | Rate limits and provider outage | A: failure injection; G: invitation rate limit | Planned (M4, M6) |
+| BP18-03 | Refresh and reconnect | QA-AN-08 | E: Verified (scripted, loopback); W: Planned (M8) |
+| BP18-04 | Barge-in during speech | QA-AN-09 | Verified (scripted, loopback) |
+| BP18-05 | Duplicate/out-of-order transcript events | QA-SD-01/03 | Verified (G: `TestSegmentIdempotencyAndConflicts` + QA-SD-01/03) |
+| BP18-06 | Realtime, STT, evaluator timeout | A + E: provider failure → PAUSED, no finalization | Verified (scripted failure injection, loopback); evaluator Phase 2 |
+| BP18-07 | Rate limits and provider outage | A/E: failure injection; G: invitation rate limit | Verified (scripted outage; provider rate limits need the live engine) |
 | BP18-08 | PostgreSQL / Redis / Qdrant restart | QA-SD-09/11 | Phase 2/6 |
 | BP18-09 | Malformed evaluator JSON, partial output | QA-AI-08 | Phase 2 |
-| BP18-10 | Worker crash and retry duplication | QA-SD-08 | Planned (M7) |
-| BP18-11 | Prompt injection in audio/resume/JD/retrieval | QA-AI-01/04/05/06 | Audio Planned (M6); rest Phase 2/3 |
-| BP18-12 | Unauthorized API/tool access | G: authZ, cross-tenant, compromised agent | Planned (M4) |
-| BP18-13 | Concurrent session creation | G: concurrent create + idempotency | Planned (M4) |
+| BP18-10 | Worker crash and retry duplication | QA-SD-08 | Verified (G; E scripted, loopback) |
+| BP18-11 | Prompt injection in audio/resume/JD/retrieval | QA-AI-01/04/05/06 | Audio: Verified (scripted; live model Blocked); rest Phase 2/3 |
+| BP18-12 | Unauthorized API/tool access | G: authZ, cross-tenant, compromised agent | Verified (G: `TestCandidateIsolationAndTenantScoping`, `TestAgentRequestsNeedServiceTokenGrantAndCurrentFencing`, `TestClaimRequiresRealDispatchAndAgentParticipant`, `TestCompromisedAgentCannotEscalate`) |
+| BP18-13 | Concurrent session creation | G: idempotency replay and key reuse | Partial: `TestIdempotencyKeys` Verified; concurrent creation not yet tested |
 | BP18-14 | Appeal after report | — | Phase 5 |
 | BP18-15 | Accessibility and non-audio fallback | QA-FA-05/08 | Planned (M8, M9) |
-| BP18-INV | Voice failure must not corrupt evaluation state | E: provider failure → PAUSED, no finalization | Planned (M7) |
+| BP18-INV | Voice failure must not corrupt evaluation state | E: provider failure → PAUSED, no finalization | Verified (scripted, loopback) |
 
 ## PROMPT_AND_EVALUATION §8 required automated tests
 
@@ -111,7 +111,7 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | PE8-03 | Invalid/unknown rubric version | 2 | Phase 2 |
 | PE8-04 | Evidence timestamps beyond transcript length | 2 | Phase 2 |
 | PE8-05 | Evidence span from interviewer instead of candidate | 2 | Phase 2 |
-| PE8-06 | Empty or missing transcript segments | 1–2 | `missing_segments` flag Planned (M4); evaluation handling Phase 2 |
+| PE8-06 | Empty or missing transcript segments | 1–2 | `missing_segments` flag Verified (G); evaluation handling Phase 2 |
 | PE8-07 | Duplicate evaluation delivery | 2 | Phase 2 (outbox `event_id` dedupe basis Planned M4) |
 | PE8-08 | Retry after worker timeout | 2 | Phase 2 |
 | PE8-09 | Confidence routing | 2 | Phase 2 |

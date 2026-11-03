@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	origin       = "http://localhost:3000"
-	agentToken   = "ati-dev-agent-service-token-for-tests-0001"
+	origin     = "http://localhost:3000"
+	agentToken = "ati-dev-agent-service-token-for-tests-0001"
 	staffRowID = "stf_testtoken000000000000"
 )
 

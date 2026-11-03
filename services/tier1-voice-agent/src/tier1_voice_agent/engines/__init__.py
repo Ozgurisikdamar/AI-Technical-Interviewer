@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from livekit.agents import AgentSession
+from livekit.agents.voice import SpeechHandle
 
 # livekit-agents 1.8 can select hosted LiveKit Inference services on its own: the cloud end-of-turn
 # model (default turn detector in dev or hosted mode) and the adaptive interruption detector. Both
@@ -50,6 +51,7 @@ class VoiceEngine(Protocol):
 
     def build_session(self, *, language: str) -> AgentSession[None]: ...
 
-    async def speak_prompt(self, session: AgentSession[None], text: str, kind: str) -> None: ...
+    async def speak_prompt(self, session: AgentSession[None], text: str, kind: str) -> SpeechHandle | None:
+        """Deliver an approved prompt; the returned handle identifies its playout (answer window, ADR-014)."""
 
     async def speak_free(self, session: AgentSession[None], text: str) -> None: ...

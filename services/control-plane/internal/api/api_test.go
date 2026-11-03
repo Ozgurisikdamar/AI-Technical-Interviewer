@@ -11,6 +11,7 @@ import (
 
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/contracts"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/contracts/schema"
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/interview"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/realtime"
 )
 
@@ -307,5 +308,43 @@ func TestInvitationExchangeIsRateLimitedAndTextModeHonest(t *testing.T) {
 		if i < remaining && r.status != 410 {
 			t.Fatalf("attempt %d: want 410 for an unknown invitation, got %d", i, r.status)
 		}
+	}
+}
+
+func TestResumeDispatchesAReplacementForALostAgent(t *testing.T) {
+	e := newEnv(t)
+	id, cookie := e.interviewToReady()
+	a, _ := e.startAndClaim(id, cookie)
+	rt := e.do(req{method: "POST", url: e.public.URL + "/api/v1/interviews/" + id + "/realtime-session", cookie: cookie})
+	room := rt.str("room")
+	view := func() response {
+		return e.do(req{method: "GET", url: e.public.URL + "/api/v1/interviews/" + id, cookie: cookie})
+	}
+	// The agent hits a provider failure: it pauses the interview, releases its lease and leaves.
+	p := e.do(req{method: "POST", url: e.internal.URL + "/internal/v1/tier1/sessions/" + id + "/pause", headers: a.headers(), body: map[string]any{"state_version": view().num("state_version"), "reason": "provider_failure"}})
+	if p.status != 200 || p.str("state") != "PAUSED" {
+		t.Fatalf("agent pause: %d %s", p.status, p.raw)
+	}
+	if rel := e.do(req{method: "POST", url: e.internal.URL + "/internal/v1/tier1/sessions/" + id + "/lease/release", headers: a.headers()}); rel.status != 204 {
+		t.Fatalf("release: %d %s", rel.status, rel.raw)
+	}
+	e.media.Leave(room, "agent-AJ_1")
+	before, _ := e.media.ListDispatches(context.Background(), room)
+	r := e.do(req{method: "POST", url: e.public.URL + "/api/v1/interviews/" + id + "/resume", cookie: cookie, body: map[string]any{"state_version": view().num("state_version")}})
+	if r.status != 200 || r.str("state") != "CALIBRATION" {
+		t.Fatalf("resume: %d %s", r.status, r.raw)
+	}
+	after, _ := e.media.ListDispatches(context.Background(), room)
+	if len(after) != len(before)+1 {
+		t.Fatalf("resume must dispatch a replacement agent: %d -> %d", len(before), len(after))
+	}
+	// A second resume-equivalent request does not dispatch again while the new dispatch is pending.
+	if _, err := e.svc.EnsureAgentDispatch(context.Background(), id, interview.MediaOps{
+		RemoveStaleAgents: func(context.Context, string) error { return nil }, Dispatch: e.media.Dispatch,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := e.media.ListDispatches(context.Background(), room); len(again) != len(after) {
+		t.Fatal("pending dispatch must not be duplicated")
 	}
 }

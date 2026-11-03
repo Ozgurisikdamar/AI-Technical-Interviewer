@@ -4,13 +4,15 @@ It exercises the same AgentSession path as production (room I/O, interruption ha
 events, tool calls) without a model provider. Its transcripts are marked source=synthetic_test,
 and it is refused in production (ADR-011, ADR-020).
 
-Candidate intent is encoded in the duration of a synthetic speech burst, so end-to-end tests can
-drive the interview without real audio:
-    < 1.2 s  -> "part"      an ordinary answer fragment
-    1.2-2.0  -> "done"      the candidate says the answer is complete (model calls the tool)
-    2.0-2.8  -> "inject"    a prompt-injection attempt (model also emits a forbidden tool call)
-    2.8-3.6  -> "fail_llm"  the provider fails (failure injection)
-    >= 3.6   -> "long"      a long answer fragment
+Candidate intent is encoded in the pitch of a synthetic tone burst, so end-to-end tests can drive
+the interview without real audio. Pitch survives the WebRTC jitter buffer's time stretching, which
+made duration-based encoding unreliable under load:
+    300 Hz  -> "part"      an ordinary answer fragment
+    500 Hz  -> "done"      the candidate says the answer is complete (model calls the tool)
+    700 Hz  -> "inject"    a prompt-injection attempt (model also emits a forbidden tool call)
+    900 Hz  -> "fail_llm"  the provider fails (failure injection)
+    1100 Hz -> "long"      a long answer fragment
+Anything else is treated as "part". The interviewer's tone (440 Hz) is not an intent.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from livekit.agents import AgentSession, APIConnectionError, llm, stt, tts, vad
 from livekit.agents.language import LanguageCode
 from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, APIConnectOptions, NotGivenOr
 from livekit.agents.utils import AudioBuffer
+from livekit.agents.voice import SpeechHandle
 
 from . import MAX_TOOL_STEPS, turn_handling
 
@@ -36,17 +39,24 @@ END_SILENCE_S = 0.5
 TRANSCRIPTION_TIMEOUT_S = 2.0
 
 
-def classify(duration_s: float) -> str:
-    if duration_s < 1.2:
-        return "part"
-    if duration_s < 2.0:
-        return "done"
-    if duration_s < 2.8:
-        return "inject"
-    if duration_s < 3.6:
-        return "fail_llm"
-    return "long"
+INTENT_TONES_HZ = {"part": 300.0, "done": 500.0, "inject": 700.0, "fail_llm": 900.0, "long": 1100.0}
+TONE_TOLERANCE_HZ = 40.0  # well clear of the interviewer's 440 Hz and of neighbouring intents
 
+
+def classify(samples: np.ndarray, sample_rate: int) -> str:
+    """Intent from the dominant frequency of a speech burst."""
+    if samples.size < sample_rate // 20:
+        return "part"
+    x = samples.astype(np.float64) * np.hanning(samples.size)
+    spectrum = np.abs(np.fft.rfft(x))
+    freqs = np.fft.rfftfreq(samples.size, 1.0 / sample_rate)
+    peak = float(freqs[int(np.argmax(spectrum[1:])) + 1])
+    label, hz = min(INTENT_TONES_HZ.items(), key=lambda kv: abs(kv[1] - peak))
+    return label if abs(hz - peak) <= TONE_TOLERANCE_HZ else "part"
+
+
+# Neutral reply long enough (about 2.6 s of tone) for barge-in measurements.
+SCRIPTED_REPLY = "Please go on. Take your time and continue whenever you are ready."
 
 SCRIPTED_TEXT = {
     "part": "synthetic answer part",
@@ -153,8 +163,9 @@ class ScriptedSTT(stt.STT[Any]):
         self, buffer: AudioBuffer, *, language: NotGivenOr[str] = NOT_GIVEN, conn_options: APIConnectOptions
     ) -> stt.SpeechEvent:
         frames = buffer if isinstance(buffer, list) else [buffer]
-        duration = sum(f.samples_per_channel / f.sample_rate for f in frames)
-        text = SCRIPTED_TEXT[classify(duration)]
+        rate = frames[0].sample_rate if frames else 16000
+        samples = np.concatenate([np.frombuffer(f.data, dtype=np.int16)[:: f.num_channels] for f in frames]) if frames else np.zeros(0)
+        text = SCRIPTED_TEXT[classify(samples, rate)]
         return stt.SpeechEvent(
             type=stt.SpeechEventType.FINAL_TRANSCRIPT,
             alternatives=[stt.SpeechData(language=LanguageCode(self._language), text=text, confidence=1.0)],
@@ -224,7 +235,7 @@ class _ScriptedLLMStream(llm.LLMStream):
             )
             return
         if user_text:
-            self._event_ch.send_nowait(llm.ChatChunk(id=rid, delta=llm.ChoiceDelta(role="assistant", content="Please go on.")))
+            self._event_ch.send_nowait(llm.ChatChunk(id=rid, delta=llm.ChoiceDelta(role="assistant", content=SCRIPTED_REPLY)))
 
 
 class ToneTTS(tts.TTS[Any]):
@@ -279,8 +290,8 @@ class ScriptedEngine:
             transcription_timeout=TRANSCRIPTION_TIMEOUT_S,
         )
 
-    async def speak_prompt(self, session: AgentSession[None], text: str, kind: str) -> None:
-        session.say(text, allow_interruptions=True)
+    async def speak_prompt(self, session: AgentSession[None], text: str, kind: str) -> SpeechHandle | None:
+        return session.say(text, allow_interruptions=True)
 
     async def speak_free(self, session: AgentSession[None], text: str) -> None:
         session.say(text, allow_interruptions=True)

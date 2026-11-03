@@ -156,21 +156,111 @@ async def test_completion_speaks_the_closing_once_then_leaves(harness: Harness) 
     assert c._done.is_set()
 
 
+def test_clock_offset_ignores_jitter_and_follows_drift(harness: Harness) -> None:
+    c, _, _ = harness()
+    base = make_ctx()
+    epoch = base["timeline"]["epoch_unix_ms"]
+
+    def at(server_ms: int) -> dict[str, Any]:
+        ctx = make_ctx()
+        ctx["timeline"] = {"epoch_unix_ms": epoch, "server_now_unix_ms": server_ms}
+        return ctx
+
+    now_ms = int(time.time() * 1000)
+    c._update_skew(at(now_ms + 1000))
+    first = c._skew_s
+    c._update_skew(at(now_ms + 1030))  # 30 ms of response jitter
+    assert c._skew_s == first
+    c._update_skew(at(now_ms + 3000))  # two seconds of real drift
+    assert c._skew_s is not None and first is not None and c._skew_s - first > 1.5
+
+
 async def test_older_context_is_ignored(harness: Harness) -> None:
     c, _, engine = harness(make_ctx("QUESTION_ACTIVE", version=9))
     await c._apply(make_ctx("PAUSED", version=8))
     assert c.ctx["state"] == "QUESTION_ACTIVE" and engine.session.interrupts == 0
 
 
-async def test_prompt_start_is_reported_when_the_interviewer_starts_speaking(harness: Harness) -> None:
-    c, cp, _ = harness(make_ctx("CALIBRATION"))
+async def test_answer_window_opens_when_the_prompt_itself_plays(harness: Harness) -> None:
+    # A neutral reply is still playing when the next prompt is queued; both play back to back.
+    c, cp, engine = harness(make_ctx("CALIBRATION"))
+    session = engine.session
+    reply = object()
+    session.current_speech = reply
+    session.emit("agent_state_changed", old_state="listening", new_state="speaking")
     await c._apply(make_ctx("QUESTION_ACTIVE", version=8, activation=ACT1))
-    c.session.emit("agent_state_changed", old_state="thinking", new_state="speaking")  # type: ignore[union-attr]
-    c.session.emit("agent_state_changed", old_state="speaking", new_state="listening")  # type: ignore[union-attr]
-    c.session.emit("agent_state_changed", old_state="listening", new_state="speaking")  # type: ignore[union-attr]
+    t_reply = time.time()
+    session.output.audio.emit("playback_started", created_at=t_reply)  # the reply, not the prompt
     await settle()
-    reported = cp.named("prompt_started")
-    assert len(reported) == 1 and reported[0][0] == ACT1 and reported[0][1] > 0
+    assert cp.named("prompt_started") == []
+    session.current_speech = engine.handles[-1]
+    t_prompt = t_reply + 2.5
+    session.output.audio.emit("playback_started", created_at=t_prompt)
+    session.output.audio.emit("playback_started", created_at=t_prompt + 1)  # reported once
+    await settle()
+    [(act, at_ms)] = cp.named("prompt_started")
+    assert act == ACT1 and at_ms == c._session_ms(t_prompt)
+
+
+async def test_only_the_prompt_delivery_is_marked_for_comparison(harness: Harness, worker: Callable[[InterviewController], None]) -> None:
+    c, cp, engine = harness(make_ctx("CALIBRATION"))
+    worker(c)
+    session = engine.session
+    await c._apply(make_ctx("QUESTION_ACTIVE", version=8, activation=ACT1, text="Explain MVCC."))
+    t_reply, t_prompt = time.time() - 4.0, time.time() - 2.0
+    session.current_speech = engine.handles[-1]
+    session.output.audio.emit("playback_started", created_at=t_prompt)
+    for text, started in (("Please go on.", t_reply), ("Explain MVCC.", t_prompt), ("Take your time.", t_prompt + 3)):
+        item = SimpleNamespace(
+            role="assistant",
+            text_content=text,
+            interrupted=False,
+            id=f"it_{text[:4]}",
+            metrics={"started_speaking_at": started, "stopped_speaking_at": started + 1},
+        )
+        session.emit("conversation_item_added", item=item)
+    await settle(0.05)
+    marked = {s["text"]: s["prompt_activation_id"] for s in cp.segments}
+    assert marked == {"Please go on.": None, "Explain MVCC.": ACT1, "Take your time.": None}
+
+
+async def test_answer_window_falls_back_to_the_prompt_item_timing(harness: Harness) -> None:
+    c, cp, engine = harness(make_ctx("CALIBRATION"))
+    await c._apply(make_ctx("QUESTION_ACTIVE", version=8, activation=ACT1))
+    started = time.time() - 1.0
+    engine.handles[-1].finish(started_at=started)
+    await settle()
+    assert cp.named("prompt_started") == [(ACT1, c._session_ms(started))]
+
+
+async def test_a_prompt_that_never_played_reports_no_window(harness: Harness) -> None:
+    c, cp, engine = harness(make_ctx("CALIBRATION"))
+    await c._apply(make_ctx("QUESTION_ACTIVE", version=8, activation=ACT1))
+    engine.handles[-1].finish(started_at=None)
+    engine.session.current_speech = engine.handles[-1]
+    engine.session.output.audio.emit("playback_started", created_at=time.time())
+    await settle()
+    assert cp.named("prompt_started") == []
+
+
+async def test_interviewer_segments_use_the_items_own_playout_timing(
+    harness: Harness, worker: Callable[[InterviewController], None]
+) -> None:
+    c, cp, _ = harness(make_ctx("QUESTION_ACTIVE"))
+    worker(c)
+    t0 = time.time() - 3.0
+    c.session.emit("agent_state_changed", old_state="listening", new_state="speaking")  # type: ignore[union-attr]
+    item = SimpleNamespace(
+        role="assistant",
+        text_content="Please go on.",
+        interrupted=False,
+        id="it_9",
+        metrics={"started_speaking_at": t0, "stopped_speaking_at": t0 + 1.5},
+    )
+    c.session.emit("conversation_item_added", item=item)  # type: ignore[union-attr]
+    await settle(0.05)
+    [seg] = cp.segments
+    assert seg["start_ms"] == c._session_ms(t0) and seg["end_ms"] == c._session_ms(t0 + 1.5)
 
 
 async def test_first_calibration_transcript_completes_calibration(harness: Harness, worker: Callable[[InterviewController], None]) -> None:
@@ -194,6 +284,20 @@ async def test_tool_refuses_before_the_candidate_answers(harness: Harness) -> No
     assert result.startswith("Not possible now") and not cp.named("answer_complete")
 
 
+async def test_tool_decides_on_the_servers_current_state(harness: Harness, worker: Callable[[InterviewController], None]) -> None:
+    # The first words after a resume are "that is all": the agent has not yet seen CANDIDATE_SPEAKING.
+    c, cp, _ = harness(make_ctx("QUESTION_ACTIVE", version=20))
+    worker(c)
+    speak(c, start=True)
+    speak(c, start=False)
+    transcript(c, "that is all")
+    cp.server_ctx = make_ctx("CANDIDATE_SPEAKING", version=21)
+    result = await c.on_tool_mark_answer_complete()
+    assert result.startswith("The answer has been recorded")
+    [(version, activation, keys, cause)] = cp.named("answer_complete")
+    assert (version, activation, cause) == (21, ACT1, "agent_tool") and len(keys) == 1
+
+
 async def test_tool_refuses_while_candidate_audio_is_degraded(harness: Harness) -> None:
     c, cp, _ = harness(make_ctx("CANDIDATE_SPEAKING"))
     c._wire_room()
@@ -213,7 +317,7 @@ async def test_tool_completes_after_grace_with_the_flushed_manifest(
     speak(c, start=True)
     speak(c, start=False)
     transcript(c, "my answer")
-    cp.server_ctx = make_ctx("QUESTION_ACTIVE", version=13, activation=ACT2, text="Next")
+    cp.after_answer = make_ctx("QUESTION_ACTIVE", version=13, activation=ACT2, text="Next")
     result = await c.on_tool_mark_answer_complete()
     assert result.startswith("The answer has been recorded")
     [(version, activation, keys, cause)] = cp.named("answer_complete")

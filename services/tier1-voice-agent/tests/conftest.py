@@ -60,10 +60,42 @@ class FakeInput:
         self.audio_enabled.append(enabled)
 
 
+class FakeEmitter:
+    def __init__(self) -> None:
+        self.handlers: dict[str, list[Callable[[Any], None]]] = {}
+
+    def on(self, event: str, cb: Callable[[Any], None]) -> None:
+        self.handlers.setdefault(event, []).append(cb)
+
+    def emit(self, event: str, **fields: Any) -> None:
+        for cb in self.handlers.get(event, []):
+            cb(SimpleNamespace(**fields))
+
+
+class FakeHandle:
+    """Stands in for a livekit SpeechHandle."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.chat_items: list[Any] = []
+        self._callbacks: list[Callable[[Any], None]] = []
+
+    def add_done_callback(self, cb: Callable[[Any], None]) -> None:
+        self._callbacks.append(cb)
+
+    def finish(self, started_at: float | None) -> None:
+        if started_at is not None:
+            self.chat_items = [SimpleNamespace(role="assistant", metrics={"started_speaking_at": started_at})]
+        for cb in self._callbacks:
+            cb(self)
+
+
 class FakeSession:
     def __init__(self) -> None:
         self.handlers: dict[str, list[Callable[[Any], None]]] = {}
         self.input = FakeInput()
+        self.output = SimpleNamespace(audio=FakeEmitter())
+        self.current_speech: Any = None
         self.interrupts = 0
         self.started: dict[str, Any] | None = None
         self.closed = False
@@ -94,13 +126,16 @@ class FakeEngine:
     def __init__(self) -> None:
         self.session = FakeSession()
         self.spoken: list[tuple[str, str]] = []  # (kind, text)
+        self.handles: list[FakeHandle] = []
 
     def build_session(self, *, language: str) -> Any:
         self.language = language
         return self.session
 
-    async def speak_prompt(self, session: Any, text: str, kind: str) -> None:
+    async def speak_prompt(self, session: Any, text: str, kind: str) -> Any:
         self.spoken.append((kind, text))
+        self.handles.append(FakeHandle(text))
+        return self.handles[-1]
 
     async def speak_free(self, session: Any, text: str) -> None:
         self.spoken.append(("free", text))
@@ -128,6 +163,7 @@ class FakeControlPlane:
         self.segments: list[dict[str, Any]] = []
         self.segment_errors: dict[str, ControlPlaneError] = {}
         self.answer_error: ControlPlaneError | None = None
+        self.after_answer: dict[str, Any] | None = None  # context returned by answer_complete, if different
         self.lease: Lease | None = None
         self.closed = False
 
@@ -165,7 +201,7 @@ class FakeControlPlane:
         self.calls.append(("answer_complete", (state_version, activation_id, list(keys), cause)))
         if self.answer_error is not None:
             raise self.answer_error
-        return copy.deepcopy(self.server_ctx)
+        return copy.deepcopy(self.after_answer or self.server_ctx)
 
     async def pause(self, state_version: int, reason: str) -> dict[str, Any]:
         self.calls.append(("pause", (state_version, reason)))
@@ -210,8 +246,10 @@ def harness() -> Callable[..., tuple[InterviewController, FakeControlPlane, Fake
         c.session = engine.session  # type: ignore[assignment]
         c.agent = InterviewerAgent(instructions="x", controller=c)
         c._wire_events(c.session)
+        c._wire_playback(c.session)
         c.ctx = copy.deepcopy(ctx)
         c._previous_state = ctx["state"]
+        c._spoken_activation = (ctx.get("active_prompt") or {}).get("activation_id")  # as run() -> _apply() leaves it
         return c, cp, engine
 
     return make

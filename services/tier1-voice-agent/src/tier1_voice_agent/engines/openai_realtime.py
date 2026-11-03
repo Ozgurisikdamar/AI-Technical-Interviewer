@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from livekit.agents import AgentSession
+from livekit.agents.voice import SpeechHandle
 from livekit.plugins.openai.realtime import RealtimeModel
 from openai.types.realtime import AudioTranscription
 from openai.types.realtime.realtime_audio_input_turn_detection import SemanticVad
@@ -54,8 +55,8 @@ class OpenAIRealtimeEngine:
             max_tool_steps=MAX_TOOL_STEPS,
         )
 
-    async def speak_prompt(self, session: AgentSession[None], text: str, kind: str) -> None:
-        session.generate_reply(instructions=ask_instruction(text, kind))
+    async def speak_prompt(self, session: AgentSession[None], text: str, kind: str) -> SpeechHandle | None:
+        return session.generate_reply(instructions=ask_instruction(text, kind))
 
     async def speak_free(self, session: AgentSession[None], text: str) -> None:
         session.generate_reply(instructions=f"Say exactly this to the candidate, nothing more:\n«{text}»")

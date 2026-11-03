@@ -34,7 +34,12 @@ type Submission struct {
 		OverlappedInterviewerAudio bool `json:"overlapped_interviewer_audio"`
 		LowEnergy                  bool `json:"low_energy"`
 	} `json:"signals"`
+	// PromptActivationID marks the interviewer segment that delivered an approved prompt; only that
+	// segment is compared with the approved text (ADR-014).
+	PromptActivationID *string `json:"prompt_activation_id,omitempty"`
 }
+
+var activationIDPattern = regexp.MustCompile(`^act_[A-Za-z0-9]{16,}$`)
 
 // SegmentResult is returned to the agent.
 type SegmentResult struct {
@@ -68,6 +73,10 @@ func (sub *Submission) validate() error {
 		return &ValidationError{"text too long"}
 	case sub.Confidence != nil && (*sub.Confidence < 0 || *sub.Confidence > 1):
 		return &ValidationError{"confidence must be within [0,1]"}
+	case sub.PromptActivationID != nil && sub.Speaker != "interviewer":
+		return &ValidationError{"only interviewer segments can deliver a prompt"}
+	case sub.PromptActivationID != nil && !activationIDPattern.MatchString(*sub.PromptActivationID):
+		return &ValidationError{"prompt_activation_id is malformed"}
 	}
 	return nil
 }
@@ -151,10 +160,26 @@ func (s *Service) IngestSegment(ctx context.Context, actor Actor, lease LeaseRef
 		}
 		switch {
 		case sub.Speaker == "interviewer":
-			if act != nil {
-				sim := promptSimilarity(act.text, sub.Text)
-				similarity = &sim
-				flags["prompt_deviation"] = !sub.Interrupted && sim < s.settings.PromptDeviationThreshold
+			// Only the delivery of the approved prompt is compared with it; neutral turns are covered by
+			// the agent's output monitor (comparing them would flag every answer).
+			if sub.PromptActivationID != nil {
+				target := act
+				if target == nil || target.id != *sub.PromptActivationID {
+					// The delivery starts when its answer window opens; allow for millisecond rounding.
+					if target, err = s.deliveryActivation(ctx, tx, sessionID, *sub.PromptActivationID, sub.StartMs); err != nil {
+						return err
+					}
+				}
+				if target == nil {
+					if err := s.integrity(ctx, tx, sessionID, "prompt_delivery_mismatch", map[string]any{"segment_key": sub.SegmentKey}); err != nil {
+						return err
+					}
+				} else {
+					activationID, itemID = &target.id, &target.item
+					sim := promptSimilarity(target.text, sub.Text)
+					similarity = &sim
+					flags["prompt_deviation"] = !sub.Interrupted && sim < s.settings.PromptDeviationThreshold
+				}
 			}
 		case act != nil && act.closedFinalized:
 			flags["late_arrival"] = true
@@ -252,6 +277,27 @@ func (s *Service) attribute(ctx context.Context, tx pgx.Tx, sessionID string, st
 	}
 	a.open = closeReason == nil
 	a.closedFinalized = closeReason != nil && *closeReason == "finalized"
+	return &a, nil
+}
+
+// promptDeliveryToleranceMs bounds how early a marked prompt delivery may start relative to the
+// answer window it opened (both are reported by the agent from the same playout event).
+const promptDeliveryToleranceMs = 250
+
+func (s *Service) deliveryActivation(ctx context.Context, tx pgx.Tx, sessionID, activationID string, startMs int64) (*attribution, error) {
+	var a attribution
+	err := tx.QueryRow(ctx, `SELECT a.id, a.item_id, q.text
+		FROM ati.question_activations a
+		JOIN ati.interview_sessions s ON s.id = a.session_id
+		JOIN ati.interview_questions q ON q.plan_id = s.plan_id AND q.plan_version = s.plan_version AND q.item_id = a.item_id
+		WHERE a.id = $1 AND a.session_id = $2 AND $3 >= coalesce(a.prompt_started_ms, a.opened_ms) - $4 AND (a.closed_ms IS NULL OR $3 < a.closed_ms)`,
+		activationID, sessionID, startMs, promptDeliveryToleranceMs).Scan(&a.id, &a.item, &a.text)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
 	return &a, nil
 }
 

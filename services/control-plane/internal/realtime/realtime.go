@@ -117,10 +117,19 @@ func (l *LiveKit) EnsureRoom(ctx context.Context, room string) error {
 // DeleteRoom removes the room; connected tokens stop working (ADR-016).
 func (l *LiveKit) DeleteRoom(ctx context.Context, room string) error {
 	_, err := l.rooms.DeleteRoom(ctx, &livekit.DeleteRoomRequest{Room: room})
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), "not found") {
-		return nil
+	if isNotFound(err) {
+		return nil // already gone (empty-room timeout): deletion is idempotent
 	}
 	return err
+}
+
+// isNotFound recognizes the server API's not-found errors (twirp code "not_found").
+func isNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not_found") || strings.Contains(msg, "not found") || strings.Contains(msg, "does not exist")
 }
 
 // CandidateToken issues a short-lived token: microphone-only publishing (none in text mode),

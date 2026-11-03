@@ -366,6 +366,11 @@ func (s *Server) RunSweepers(ctx context.Context) {
 			} else {
 				s.metrics.Sweep("lease_expired_pause", n)
 			}
+			if n, err := s.svc.SweepMissingAgents(ctx); err != nil {
+				s.log.Warn("missing-agent sweeper", slog.Any("error", err))
+			} else {
+				s.metrics.Sweep("agent_missing_pause", n)
+			}
 		case <-slow.C:
 			if n, err := s.svc.ExpirePausedSessions(ctx); err != nil {
 				s.log.Warn("pause expiry sweeper", slog.Any("error", err))

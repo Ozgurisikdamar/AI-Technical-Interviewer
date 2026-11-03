@@ -90,5 +90,17 @@ def test_production_refusals(override: dict[str, str], message: str) -> None:
         load({**PROD, **override})
 
 
+@pytest.mark.parametrize("value", ["0", "65", "many"])
+def test_max_sessions_is_bounded(value: str) -> None:
+    with pytest.raises(ConfigError, match="ATI_AGENT_MAX_SESSIONS"):
+        load({**BASE, "ATI_AGENT_MAX_SESSIONS": value})
+
+
 def test_explicit_proxy_is_kept() -> None:
     assert load({**BASE, "ATI_AGENT_HTTP_PROXY": "http://proxy.invalid:3128"}).http_proxy == "http://proxy.invalid:3128"
+
+
+def test_agent_name_override_must_not_redirect_registration() -> None:
+    with pytest.raises(ConfigError, match="LIVEKIT_AGENT_NAME_OVERRIDE"):
+        load({**BASE, "LIVEKIT_AGENT_NAME_OVERRIDE": "other-agent"})
+    assert load({**BASE, "LIVEKIT_AGENT_NAME_OVERRIDE": "ati-tier1-interviewer"}).agent_name == "ati-tier1-interviewer"

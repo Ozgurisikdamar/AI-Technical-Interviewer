@@ -336,7 +336,7 @@ func (s *Service) RenewLease(ctx context.Context, sessionID string, lease LeaseR
 
 // ReleaseLease ends the lease voluntarily (agent shutdown).
 func (s *Service) ReleaseLease(ctx context.Context, sessionID string, lease LeaseRef) error {
-	return s.inTx(ctx, func(tx pgx.Tx, _ *[]func(context.Context)) error {
+	return s.inTx(ctx, func(tx pgx.Tx, after *[]func(context.Context)) error {
 		sess, err := s.lockSession(ctx, tx, sessionID)
 		if err != nil {
 			return err
@@ -344,8 +344,10 @@ func (s *Service) ReleaseLease(ctx context.Context, sessionID string, lease Leas
 		if err := s.checkLease(ctx, tx, sess, lease, s.now().UTC()); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE ati.agent_leases SET ended_at = $2, end_reason = 'released' WHERE id = $1`, lease.LeaseID, s.now().UTC())
-		return err
+		if _, err := tx.Exec(ctx, `UPDATE ati.agent_leases SET ended_at = $2, end_reason = 'released' WHERE id = $1`, lease.LeaseID, s.now().UTC()); err != nil {
+			return err
+		}
+		return s.closeRoomAfterInterview(ctx, tx, sess, after, "agent_released")
 	})
 }
 
@@ -388,8 +390,9 @@ func (s *Service) ExpireLeases(ctx context.Context) (int, error) {
 					return err
 				}
 				paused++
+				return nil
 			}
-			return nil
+			return s.closeRoomAfterInterview(ctx, tx, sess, after, "agent_lease_expired")
 		})
 		if err != nil {
 			return paused, err

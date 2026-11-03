@@ -78,6 +78,7 @@ type Config struct {
 	InvitationTTL                time.Duration
 	CandidateSessionTTL          time.Duration
 	RoomDepartureTimeout         time.Duration
+	AgentDispatchTimeout         time.Duration
 	InvitationExchangesPerMinute int
 	TrustedProxies               []netip.Prefix
 
@@ -195,6 +196,7 @@ func Load(get Getenv) (*Config, error) {
 		InvitationTTL:        dur("ATI_INVITATION_TTL", "72h"),
 		CandidateSessionTTL:  dur("ATI_CANDIDATE_SESSION_TTL", "4h"),
 		RoomDepartureTimeout: dur("ATI_ROOM_DEPARTURE_TIMEOUT", "20s"),
+		AgentDispatchTimeout: dur("ATI_AGENT_DISPATCH_TIMEOUT", "30s"),
 		NoticeID:             opt("ATI_NOTICE_ID", "notice_default"),
 		NoticeVersion:        opt("ATI_NOTICE_VERSION", "2026-11-draft.1"),
 		ProductionGatesFile:  opt("ATI_PRODUCTION_GATES_FILE", ""),
