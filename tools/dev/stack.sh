@@ -5,6 +5,8 @@
 #   tools/dev/stack.sh down           stop everything and delete runtime state
 #   tools/dev/stack.sh status
 #   tools/dev/stack.sh restart        rebuild and restart the control plane and the agent
+#   tools/dev/stack.sh cp-restart     restart only the control plane (ATI_DEV_RECORDING=1: recording
+#                                     on, fail-closed: this stack has no egress service)
 #   tools/dev/stack.sh agent-kill     SIGKILL the agent process group (failure tests)
 #   tools/dev/stack.sh agent-start    start the agent again
 #   tools/dev/stack.sh web-up         build (if needed) and start the web UI on http://localhost:3000
@@ -145,6 +147,24 @@ ATI_AGENT_DISPATCH_TIMEOUT=${ATI_DEV_AGENT_DISPATCH_TIMEOUT:-30s}
 ATI_PAUSE_TIMEOUT=${ATI_DEV_PAUSE_TIMEOUT:-30m}
 ATI_LOG_LEVEL=info
 EOF
+  # ATI_DEV_RECORDING=1 turns recording on with every deployment precondition declared, so the
+  # fail-closed path can be exercised. This stack has no egress service: a recording can never
+  # start, and no audio is stored (ADR-017). The attestation is a development placeholder.
+  if [ "${ATI_DEV_RECORDING:-0}" = "1" ]; then
+    cat <<EOF
+ATI_RECORDING_ENABLED=true
+ATI_RECORDING_STORAGE_ENCRYPTION_ATTESTED=true
+ATI_RECORDING_S3_ENDPOINT=127.0.0.1:9
+ATI_RECORDING_S3_BUCKET=ati-dev-recordings
+ATI_RETENTION_AUDIO_RECORDING_DAYS=${ATI_DEV_RETENTION_DAYS:-7}
+EOF
+  fi
+}
+
+cp_start() {
+  cp_env >"$STATE/control-plane.env"
+  start control-plane "$STATE" env -i PATH="$PATH" HOME="$HOME" $(grep -v '^#' "$STATE/control-plane.env" | xargs) "$BIN/control-plane"
+  wait_http control-plane "http://$CP_INTERNAL/readyz"
 }
 
 agent_env() {
@@ -193,9 +213,7 @@ up() {
   write_livekit_config
   start livekit "$STATE" "$lk" --config "$STATE/livekit.yaml"
   wait_http livekit "http://127.0.0.1:$LK_PORT/"
-  cp_env >"$STATE/control-plane.env"
-  start control-plane "$STATE" env -i PATH="$PATH" HOME="$HOME" $(grep -v '^#' "$STATE/control-plane.env" | xargs) "$BIN/control-plane"
-  wait_http control-plane "http://$CP_INTERNAL/readyz"
+  cp_start
   if [ ! -x "$ROOT/services/tier1-voice-agent/.venv/bin/python" ]; then
     (cd "$ROOT/services/tier1-voice-agent" && uv sync --frozen)
   fi
@@ -247,9 +265,7 @@ restart() { # rebuild the control plane and restart it and the agent (PostgreSQL
   (cd "$ROOT/services/control-plane" && go build -o "$BIN/control-plane" ./cmd/control-plane && go build -o "$BIN/ati-admin" ./cmd/ati-admin)
   local admin; admin="$(cat "$ROOT/.cache/pg/admin_url")"
   "$BIN/ati-admin" migrate --url "${admin%/postgres*}/ati?sslmode=disable"
-  cp_env >"$STATE/control-plane.env"
-  start control-plane "$STATE" env -i PATH="$PATH" HOME="$HOME" $(grep -v '^#' "$STATE/control-plane.env" | xargs) "$BIN/control-plane"
-  wait_http control-plane "http://$CP_INTERNAL/readyz"
+  cp_start
   agent_start
 }
 
@@ -265,6 +281,7 @@ case "${1:-}" in
   down) down ;;
   status) status ;;
   restart) restart ;;
+  cp-restart) stop control-plane; cp_start ;; # same binary; picks up ATI_DEV_* settings (e.g. ATI_DEV_RECORDING=1)
   env) print_env ;;
   agent-kill)
     if pid_alive "$STATE/agent.pid"; then kill -KILL -- "-$(cat "$STATE/agent.pid")" 2>/dev/null || true; fi
@@ -273,5 +290,5 @@ case "${1:-}" in
   agent-start) agent_start ;;
   web-up) web_up ;;
   web-stop) stop web ;;
-  *) echo "usage: $0 up|down|status|restart|env|agent-kill|agent-start|web-up|web-stop" >&2; exit 2 ;;
+  *) echo "usage: $0 up|down|status|restart|cp-restart|env|agent-kill|agent-start|web-up|web-stop" >&2; exit 2 ;;
 esac

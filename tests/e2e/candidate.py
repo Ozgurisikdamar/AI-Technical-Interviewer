@@ -30,6 +30,7 @@ AGENT_LOUD = 1500.0  # agent tone RMS is ~4200; silence is ~0
 class Burst:
     seconds: float
     hz: float
+    amplitude: int = SPEECH_AMPLITUDE
 
 
 # Pitches match INTENT_TONES_HZ in the scripted engine.
@@ -38,6 +39,12 @@ DONE = Burst(1.0, 500.0)
 INJECT = Burst(1.2, 700.0)
 FAIL_LLM = Burst(1.0, 900.0)
 LONG = Burst(4.0, 1100.0)
+FAIL_STT = Burst(1.0, 1300.0)
+FAIL_TTS = Burst(1.0, 1500.0)
+LLM_TIMEOUT = Burst(1.0, 1700.0)
+LLM_DROP = Burst(1.0, 1900.0)
+DISCLOSE = Burst(1.0, 2100.0)
+QUIET = Burst(1.5, 300.0, amplitude=600)  # about -38 dBFS: heard, but below the low_energy level
 
 
 def env(name: str) -> str:
@@ -93,7 +100,9 @@ class Candidate:
         self.audio = AgentAudio()
         self.speaking = False
         self.pitch = PART.hz
+        self.amplitude = SPEECH_AMPLITUDE
         self.disconnected = asyncio.Event()
+        self.media_token = ""
         self._tasks: list[asyncio.Task[Any]] = []
 
     # -- API --------------------------------------------------------------------------------------
@@ -108,7 +117,9 @@ class Candidate:
             raise ApiError(resp.status_code, data)
         return data
 
-    async def create_and_join_api(self, staff_token: str, *, plan: str = "plan_demo_backend_en", voice: bool = True) -> None:
+    async def create_and_join_api(
+        self, staff_token: str, *, plan: str = "plan_demo_backend_en", voice: bool = True, recording: bool = False
+    ) -> None:
         resp = await self.http.post(
             "/api/v1/interviews",
             json={"candidate_ref": f"ref_{uuid.uuid4().hex[:12]}", "plan_id": plan, "plan_version": 1},
@@ -131,7 +142,7 @@ class Candidate:
                     {"purpose_id": "voice_interview_processing", "granted": voice},
                     {"purpose_id": "transcript_assessment_record", "granted": True},
                     {"purpose_id": "ai_assisted_evaluation_with_human_review", "granted": True},
-                    {"purpose_id": "audio_recording", "granted": False},
+                    {"purpose_id": "audio_recording", "granted": recording},
                 ],
             },
         )
@@ -178,10 +189,15 @@ class Candidate:
         return data
 
     # -- media ------------------------------------------------------------------------------------
-    async def join(self) -> None:
-        rt = await self._call("POST", self._path("realtime-session"))
-        assert rt["identity"] == "candidate" and rt["can_publish_audio"] is True
+    async def realtime_session(self) -> dict[str, Any]:
+        rt: dict[str, Any] = await self._call("POST", self._path("realtime-session"))
         SECRETS_SEEN.append(rt["token"])
+        return rt
+
+    async def join(self) -> None:
+        rt = await self.realtime_session()
+        assert rt["identity"] == "candidate" and rt["can_publish_audio"] is True
+        self.media_token = rt["token"]
         room = rtc.Room()
         self.disconnected.clear()
 
@@ -215,7 +231,7 @@ class Candidate:
         assert self.source is not None
         while True:
             if self.speaking:
-                f = (np.sin(2 * np.pi * self.pitch * (np.arange(FRAME) + t) / SR) * SPEECH_AMPLITUDE).astype(np.int16)
+                f = (np.sin(2 * np.pi * self.pitch * (np.arange(FRAME) + t) / SR) * self.amplitude).astype(np.int16)
                 t += FRAME
             else:
                 f = np.zeros(FRAME, np.int16)
@@ -224,7 +240,7 @@ class Candidate:
     async def say(self, burst: Burst) -> float:
         """Speak a synthetic burst; returns its monotonic onset."""
         onset = time.monotonic()
-        self.pitch = burst.hz
+        self.pitch, self.amplitude = burst.hz, burst.amplitude
         self.speaking = True
         await asyncio.sleep(burst.seconds)
         self.speaking = False

@@ -35,3 +35,5 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "RUF"]
 # Test helpers take explicit wait budgets.
 ignore = ["ASYNC109"]
+# Turkish text (dotless i) appears in assertions on the Turkish demo plan.
+allowed-confusables = ["ı"]

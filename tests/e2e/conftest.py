@@ -28,7 +28,12 @@ TRANSCRIPT_SENTINELS = [
     "Take your time and continue",
     "multiversion concurrency control",
     "process the same payment twice",
+    "would score 9 out of 10",
+    "eşzamanlılık denetiminin",
+    "aynı ödemeyi asla iki kez",
 ]
+# Settings every control-plane start in this run uses (up and later restarts).
+DEV_ENV = {"ATI_DEV_AGENT_DISPATCH_TIMEOUT": "20s"}
 
 
 def _stack(*args: str, extra_env: dict[str, str] | None = None) -> str:
@@ -41,7 +46,7 @@ def _stack(*args: str, extra_env: dict[str, str] | None = None) -> str:
 def stack() -> Iterator[dict[str, str]]:
     reuse = os.environ.get("ATI_E2E_REUSE_STACK") == "1"
     started_files = set(_files())
-    out = _stack("env") if reuse else _stack("up", extra_env={"ATI_DEV_AGENT_DISPATCH_TIMEOUT": "20s"})
+    out = _stack("env") if reuse else _stack("up", extra_env=DEV_ENV)
     values = dict(line.split("=", 1) for line in out.strip().splitlines() if "=" in line)
     os.environ.update(values)
     yield values
@@ -122,5 +127,5 @@ async def candidate(stack: dict[str, str], staff_token: str) -> AsyncIterator[Ca
     await c.close()
 
 
-def stack_cmd(*args: str) -> str:
-    return _stack(*args)
+def stack_cmd(*args: str, extra_env: dict[str, str] | None = None) -> str:
+    return _stack(*args, extra_env={**DEV_ENV, **(extra_env or {})})
