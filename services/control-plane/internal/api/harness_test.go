@@ -29,7 +29,7 @@ import (
 const (
 	origin       = "http://localhost:3000"
 	agentToken   = "ati-dev-agent-service-token-for-tests-0001"
-	staffTokenID = "stf_testtoken000000000000"
+	staffRowID = "stf_testtoken000000000000"
 )
 
 type syncBuffer struct {
@@ -99,7 +99,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	if _, err := db.Owner.Exec(context.Background(), `INSERT INTO ati.staff_tokens (id, tenant_id, token_hash, role, label, expires_at) VALUES ($1,$2,$3,'recruiter','test',now() + interval '1 day')`,
-		staffTokenID, e.tenant, ids.Hash(e.staff)); err != nil {
+		staffRowID, e.tenant, ids.Hash(e.staff)); err != nil {
 		t.Fatal(err)
 	}
 	return e
