@@ -1,0 +1,11 @@
+{
+  "plan_id": "plan_demo_backend_en",
+  "version": 1,
+  "status": "published",
+  "title": "Demo backend interview (synthetic content, not a validated assessment)",
+  "language": "en",
+  "seniority_band": "mid",
+  "role_family": "backend",
+  "synthetic": true,
+  "items": []
+}

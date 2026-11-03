@@ -1,0 +1,37 @@
+{
+  "segment_id": "seg_0123456789abcdefAB",
+  "session_id": "ses_0123456789abcdefAB",
+  "question_id": "q1",
+  "activation_id": "act_0123456789abcdefAB",
+  "turn_id": "t_0001",
+  "sequence": 14,
+  "start_ms": 12000,
+  "end_ms": 18400,
+  "speaker": "interviewer",
+  "text": "Can you explain how",
+  "source": "interviewer_output",
+  "transcript_version": 1,
+  "confidence": null,
+  "language": "en",
+  "evidence_eligible": false,
+  "quality": "unverified",
+  "interrupted": true,
+  "flags": {
+    "possible_echo": false,
+    "low_energy": false,
+    "unassigned": false,
+    "prompt_deviation": false,
+    "late_arrival": false
+  },
+  "prompt_similarity": 0.62,
+  "provenance": {
+    "producer": "tier1_agent",
+    "lease_id": "lea_0123456789abcdefAB",
+    "fencing_token": 3,
+    "provider_item_id": "item_abc",
+    "asr_model": "gpt-4o-transcribe",
+    "engine": "openai_realtime"
+  },
+  "audio_ref": null,
+  "created_at": "2026-11-03T12:00:00Z"
+}

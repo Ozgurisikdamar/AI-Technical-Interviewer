@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/events/answer-finalized-v1.schema.json",
+  "title": "answer.finalized v1 (Tier-1 to Tier-2 handoff event)",
+  "description": "Written to the transactional outbox in the same transaction that finalizes an answer (ADR-015). Carries identifiers only: no transcript text, no interaction timing telemetry. Tier-2 consumers read evidence through their own least-privilege database role and must skip sessions that end CANCELLED.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_type",
+    "event_version",
+    "event_id",
+    "occurred_at",
+    "tenant_id",
+    "session_id",
+    "answer_id",
+    "answer_version",
+    "plan",
+    "item_id",
+    "parent_item_id",
+    "rubric_ref",
+    "transcript_version",
+    "segment_ids",
+    "last_sequence",
+    "missing_segments",
+    "integrity_flags",
+    "finalization_cause"
+  ],
+  "properties": {
+    "event_type": {"const": "answer.finalized"},
+    "event_version": {"const": 1},
+    "event_id": {"type": "string", "pattern": "^evt_[A-Za-z0-9]{16,}$"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "tenant_id": {"type": "string", "pattern": "^ten_[A-Za-z0-9]{16,}$"},
+    "session_id": {"type": "string", "pattern": "^ses_[A-Za-z0-9]{16,}$"},
+    "answer_id": {"type": "string", "pattern": "^ans_[A-Za-z0-9]{16,}$"},
+    "answer_version": {"type": "integer", "minimum": 1},
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_id", "version"],
+      "properties": {
+        "plan_id": {"type": "string", "minLength": 1},
+        "version": {"type": "integer", "minimum": 1}
+      }
+    },
+    "item_id": {"type": "string", "minLength": 1},
+    "parent_item_id": {"type": ["string", "null"], "minLength": 1},
+    "rubric_ref": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rubric_id", "version"],
+          "properties": {
+            "rubric_id": {"type": "string", "minLength": 1},
+            "version": {"type": "integer", "minimum": 1}
+          }
+        }
+      ]
+    },
+    "transcript_version": {"type": "integer", "minimum": 1},
+    "segment_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^seg_[A-Za-z0-9]{16,}$"}},
+    "last_sequence": {"type": ["integer", "null"], "minimum": 1},
+    "missing_segments": {"type": "boolean"},
+    "integrity_flags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["possible_echo", "low_energy", "unassigned_segments_in_session", "prompt_deviation", "late_arrival", "flush_deadline_elapsed", "synthetic_source"]}
+    },
+    "finalization_cause": {"enum": ["agent_tool", "candidate_request", "candidate_request_deadline"]}
+  }
+}

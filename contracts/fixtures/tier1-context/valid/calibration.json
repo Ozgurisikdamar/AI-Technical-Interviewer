@@ -1,0 +1,23 @@
+{
+  "context_schema": "tier1-context/v1",
+  "session_ref": "ses_0123456789abcdefAB",
+  "state": "CALIBRATION",
+  "state_version": 7,
+  "language": "en",
+  "seniority_band": "mid",
+  "modality": "voice_qa",
+  "input_mode": "voice",
+  "recording_active": false,
+  "policy": {
+    "hints_allowed": false,
+    "follow_up_source": "approved_plan_only"
+  },
+  "active_prompt": null,
+  "completed_prompts": [],
+  "pending_completion_request": null,
+  "pending_text_inputs": [],
+  "timeline": {
+    "epoch_unix_ms": 1793700000000,
+    "server_now_unix_ms": 1793700123456
+  }
+}

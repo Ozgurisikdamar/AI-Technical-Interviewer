@@ -1,0 +1,19 @@
+{
+  "description": "Versioned prompt templates copied verbatim from PROMPT_AND_EVALUATION.md. Drift tests compare these files with the document; sha256 pins are checked at agent start-up.",
+  "prompts": {
+    "tier1-interviewer": {
+      "version": "1",
+      "path": "tier1-interviewer/v1/system.txt",
+      "sha256": "257b76a16cab8f1fda1df4b7578cf51a30fb3004164344748d0fdd975329b7ce",
+      "source": "docs/architecture/PROMPT_AND_EVALUATION.md section 1. Tier-1",
+      "lines": 41
+    },
+    "tier2-evaluator": {
+      "version": "1",
+      "path": "tier2-evaluator/v1/system.txt",
+      "sha256": "33b506f9f8199618cd75a7ca7607bda1525a41380807fbf3b3df29910f5aa974",
+      "source": "docs/architecture/PROMPT_AND_EVALUATION.md section 2. Tier-2",
+      "lines": 32
+    }
+  }
+}

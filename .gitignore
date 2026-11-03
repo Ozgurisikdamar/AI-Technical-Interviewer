@@ -1,0 +1,42 @@
+# Secrets and local environment files (never commit real credentials)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Candidate data and audio must never be committed (repo convention)
+*.wav
+*.ogg
+*.opus
+*.mp3
+*.m4a
+*.flac
+*.webm
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Go
+/services/control-plane/bin/
+*.test
+coverage.out
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+apps/web/test-results/
+apps/web/playwright-report/
+*.tsbuildinfo
+
+# Local tooling caches and E2E run output
+.cache/
+tests/e2e/.run/
+.DS_Store

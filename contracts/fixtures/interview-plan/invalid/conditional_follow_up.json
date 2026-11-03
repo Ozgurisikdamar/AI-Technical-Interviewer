@@ -1,0 +1,51 @@
+{
+  "plan_id": "plan_demo_backend_en",
+  "version": 1,
+  "status": "published",
+  "title": "Demo backend interview (synthetic content, not a validated assessment)",
+  "language": "en",
+  "seniority_band": "mid",
+  "role_family": "backend",
+  "synthetic": true,
+  "items": [
+    {
+      "item_id": "q1",
+      "text": "Can you explain how PostgreSQL's multiversion concurrency control works, and what problem it solves?",
+      "modality": "voice_qa",
+      "turn_profile": "standard",
+      "rubric_ref": {
+        "rubric_id": "rub_demo_postgres_mvcc",
+        "version": 1
+      },
+      "follow_ups": [
+        {
+          "item_id": "q1f1",
+          "text": "How does vacuuming relate to that design?",
+          "policy": "if_answer_incomplete"
+        }
+      ]
+    },
+    {
+      "item_id": "q2",
+      "text": "Imagine an API that must never process the same payment twice when clients retry. How would you design it?",
+      "modality": "voice_qa",
+      "turn_profile": "extended_pause",
+      "rubric_ref": {
+        "rubric_id": "rub_demo_idempotency",
+        "version": 1
+      },
+      "follow_ups": []
+    },
+    {
+      "item_id": "q3",
+      "text": "How would you investigate a sudden increase in p99 latency for a service you own?",
+      "modality": "voice_qa",
+      "turn_profile": "standard",
+      "rubric_ref": {
+        "rubric_id": "rub_demo_latency_investigation",
+        "version": 1
+      },
+      "follow_ups": []
+    }
+  ]
+}

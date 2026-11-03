@@ -1,0 +1,29 @@
+{
+  "event_type": "answer.finalized",
+  "event_version": 1,
+  "event_id": "evt_0123456789abcdefAB",
+  "occurred_at": "2026-11-03T12:00:05Z",
+  "tenant_id": "ten_0123456789abcdefAB",
+  "session_id": "ses_0123456789abcdefAB",
+  "answer_id": "ans_0123456789abcdefAB",
+  "answer_version": 1,
+  "plan": {
+    "plan_id": "plan_demo_backend_en",
+    "version": 1
+  },
+  "item_id": "q1f1",
+  "parent_item_id": "q1",
+  "rubric_ref": {
+    "rubric_id": "rub_demo_postgres_mvcc",
+    "version": 1
+  },
+  "transcript_version": 1,
+  "segment_ids": [
+    "seg_0123456789abcdefAB"
+  ],
+  "last_sequence": 14,
+  "missing_segments": false,
+  "integrity_flags": [],
+  "finalization_cause": "agent_tool",
+  "text": "PostgreSQL uses MVCC"
+}

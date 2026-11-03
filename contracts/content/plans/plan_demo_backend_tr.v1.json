@@ -1,0 +1,51 @@
+{
+  "plan_id": "plan_demo_backend_tr",
+  "version": 1,
+  "status": "published",
+  "title": "Demo backend mülakatı (sentetik içerik, doğrulanmış bir değerlendirme değildir)",
+  "language": "tr",
+  "seniority_band": "mid",
+  "role_family": "backend",
+  "synthetic": true,
+  "items": [
+    {
+      "item_id": "q1",
+      "text": "PostgreSQL'in çoklu sürüm eşzamanlılık denetiminin (MVCC) nasıl çalıştığını ve hangi sorunu çözdüğünü açıklayabilir misiniz?",
+      "modality": "voice_qa",
+      "turn_profile": "standard",
+      "rubric_ref": {
+        "rubric_id": "rub_demo_postgres_mvcc",
+        "version": 1
+      },
+      "follow_ups": [
+        {
+          "item_id": "q1f1",
+          "text": "VACUUM işleminin bu tasarımla ilişkisi nedir?",
+          "policy": "always"
+        }
+      ]
+    },
+    {
+      "item_id": "q2",
+      "text": "İstemciler isteği yeniden denediğinde aynı ödemeyi asla iki kez işlememesi gereken bir API düşünün. Bunu nasıl tasarlardınız?",
+      "modality": "voice_qa",
+      "turn_profile": "extended_pause",
+      "rubric_ref": {
+        "rubric_id": "rub_demo_idempotency",
+        "version": 1
+      },
+      "follow_ups": []
+    },
+    {
+      "item_id": "q3",
+      "text": "Sorumlu olduğunuz bir serviste p99 gecikmesindeki ani bir artışı nasıl araştırırdınız?",
+      "modality": "voice_qa",
+      "turn_profile": "standard",
+      "rubric_ref": {
+        "rubric_id": "rub_demo_latency_investigation",
+        "version": 1
+      },
+      "follow_ups": []
+    }
+  ]
+}

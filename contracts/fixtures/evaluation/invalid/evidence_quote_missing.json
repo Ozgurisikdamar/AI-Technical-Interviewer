@@ -1,0 +1,64 @@
+{
+  "session_id": "ses_0123456789abcdefAB",
+  "question_id": "q1",
+  "evaluation_version": "rub_demo_postgres_mvcc@1",
+  "transcript_quality": {
+    "score": 0.9,
+    "language": "en",
+    "ambiguities": [],
+    "missing_segments": false
+  },
+  "scores": {
+    "technical_accuracy": 80,
+    "architecture_maturity": 60,
+    "edge_case_awareness": 50,
+    "claim_support": 70
+  },
+  "weighted_score": 67.5,
+  "confidence": {
+    "score": 0.7,
+    "calibrated": false,
+    "reason": "Uncalibrated model estimate; single evaluator."
+  },
+  "evidence": [
+    {
+      "dimension": "technical_accuracy",
+      "transcript_start_ms": 12000,
+      "transcript_end_ms": 18400,
+      "transcript_segment_ids": [
+        "seg_0123456789abcdefAB"
+      ],
+      "claim": "Candidate states PostgreSQL uses MVCC.",
+      "assessment": "correct",
+      "reference_ids": [
+        "rub_demo_postgres_mvcc#c1"
+      ]
+    },
+    {
+      "dimension": "edge_case_awareness",
+      "transcript_start_ms": 12000,
+      "transcript_end_ms": 18400,
+      "transcript_segment_ids": [
+        "seg_0123456789abcdefAB"
+      ],
+      "quote": "",
+      "claim": "Transaction ID wraparound is not discussed.",
+      "assessment": "not_addressed",
+      "reference_ids": [
+        "rub_demo_postgres_mvcc#c4"
+      ]
+    }
+  ],
+  "missing_concepts": [
+    "transaction id wraparound"
+  ],
+  "contradictions": [],
+  "unsupported_claims": [],
+  "hallucination_risk": {
+    "score": 10,
+    "severity": "low",
+    "evidence": []
+  },
+  "recommendation": "HUMAN_REVIEW",
+  "review_required": true
+}

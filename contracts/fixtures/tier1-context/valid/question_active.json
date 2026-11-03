@@ -1,0 +1,36 @@
+{
+  "context_schema": "tier1-context/v1",
+  "session_ref": "ses_0123456789abcdefAB",
+  "state": "QUESTION_ACTIVE",
+  "state_version": 7,
+  "language": "en",
+  "seniority_band": "mid",
+  "modality": "voice_qa",
+  "input_mode": "voice",
+  "recording_active": false,
+  "policy": {
+    "hints_allowed": false,
+    "follow_up_source": "approved_plan_only"
+  },
+  "active_prompt": {
+    "activation_id": "act_0123456789abcdefAB",
+    "item_ref": "q2",
+    "kind": "question",
+    "text": "Imagine an API that must never process the same payment twice when clients retry. How would you design it?",
+    "turn_profile": "extended_pause",
+    "prompt_started": false
+  },
+  "completed_prompts": [
+    {
+      "item_ref": "q1",
+      "kind": "question",
+      "text": "Can you explain how PostgreSQL's multiversion concurrency control works, and what problem it solves?"
+    }
+  ],
+  "pending_completion_request": null,
+  "pending_text_inputs": [],
+  "timeline": {
+    "epoch_unix_ms": 1793700000000,
+    "server_now_unix_ms": 1793700123456
+  }
+}

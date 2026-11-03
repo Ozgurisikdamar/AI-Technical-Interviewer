@@ -1,0 +1,82 @@
+{
+  "notice_id": "notice_default",
+  "version": "2026-11-draft.1",
+  "status": "draft",
+  "language": "tr",
+  "title": "Mülakattan önce: bilgileriniz nasıl kullanılır (TASLAK)",
+  "sections": [
+    {
+      "heading": "Bu metnin durumu",
+      "text": "YALNIZCA ÜRETİM DIŞI KULLANIM İÇİN TASLAK. Bu metin hukuk danışmanlarınca incelenmemiş ve onaylanmamıştır; gerçek adaylara gösterilmemelidir."
+    },
+    {
+      "heading": "Bu mülakat hakkında",
+      "text": "Bu, bir yapay zekâ mülakatçısı tarafından yürütülen yapılandırılmış bir teknik mülakattır. Yapay zekâ mülakatçısı onaylı soruları sorar; mülakat sırasında yanıtlarınızı puanlamaz veya yargılamaz."
+    },
+    {
+      "heading": "Zamanlama bilgileri",
+      "text": "Yanıtlarınız, konuşmaya başladığınız anlar ve mülakatın duraklatıldığı anlar dahil zaman damgalarıyla saklanır. Zamanlama bilgileri hiçbir zaman kopya çekme veya kişilik çıkarımı için kullanılmaz ve puan düşürmek için kullanılmaz."
+    },
+    {
+      "heading": "İnsan sorumluluğu",
+      "text": "Hiçbir işe alım kararı otomatik olarak verilmez. Otomatik değerlendirmeler yalnızca sorumlu insan değerlendiricilere destek olur ve itiraz etme imkânınız olur."
+    },
+    {
+      "heading": "Seçimleriniz",
+      "text": "İstediğiniz zaman duraklatabilir, istediğiniz zaman mülakattan çekilebilir veya mikrofon yerine yazılı yanıt kullanabilirsiniz. İsteğe bağlı amaçları reddetmeniz mülakatınızı etkilemez."
+    },
+    {
+      "heading": "Saklama süresi",
+      "text": "Her veri kategorisi yalnızca bu sayfada gösterilen ve mülakat başlamadan önce politika ile belirlenen süre boyunca saklanır."
+    }
+  ],
+  "purposes": [
+    {
+      "purpose_id": "voice_interview_processing",
+      "required": false,
+      "basis": "to_be_determined_by_legal",
+      "title": "Canlı sesli görüşme",
+      "description": "Yapay zekâ mülakatçısının sizi duyup yanıt verebilmesi için mikrofon sesiniz gerçek zamanlı olarak mülakat hizmetine ve gerçek zamanlı konuşma sağlayıcısına iletilir. Ses kaydına ayrıca onay vermediğiniz sürece canlı ses saklanmaz. Reddederseniz mülakata yazılı yanıtlarla katılabilirsiniz.",
+      "data_categories": [
+        "live_audio_stream",
+        "interaction_timing"
+      ],
+      "retention_category": "session_events"
+    },
+    {
+      "purpose_id": "transcript_assessment_record",
+      "required": true,
+      "basis": "to_be_determined_by_legal",
+      "title": "Yanıtlarınızın yazılı kaydı",
+      "description": "Yanıtlarınız değerlendirilebilmesi, sonucu inceleyebilmeniz ve itiraz edebilmeniz için zaman damgalı yazılı bir döküm olarak saklanır.",
+      "data_categories": [
+        "transcript",
+        "interaction_timing"
+      ],
+      "retention_category": "transcript"
+    },
+    {
+      "purpose_id": "ai_assisted_evaluation_with_human_review",
+      "required": true,
+      "basis": "to_be_determined_by_legal",
+      "title": "İnsanlar tarafından incelenen değerlendirme desteği",
+      "description": "Mülakattan sonra dökümünüz, mülakat başlamadan önce sabitlenmiş bir değerlendirme ölçütüne göre incelenebilir. Otomatik çıktılar yalnızca insan değerlendiriciler için kanıttır; tek başına sizi reddetmek için asla kullanılmaz.",
+      "data_categories": [
+        "transcript",
+        "assessment_output"
+      ],
+      "retention_category": "assessment_output"
+    },
+    {
+      "purpose_id": "audio_recording",
+      "required": false,
+      "basis": "to_be_determined_by_legal",
+      "title": "İsteğe bağlı ses kaydı",
+      "description": "Onay verirseniz mikrofon sesinizin (mülakatçının sesi değil) şifrelenmiş bir kaydı, yalnızca dökümü doğrulamak ve itirazları ele almak için gösterilen saklama süresi boyunca tutulur. Ses, aksan veya ton değerlendirmesi için kullanılmaz.",
+      "data_categories": [
+        "audio_recording"
+      ],
+      "retention_category": "audio_recording"
+    }
+  ]
+}

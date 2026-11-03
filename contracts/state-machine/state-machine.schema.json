@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/state-machine-contract-v1.schema.json",
+  "title": "State machine contract format",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "id", "version", "status", "description", "source_documents", "initial_state", "actors", "states", "guards", "requests", "transitions", "invariants"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "status": {"enum": ["proposed", "accepted", "superseded"]},
+    "description": {"type": "string", "minLength": 1},
+    "source_documents": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "initial_state": {"type": "string"},
+    "actors": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "string", "minLength": 1},
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"}
+    },
+    "states": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "terminal", "transient", "requires_open_activation", "description"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[A-Z][A-Z_]*$"},
+          "kind": {"enum": ["pre_interview", "live", "post_interview", "terminal"]},
+          "terminal": {"type": "boolean"},
+          "transient": {"type": "boolean"},
+          "requires_open_activation": {"type": "boolean"},
+          "description": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "guards": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1},
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"}
+    },
+    "requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "actors", "allowed_in", "resolves_to", "description"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^R[0-9]{2}$"},
+          "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "actors": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "allowed_in": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "resolves_to": {"type": "string", "pattern": "^T[0-9]{2}$"},
+          "description": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "transitions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "from", "to", "event", "actors", "guards", "effects", "source", "phase"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^T[0-9]{2}$"},
+          "from": {"type": "string"},
+          "to": {"type": "string"},
+          "event": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "actors": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+          "requires_request": {"type": "string", "pattern": "^R[0-9]{2}$"},
+          "guards": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+          "effects": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}},
+          "source": {"type": "string", "pattern": "^(diagram|ADR-[0-9]{3})$"},
+          "diagram_label": {"type": "string", "minLength": 1},
+          "chain": {"type": "boolean"},
+          "phase": {"type": "integer", "minimum": 1, "maximum": 6}
+        }
+      }
+    },
+    "invariants": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "source", "statement"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^INV-[0-9]+$"},
+          "source": {"type": "string", "minLength": 1},
+          "statement": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

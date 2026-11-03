@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/events/interview-completed-v1.schema.json",
+  "title": "interview.completed v1",
+  "description": "Written to the outbox when the final answer chain reaches INTERVIEW_COMPLETED (transition T11). Never written for CANCELLED sessions (INV-10). Identifiers only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_type", "event_version", "event_id", "occurred_at", "tenant_id", "session_id", "plan", "answer_ids"],
+  "properties": {
+    "event_type": {"const": "interview.completed"},
+    "event_version": {"const": 1},
+    "event_id": {"type": "string", "pattern": "^evt_[A-Za-z0-9]{16,}$"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "tenant_id": {"type": "string", "pattern": "^ten_[A-Za-z0-9]{16,}$"},
+    "session_id": {"type": "string", "pattern": "^ses_[A-Za-z0-9]{16,}$"},
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_id", "version"],
+      "properties": {
+        "plan_id": {"type": "string", "minLength": 1},
+        "version": {"type": "integer", "minimum": 1}
+      }
+    },
+    "answer_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^ans_[A-Za-z0-9]{16,}$"}}
+  }
+}

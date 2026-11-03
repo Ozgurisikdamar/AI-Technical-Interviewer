@@ -11,6 +11,7 @@ The initial enterprise architecture package is available in [docs/architecture](
 - [Architecture Decisions & Implementation Roadmap](./docs/architecture/DECISIONS_AND_ROADMAP.md)
 - [Threat Model, Privacy & QA Plan](./docs/architecture/THREAT_MODEL_AND_QA.md)
 - [Technology Selection & Benchmark Plan](./docs/architecture/STACK_AND_BENCHMARK.md)
+- [Proposed ADRs (ADR-011 onward)](./docs/architecture/adr/README.md) and the [Phase 1 threat-model addendum](./docs/architecture/THREAT_MODEL_ADDENDUM_PHASE1.md)
 
 ## Core architecture principles
 
@@ -20,8 +21,23 @@ The initial enterprise architecture package is available in [docs/architecture](
 - Human review and candidate appeal are part of the product design.
 - Audio, transcript, CV, and telemetry are handled with privacy-by-design controls.
 
+## Repository layout
+
+Machine-readable contracts (state machine, JSON Schemas, prompts) live in [contracts/](./contracts/README.md), the HTTP API contract in [docs/contracts/openapi](./docs/contracts/openapi/control-plane.v1.yaml), and services under `services/` and `apps/`. See the [directory map](./docs/architecture/DIRECTORY_MAP.md).
+
 ## Status
 
-**Architecture and planning documents only.** This repository has not yet been verified as an implemented or production-ready application. Latency targets, rubric weights, and confidence thresholds are initial hypotheses that require benchmarks and human validation.
+**Pre-production. Not for use with real candidates.** What is built, verified, blocked or not started is tracked in [docs/status/IMPLEMENTATION_STATUS.md](./docs/status/IMPLEMENTATION_STATUS.md), and the test-to-requirement mapping is in [docs/qa/TEST_PLAN.md](./docs/qa/TEST_PLAN.md).
 
-See [the architecture index](./docs/architecture/README.md) to get started.
+- Phase 0 contracts are implemented and covered by automated tests. They are **Proposed** until human architecture review.
+- Latency targets, rubric weights and confidence thresholds remain hypotheses that require benchmarks and human validation.
+- No component makes or recommends hiring decisions.
+
+## Development
+
+Requirements: Python 3.12+ with [uv](https://docs.astral.sh/uv/), plus Go 1.26, Node 22 and PostgreSQL 16 as the services land.
+
+```bash
+make checks          # repository hygiene and import boundaries (standard library only)
+make contracts-test  # contract, drift, isolation and OpenAPI tests
+```

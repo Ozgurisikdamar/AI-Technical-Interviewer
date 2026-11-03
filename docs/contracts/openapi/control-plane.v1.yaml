@@ -1,0 +1,937 @@
+openapi: 3.1.0
+info:
+  title: AI Technical Interviewer — control plane API
+  version: 1.0.0-proposed
+  summary: Session lifecycle, consent, realtime session issuance and the internal Tier-1 API.
+  description: |
+    Contract for the Phase 1 control plane (ADR-016). Two listeners serve this document:
+    the **public** listener (`/api/v1`, reachable through the same-origin web rewrite) and the
+    **internal** listener (`/internal/v1`, `/healthz`, `/readyz`, `/metrics`), which is never routed publicly.
+
+    Cross-cutting rules:
+    - Errors are RFC 9457 `application/problem+json` with a stable `code`.
+    - Every response carries `X-Request-ID` (echoed when supplied, generated otherwise) and `X-ATI-Environment`.
+    - Mutating public endpoints require `Idempotency-Key`; keys are scoped per principal. Replays return the original response;
+      reuse with a different body returns `409 idempotency_key_reused`.
+    - Mutating public endpoints require `Origin`/`Sec-Fetch-Site` consistent with the configured public origin.
+    - State-changing requests carry the `state_version` the client observed; stale versions return `409 stale_state_version`.
+    - Interviews outside the caller's tenant or ownership return `404` (no enumeration).
+    - Nothing in this API produces scores, rankings or hiring decisions.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: http://localhost:8080
+    description: Public listener (development)
+  - url: http://localhost:8081
+    description: Internal listener (development; never exposed publicly)
+tags:
+  - name: staff
+  - name: candidate
+  - name: tier1-internal
+  - name: ops
+
+paths:
+  /api/v1/interviews:
+    post:
+      tags: [staff]
+      operationId: createInterview
+      summary: Create an interview from a published plan and issue a one-time invitation.
+      security: [{staffBearer: []}]
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateInterviewRequest'}
+      responses:
+        '201':
+          description: Interview created. The invitation URL is returned exactly once.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CreateInterviewResponse'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}:
+    get:
+      tags: [staff, candidate]
+      operationId: getInterview
+      summary: Role-specific view of an interview.
+      security: [{staffBearer: []}, {candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}]
+      responses:
+        '200':
+          description: Staff receive the staff view; the candidate receives the candidate view.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - {$ref: '#/components/schemas/InterviewStaffView'}
+                  - {$ref: '#/components/schemas/InterviewCandidateView'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/invitations/exchange:
+    post:
+      tags: [candidate]
+      operationId: exchangeInvitation
+      summary: Exchange a single-use invitation token for a candidate session cookie (user click only).
+      security: []
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/InvitationExchangeRequest'}
+      responses:
+        '200':
+          description: Session established; any earlier candidate session for this interview is revoked.
+          headers:
+            Set-Cookie:
+              description: '`ati_cs` session cookie (HttpOnly; Secure outside dev; SameSite=Strict; Path=/api).'
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InvitationExchangeResponse'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '410': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}/consent-notice:
+    get:
+      tags: [candidate]
+      operationId: getConsentNotice
+      summary: The notice version pinned for this interview, with configured retention per category.
+      security: [{candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}]
+      responses:
+        '200':
+          description: Notice and retention details.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConsentNoticeView'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}/consent:
+    post:
+      tags: [candidate]
+      operationId: submitConsent
+      summary: Record a decision for every purpose of the pinned notice (T02 or T03).
+      security: [{candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ConsentDecisionRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/CandidateView'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}/start:
+    post:
+      tags: [candidate]
+      operationId: startInterview
+      summary: READY → CALIBRATION (T04) with a fixed input mode.
+      security: [{candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StartRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/CandidateView'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}/calibration-complete:
+    post:
+      tags: [candidate]
+      operationId: candidateCalibrationComplete
+      summary: Explicit "Begin" — CALIBRATION → QUESTION_ACTIVE (T05).
+      security: [{candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StateVersionRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/CandidateView'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}/pause:
+    post:
+      tags: [candidate]
+      operationId: pauseInterview
+      summary: Pause from CALIBRATION, QUESTION_ACTIVE or CANDIDATE_SPEAKING (T12, T18, T19).
+      security: [{candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CandidatePauseRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/CandidateView'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}/resume:
+    post:
+      tags: [candidate]
+      operationId: resumeInterview
+      summary: PAUSED → QUESTION_ACTIVE (new activation of the same item) or CALIBRATION (T13, T20).
+      security: [{candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StateVersionRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/CandidateView'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}/answer-complete:
+    post:
+      tags: [candidate]
+      operationId: candidateRequestAnswerCompletion
+      summary: Request finalization of the open activation's answer (request R01). Resolved after the agent's transcript flush or the deadline.
+      security: [{candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AnswerCompletionRequest'}
+      responses:
+        '202':
+          description: Request recorded; the answer is finalized once the transcript flush is confirmed or the deadline elapses.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InterviewCandidateView'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}/complete:
+    post:
+      tags: [candidate]
+      operationId: confirmCompletion
+      summary: Idempotent confirmation; succeeds only once the interview has completed (completion itself is automatic after the last answer).
+      security: [{candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {$ref: '#/components/responses/CandidateView'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}/withdraw:
+    post:
+      tags: [candidate]
+      operationId: withdrawInterview
+      summary: Candidate withdrawal → CANCELLED (T21–T25). Deletes the room and stops any recording.
+      security: [{candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WithdrawRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/CandidateView'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}/realtime-session:
+    post:
+      tags: [candidate]
+      operationId: issueRealtimeSession
+      summary: Ensure the room and agent dispatch exist and issue a short-lived candidate media token.
+      security: [{candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200':
+          description: Token valid for the initial join only (LiveKit refreshes connected clients).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RealtimeSession'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/interviews/{interview_id}/text-responses:
+    post:
+      tags: [candidate]
+      operationId: submitTextResponse
+      summary: Text-mode answer bound to the open activation (ADR-018). Stored by the control plane as a candidate segment.
+      security: [{candidateSession: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TextResponseRequest'}
+      responses:
+        '201':
+          description: Stored.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TextResponseAccepted'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier1/claims:
+    post:
+      tags: [tier1-internal]
+      operationId: tier1Claim
+      summary: Claim a dispatched session with the one-time nonce and obtain a lease.
+      security: [{agentService: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Tier1ClaimRequest'}
+      responses:
+        '201':
+          description: Lease issued. Any previous lease for the session is superseded (higher fencing token).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Tier1Lease'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '410': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier1/sessions/{session_id}/lease/renew:
+    post:
+      tags: [tier1-internal]
+      operationId: tier1RenewLease
+      security: [{agentService: [], agentGrant: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/FencingToken'}]
+      responses:
+        '200':
+          description: Lease renewed; latest context included.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Tier1LeaseRenewal'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier1/sessions/{session_id}/lease/release:
+    post:
+      tags: [tier1-internal]
+      operationId: tier1ReleaseLease
+      security: [{agentService: [], agentGrant: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/FencingToken'}]
+      responses:
+        '204': {description: Released.}
+        '401': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier1/sessions/{session_id}/context:
+    get:
+      tags: [tier1-internal]
+      operationId: tier1GetContext
+      security: [{agentService: [], agentGrant: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/FencingToken'}]
+      responses:
+        '200':
+          description: The complete Tier-1 allowlist.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Tier1Context'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier1/sessions/{session_id}/transcript-segments:
+    post:
+      tags: [tier1-internal]
+      operationId: tier1SubmitSegment
+      summary: Idempotent, append-only segment ingestion with server-side attribution (ADR-014).
+      security: [{agentService: [], agentGrant: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/FencingToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SegmentSubmission'}
+      responses:
+        '201': {$ref: '#/components/responses/SegmentAccepted'}
+        '200': {$ref: '#/components/responses/SegmentAccepted'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '422': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier1/sessions/{session_id}/prompt-started:
+    post:
+      tags: [tier1-internal]
+      operationId: tier1PromptStarted
+      summary: Open the answer window of an activation when its prompt starts playing.
+      security: [{agentService: [], agentGrant: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/FencingToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PromptStartedRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/Tier1ContextResponse'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier1/sessions/{session_id}/calibration-complete:
+    post:
+      tags: [tier1-internal]
+      operationId: tier1CalibrationComplete
+      security: [{agentService: [], agentGrant: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/FencingToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StateVersionRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/Tier1ContextResponse'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier1/sessions/{session_id}/answer-complete:
+    post:
+      tags: [tier1-internal]
+      operationId: tier1AnswerComplete
+      summary: Request (tool path) or confirm (button path) answer finalization with a transcript flush manifest.
+      security: [{agentService: [], agentGrant: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/FencingToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Tier1AnswerCompleteRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/Tier1ContextResponse'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier1/sessions/{session_id}/pause:
+    post:
+      tags: [tier1-internal]
+      operationId: tier1Pause
+      summary: Deterministic agent code pauses on provider failure or unavailable audio (never reachable by the model).
+      security: [{agentService: [], agentGrant: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/FencingToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Tier1PauseRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/Tier1ContextResponse'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier1/sessions/{session_id}/telemetry:
+    post:
+      tags: [tier1-internal]
+      operationId: tier1Telemetry
+      summary: Content-free latency metrics and policy flags.
+      security: [{agentService: [], agentGrant: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/FencingToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TelemetryReport'}
+      responses:
+        '202': {description: Accepted.}
+        '401': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier1/sessions/{session_id}/usage:
+    post:
+      tags: [tier1-internal]
+      operationId: tier1Usage
+      summary: Cumulative provider usage for the cost model (STACK section 5).
+      security: [{agentService: [], agentGrant: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/FencingToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UsageReport'}
+      responses:
+        '202': {description: Accepted.}
+        '401': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/livekit/webhook:
+    post:
+      tags: [ops]
+      operationId: livekitWebhook
+      summary: Signed LiveKit webhook (dedicated key). Deduplicated by event id; actions cross-checked with ListParticipants.
+      security: [{livekitWebhook: []}]
+      requestBody:
+        required: true
+        content:
+          application/webhook+json:
+            schema: {type: object}
+      responses:
+        '200': {description: Processed or ignored.}
+        '401': {$ref: '#/components/responses/Problem'}
+
+  /healthz:
+    get:
+      tags: [ops]
+      operationId: healthz
+      security: []
+      responses:
+        '200': {description: Process alive.}
+
+  /readyz:
+    get:
+      tags: [ops]
+      operationId: readyz
+      security: []
+      responses:
+        '200': {description: Dependencies reachable.}
+        '503': {$ref: '#/components/responses/Problem'}
+
+  /metrics:
+    get:
+      tags: [ops]
+      operationId: metrics
+      security: []
+      responses:
+        '200':
+          description: Prometheus exposition format (no PII, no transcript content).
+          content:
+            text/plain: {schema: {type: string}}
+
+components:
+  securitySchemes:
+    staffBearer:
+      type: http
+      scheme: bearer
+      description: Opaque staff token (stored hashed, expiring, tenant-scoped).
+    candidateSession:
+      type: apiKey
+      in: cookie
+      name: ati_cs
+    agentService:
+      type: http
+      scheme: bearer
+      description: Tier-1 agent service credential.
+    agentGrant:
+      type: apiKey
+      in: header
+      name: X-ATI-Agent-Grant
+      description: Per-session lease grant issued at claim; always sent with X-ATI-Fencing-Token.
+    livekitWebhook:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: LiveKit webhook JWT signed with the control-plane-only webhook key.
+
+  parameters:
+    InterviewId:
+      name: interview_id
+      in: path
+      required: true
+      schema: {type: string, pattern: '^ses_[A-Za-z0-9]{16,}$'}
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema: {type: string, pattern: '^ses_[A-Za-z0-9]{16,}$'}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, pattern: '^[A-Za-z0-9_.:-]{8,128}$'}
+    FencingToken:
+      name: X-ATI-Fencing-Token
+      in: header
+      required: true
+      schema: {type: integer, minimum: 1}
+
+  responses:
+    Problem:
+      description: RFC 9457 problem details.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    CandidateView:
+      description: Updated candidate view.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/InterviewCandidateView'}
+    Tier1ContextResponse:
+      description: Latest Tier-1 context after the operation.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Tier1Context'}
+    SegmentAccepted:
+      description: Segment stored (201) or an identical retry (200).
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/SegmentAccepted'}
+
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, request_id]
+      properties:
+        type: {type: string}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        code: {type: string, pattern: '^[a-z][a-z0-9_]*$'}
+        request_id: {type: string}
+
+    StateEnum:
+      enum: [CREATED, CONSENT_PENDING, READY, CALIBRATION, QUESTION_ACTIVE, CANDIDATE_SPEAKING, PAUSED, INTERVIEW_COMPLETED, EVALUATION_PENDING, HUMAN_REVIEW, REPORT_READY, CANCELLED]
+
+    CreateInterviewRequest:
+      type: object
+      additionalProperties: false
+      required: [candidate_ref, plan_id, plan_version]
+      properties:
+        candidate_ref: {type: string, minLength: 1, maxLength: 128, description: 'Opaque external reference (no names or emails).'}
+        plan_id: {type: string, pattern: '^plan_[a-z0-9_]{3,60}$'}
+        plan_version: {type: integer, minimum: 1}
+        notice_language: {enum: [en, tr]}
+        invitation_ttl_minutes: {type: integer, minimum: 5, maximum: 10080}
+
+    CreateInterviewResponse:
+      type: object
+      additionalProperties: false
+      required: [interview, invitation_url, invitation_expires_at]
+      properties:
+        interview: {$ref: '#/components/schemas/InterviewStaffView'}
+        invitation_url: {type: string, description: 'Public origin + /i#token=… (fragment-borne token).'}
+        invitation_expires_at: {type: string, format: date-time}
+
+    Progress:
+      type: object
+      additionalProperties: false
+      required: [completed_items, total_items]
+      properties:
+        completed_items: {type: integer, minimum: 0}
+        total_items: {type: integer, minimum: 1}
+
+    InterviewStaffView:
+      type: object
+      additionalProperties: false
+      required: [id, state, state_version, candidate_ref, plan, input_mode, recording, progress, created_at, updated_at]
+      properties:
+        id: {type: string}
+        state: {$ref: '#/components/schemas/StateEnum'}
+        state_version: {type: integer, minimum: 1}
+        candidate_ref: {type: string}
+        plan:
+          type: object
+          additionalProperties: false
+          required: [plan_id, version, synthetic]
+          properties:
+            plan_id: {type: string}
+            version: {type: integer}
+            synthetic: {type: boolean}
+        input_mode: {enum: [voice, text, null]}
+        recording:
+          type: object
+          additionalProperties: false
+          required: [consented, active]
+          properties:
+            consented: {type: [boolean, 'null']}
+            active: {type: boolean}
+        progress: {$ref: '#/components/schemas/Progress'}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    InterviewCandidateView:
+      type: object
+      additionalProperties: false
+      required: [id, state, state_version, progress, input_mode, active_prompt, paused_from, pending_completion, recording_active, allowed_actions, environment]
+      properties:
+        id: {type: string}
+        state: {$ref: '#/components/schemas/StateEnum'}
+        state_version: {type: integer, minimum: 1}
+        progress: {$ref: '#/components/schemas/Progress'}
+        input_mode: {enum: [voice, text, null]}
+        active_prompt:
+          oneOf:
+            - {type: 'null'}
+            - type: object
+              additionalProperties: false
+              required: [activation_id, kind, text]
+              properties:
+                activation_id: {type: string}
+                kind: {enum: [question, follow_up]}
+                text: {type: string, description: 'Displayed for accessibility; identical to what the interviewer is asked to say.'}
+        paused_from: {enum: [CALIBRATION, QUESTION_ACTIVE, CANDIDATE_SPEAKING, null]}
+        pending_completion: {type: boolean}
+        recording_active: {type: boolean}
+        allowed_actions:
+          type: array
+          items: {enum: [consent, start, begin, pause, resume, finish_answer, withdraw, text_response, join_media]}
+        environment: {enum: [dev, test, staging, production]}
+
+    InvitationExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token: {type: string, minLength: 32, maxLength: 128}
+
+    InvitationExchangeResponse:
+      type: object
+      additionalProperties: false
+      required: [interview_id, state]
+      properties:
+        interview_id: {type: string}
+        state: {$ref: '#/components/schemas/StateEnum'}
+
+    ConsentNoticeView:
+      type: object
+      additionalProperties: false
+      required: [notice, retention_days]
+      properties:
+        notice: {$ref: '../../../contracts/schemas/consent/v1/consent-notice.schema.json'}
+        retention_days:
+          type: object
+          additionalProperties: false
+          required: [transcript, session_events, assessment_output, audio_recording]
+          properties:
+            transcript: {type: integer, minimum: 1}
+            session_events: {type: integer, minimum: 1}
+            assessment_output: {type: integer, minimum: 1}
+            audio_recording: {type: [integer, 'null'], minimum: 1}
+
+    ConsentDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [notice_id, notice_version, decisions]
+      properties:
+        notice_id: {type: string}
+        notice_version: {type: string}
+        decisions:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [purpose_id, granted]
+            properties:
+              purpose_id: {type: string}
+              granted: {type: boolean}
+
+    StateVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [state_version]
+      properties:
+        state_version: {type: integer, minimum: 1}
+
+    StartRequest:
+      type: object
+      additionalProperties: false
+      required: [state_version, input_mode]
+      properties:
+        state_version: {type: integer, minimum: 1}
+        input_mode: {enum: [voice, text]}
+
+    CandidatePauseRequest:
+      type: object
+      additionalProperties: false
+      required: [state_version, reason]
+      properties:
+        state_version: {type: integer, minimum: 1}
+        reason: {enum: [candidate_request, device_lost]}
+
+    AnswerCompletionRequest:
+      type: object
+      additionalProperties: false
+      required: [state_version, activation_id]
+      properties:
+        state_version: {type: integer, minimum: 1}
+        activation_id: {type: string, pattern: '^act_[A-Za-z0-9]{16,}$'}
+
+    WithdrawRequest:
+      type: object
+      additionalProperties: false
+      required: [state_version, confirm]
+      properties:
+        state_version: {type: integer, minimum: 1}
+        confirm: {const: true}
+
+    RealtimeSession:
+      type: object
+      additionalProperties: false
+      required: [livekit_url, token, room, identity, can_publish_audio, expires_at]
+      properties:
+        livekit_url: {type: string}
+        token: {type: string}
+        room: {type: string}
+        identity: {const: candidate}
+        can_publish_audio: {type: boolean}
+        expires_at: {type: string, format: date-time}
+
+    TextResponseRequest:
+      type: object
+      additionalProperties: false
+      required: [activation_id, text]
+      properties:
+        activation_id: {type: string, pattern: '^act_[A-Za-z0-9]{16,}$'}
+        text: {type: string, minLength: 1, maxLength: 4000}
+
+    TextResponseAccepted:
+      type: object
+      additionalProperties: false
+      required: [segment_id, state, state_version]
+      properties:
+        segment_id: {type: string}
+        state: {$ref: '#/components/schemas/StateEnum'}
+        state_version: {type: integer, minimum: 1}
+
+    Tier1ClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [session_id, claim_nonce, job_id, agent_identity]
+      properties:
+        session_id: {type: string, pattern: '^ses_[A-Za-z0-9]{16,}$'}
+        claim_nonce: {type: string, minLength: 32, maxLength: 128}
+        job_id: {type: string, minLength: 1, maxLength: 128}
+        agent_identity: {type: string, minLength: 1, maxLength: 128}
+
+    Tier1Lease:
+      type: object
+      additionalProperties: false
+      required: [lease_id, grant, fencing_token, expires_at_unix_ms, renew_interval_ms, context]
+      properties:
+        lease_id: {type: string}
+        grant: {type: string}
+        fencing_token: {type: integer, minimum: 1}
+        expires_at_unix_ms: {type: integer}
+        renew_interval_ms: {type: integer, minimum: 100}
+        context: {$ref: '#/components/schemas/Tier1Context'}
+
+    Tier1LeaseRenewal:
+      type: object
+      additionalProperties: false
+      required: [expires_at_unix_ms, context]
+      properties:
+        expires_at_unix_ms: {type: integer}
+        context: {$ref: '#/components/schemas/Tier1Context'}
+
+    Tier1Context:
+      $ref: '../../../contracts/schemas/tier1/v1/tier1-context.schema.json'
+
+    SegmentSubmission:
+      $ref: '../../../contracts/schemas/transcript/v1/segment-submission.schema.json'
+
+    SegmentAccepted:
+      type: object
+      additionalProperties: false
+      required: [segment_id, sequence, question_id, activation_id, evidence_eligible, flags, state_version]
+      properties:
+        segment_id: {type: string}
+        sequence: {type: integer, minimum: 1}
+        question_id: {type: [string, 'null']}
+        activation_id: {type: [string, 'null']}
+        evidence_eligible: {type: boolean}
+        flags:
+          type: object
+          additionalProperties: {type: boolean}
+        state_version: {type: integer, minimum: 1}
+
+    PromptStartedRequest:
+      type: object
+      additionalProperties: false
+      required: [activation_id, at_ms]
+      properties:
+        activation_id: {type: string, pattern: '^act_[A-Za-z0-9]{16,}$'}
+        at_ms: {type: integer, minimum: 0}
+
+    Tier1AnswerCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [state_version, activation_id, flushed_segment_keys, cause]
+      properties:
+        state_version: {type: integer, minimum: 1}
+        activation_id: {type: string, pattern: '^act_[A-Za-z0-9]{16,}$'}
+        flushed_segment_keys:
+          type: array
+          maxItems: 500
+          uniqueItems: true
+          items: {type: string, pattern: '^[A-Za-z0-9_.:-]{8,128}$'}
+        cause: {enum: [agent_tool, candidate_request]}
+
+    Tier1PauseRequest:
+      type: object
+      additionalProperties: false
+      required: [state_version, reason]
+      properties:
+        state_version: {type: integer, minimum: 1}
+        reason: {enum: [provider_failure, audio_unavailable]}
+
+    TelemetryReport:
+      type: object
+      additionalProperties: false
+      required: [metrics, policy_flags]
+      properties:
+        metrics:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, value_ms]
+            properties:
+              name: {enum: [voice_ttfb_ms, voice_ttfa_ms, voice_end_of_turn_ms, voice_full_response_ms, barge_in_stop_latency_ms]}
+              value_ms: {type: number, minimum: 0}
+        policy_flags:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [flag, activation_id]
+            properties:
+              flag: {enum: [possible_score_disclosure, possible_rubric_disclosure, possible_prompt_disclosure]}
+              activation_id: {type: [string, 'null']}
+
+    UsageReport:
+      type: object
+      additionalProperties: false
+      required: [engine, input_audio_ms, output_audio_ms]
+      properties:
+        engine: {enum: [openai_realtime, scripted]}
+        model: {type: [string, 'null'], maxLength: 128}
+        input_audio_ms: {type: integer, minimum: 0}
+        output_audio_ms: {type: integer, minimum: 0}
+        input_text_tokens: {type: [integer, 'null'], minimum: 0}
+        output_text_tokens: {type: [integer, 'null'], minimum: 0}
+        input_audio_tokens: {type: [integer, 'null'], minimum: 0}
+        output_audio_tokens: {type: [integer, 'null'], minimum: 0}

@@ -1,7 +1,7 @@
 # Prompt Architecture and Evaluation Contracts
 
-**Version:** 1.0  
-**Status:** Initial implementation contract
+**Version:** 1.1  
+**Status:** Initial implementation contract (v1.1 amendments proposed in ADR-013)
 
 This document defines role prompts, structured evaluation output, validation requirements, and evidence rules. It does not replace backend authorization or application policy enforcement.
 
@@ -151,13 +151,13 @@ The following JSON Schema (Draft 2020-12) is the canonical proposed response con
         "technical_accuracy",
         "architecture_maturity",
         "edge_case_awareness",
-        "evidence_honesty"
+        "claim_support"
       ],
       "properties": {
         "technical_accuracy": {"type": "integer", "minimum": 0, "maximum": 100},
         "architecture_maturity": {"type": "integer", "minimum": 0, "maximum": 100},
         "edge_case_awareness": {"type": "integer", "minimum": 0, "maximum": 100},
-        "evidence_honesty": {"type": "integer", "minimum": 0, "maximum": 100}
+        "claim_support": {"type": "integer", "minimum": 0, "maximum": 100}
       }
     },
     "weighted_score": {"type": "number", "minimum": 0, "maximum": 100},
@@ -180,6 +180,8 @@ The following JSON Schema (Draft 2020-12) is the canonical proposed response con
           "dimension",
           "transcript_start_ms",
           "transcript_end_ms",
+          "transcript_segment_ids",
+          "quote",
           "claim",
           "assessment",
           "reference_ids"
@@ -190,11 +192,18 @@ The following JSON Schema (Draft 2020-12) is the canonical proposed response con
               "technical_accuracy",
               "architecture_maturity",
               "edge_case_awareness",
-              "evidence_honesty"
+              "claim_support"
             ]
           },
           "transcript_start_ms": {"type": "integer", "minimum": 0},
           "transcript_end_ms": {"type": "integer", "minimum": 0},
+          "transcript_segment_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "quote": {"type": "string"},
           "claim": {"type": "string"},
           "assessment": {
             "enum": [
@@ -206,7 +215,13 @@ The following JSON Schema (Draft 2020-12) is the canonical proposed response con
             ]
           },
           "reference_ids": {"type": "array", "items": {"type": "string"}}
-        }
+        },
+        "if": {
+          "properties": {"assessment": {"const": "not_addressed"}},
+          "required": ["assessment"]
+        },
+        "then": {"properties": {"quote": {"maxLength": 0}}},
+        "else": {"properties": {"quote": {"minLength": 1}}}
       }
     },
     "missing_concepts": {"type": "array", "items": {"type": "string"}},
@@ -232,6 +247,10 @@ The following JSON Schema (Draft 2020-12) is the canonical proposed response con
 
 The `example.invalid` schema identifier is intentionally non-routable; replace it with the project's published schema URI if schema distribution is needed.
 
+The machine-readable copy of this schema is `contracts/schemas/evaluation/v1/evaluation.schema.json`; an automated drift test keeps the two identical.
+
+Evidence rules added in v1.1: every evidence item cites `transcript_segment_ids` (the candidate segments the judgement is based on) and a verbatim `quote` taken from those segments. When `assessment` is `not_addressed` there is nothing to quote, so `quote` must be empty and `transcript_segment_ids` lists the answer segments that were examined. The backend must verify that each non-empty quote occurs verbatim in the referenced segments.
+
 ## 4. Deterministic validation
 
 Validation must run in trusted application code, not only in the evaluator prompt.
@@ -245,7 +264,7 @@ WEIGHTS = {
     "technical_accuracy": 0.40,
     "architecture_maturity": 0.25,
     "edge_case_awareness": 0.20,
-    "evidence_honesty": 0.15,
+    "claim_support": 0.15,
 }
 
 def validate_evaluation(
@@ -370,3 +389,10 @@ Human override must record reviewer, prior score, revised score, rationale, time
 - Prompt injection in every untrusted input channel.
 - Evaluator disagreement.
 - Human override audit integrity.
+
+## Changelog
+
+| Version | Date | Change |
+|---|---|---|
+| 1.0 | 2026-11-03 | Initial contract. |
+| 1.1 | 2026-11-03 | Renamed score dimension `evidence_honesty` to `claim_support` (the dimension measures support for technical claims, never sincerity); added required evidence fields `transcript_segment_ids` and `quote` with a not-addressed rule, enabling exact quote/span verification. See ADR-013. |

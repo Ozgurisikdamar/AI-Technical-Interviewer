@@ -1,0 +1,18 @@
+{
+  "segment_key": "item_abc:final",
+  "speaker": "candidate",
+  "text": "PostgreSQL uses MVCC...",
+  "start_ms": 12000,
+  "end_ms": 18400,
+  "source": "candidate_text",
+  "confidence": null,
+  "language": "en",
+  "interrupted": false,
+  "provider_item_id": "item_abc",
+  "asr_model": "gpt-4o-transcribe",
+  "engine": "openai_realtime",
+  "signals": {
+    "overlapped_interviewer_audio": false,
+    "low_energy": false
+  }
+}

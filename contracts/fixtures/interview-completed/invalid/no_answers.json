@@ -1,0 +1,13 @@
+{
+  "event_type": "interview.completed",
+  "event_version": 1,
+  "event_id": "evt_0123456789abcdefAC",
+  "occurred_at": "2026-11-03T12:30:00Z",
+  "tenant_id": "ten_0123456789abcdefAB",
+  "session_id": "ses_0123456789abcdefAB",
+  "plan": {
+    "plan_id": "plan_demo_backend_en",
+    "version": 1
+  },
+  "answer_ids": []
+}

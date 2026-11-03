@@ -1,0 +1,94 @@
+{
+  "notice_id": "notice_default",
+  "version": "2026-11-draft.1",
+  "status": "draft",
+  "language": "en",
+  "title": "Before your interview: how your information is used (DRAFT)",
+  "sections": [
+    {
+      "heading": "Status of this notice",
+      "text": "DRAFT FOR NON-PRODUCTION USE. This text has not been reviewed or approved by legal counsel and must not be shown to real candidates."
+    },
+    {
+      "heading": "About this interview",
+      "text": "This is a structured technical interview conducted by an AI interviewer. The AI interviewer asks approved questions and does not score or judge your answers during the interview."
+    },
+    {
+      "heading": "Timing information",
+      "text": "Your answers are stored with timestamps, including when you start speaking and when the interview is paused. Timing information is never used to infer cheating or personality and is never used to lower a score."
+    },
+    {
+      "heading": "Human accountability",
+      "text": "No hiring decision is made automatically. Any automated assessment only supports accountable human reviewers, and you will have a way to appeal."
+    },
+    {
+      "heading": "Your choices",
+      "text": "You can pause at any time, withdraw at any time, or use text responses instead of your microphone. Declining optional purposes does not affect your interview."
+    },
+    {
+      "heading": "Retention",
+      "text": "Each data category is kept only for the period shown on this page, which is set by policy before the interview starts."
+    }
+  ],
+  "purposes": [
+    {
+      "purpose_id": "voice_interview_processing",
+      "required": false,
+      "basis": "to_be_determined_by_legal",
+      "title": "Live voice conversation",
+      "description": "Your microphone audio is streamed in real time to the interview service and its realtime speech provider so the AI interviewer can hear and answer you. Live audio is not stored unless you also agree to audio recording. If you decline, you can take the interview using text responses.",
+      "data_categories": [
+        "live_audio_stream",
+        "interaction_timing"
+      ],
+      "retention_category": "session_events"
+    },
+    {
+      "purpose_id": "transcript_assessment_record",
+      "required": true,
+      "basis": "to_be_determined_by_legal",
+      "title": "Written record of your answers",
+      "description": "Your answers are kept as a written transcript with timestamps so that they can be assessed and so that you can review and appeal the outcome.",
+      "data_categories": [
+        "transcript",
+        "interaction_timing"
+      ],
+      "retention_category": "transcript"
+    },
+    {
+      "purpose_id": "ai_assisted_evaluation_with_human_review",
+      "required": true,
+      "basis": "to_be_determined_by_legal",
+      "title": "Assessment support reviewed by people",
+      "description": "After the interview, your transcript may be assessed against a rubric that was fixed before the interview started. Automated output is evidence for human reviewers only; it is never used on its own to reject you.",
+      "data_categories": [
+        "transcript",
+        "assessment_output"
+      ],
+      "retention_category": "assessment_output"
+    },
+    {
+      "purpose_id": "audio_recording",
+      "required": false,
+      "basis": "to_be_determined_by_legal",
+      "title": "Optional audio recording",
+      "description": "If you agree, an encrypted recording of your microphone audio (not the interviewer's voice) is kept for the retention period shown, only to verify the transcript and to handle appeals. It is not used to assess voice, accent or tone.",
+      "data_categories": [
+        "audio_recording"
+      ],
+      "retention_category": "audio_recording"
+    },
+    {
+      "purpose_id": "emotion_analysis",
+      "required": false,
+      "basis": "to_be_determined_by_legal",
+      "title": "Live voice conversation",
+      "description": "Your microphone audio is streamed in real time to the interview service and its realtime speech provider so the AI interviewer can hear and answer you. Live audio is not stored unless you also agree to audio recording. If you decline, you can take the interview using text responses.",
+      "data_categories": [
+        "live_audio_stream",
+        "interaction_timing"
+      ],
+      "retention_category": "session_events"
+    }
+  ]
+}

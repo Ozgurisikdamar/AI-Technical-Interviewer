@@ -1,0 +1,32 @@
+%% Generated from interview-session.v1.1.json by contracts/tools/generate_state_diagram.py.
+%% Do not edit by hand.
+stateDiagram-v2
+  [*] --> CREATED
+  CREATED --> CONSENT_PENDING: invitation_exchanged
+  CONSENT_PENDING --> READY: consent_accepted
+  CONSENT_PENDING --> CANCELLED: consent_declined
+  READY --> CALIBRATION: start
+  CALIBRATION --> QUESTION_ACTIVE: calibration_complete
+  QUESTION_ACTIVE --> CANDIDATE_SPEAKING: answer_started
+  CANDIDATE_SPEAKING --> ANSWER_PROCESSING: answer_finalized
+  ANSWER_PROCESSING --> FOLLOW_UP: follow_up_selected
+  FOLLOW_UP --> QUESTION_ACTIVE: follow_up_activated
+  ANSWER_PROCESSING --> QUESTION_ACTIVE: next_question
+  ANSWER_PROCESSING --> INTERVIEW_COMPLETED: interview_completed
+  QUESTION_ACTIVE --> PAUSED: pause
+  PAUSED --> QUESTION_ACTIVE: resume
+  INTERVIEW_COMPLETED --> EVALUATION_PENDING: evaluation_enqueued [phase 2]
+  EVALUATION_PENDING --> HUMAN_REVIEW: review_required [phase 2]
+  EVALUATION_PENDING --> REPORT_READY: report_ready [phase 2]
+  HUMAN_REVIEW --> REPORT_READY: review_completed [phase 5]
+  CALIBRATION --> PAUSED: pause (ADR-012)
+  CANDIDATE_SPEAKING --> PAUSED: pause (ADR-012)
+  PAUSED --> CALIBRATION: resume (ADR-012)
+  READY --> CANCELLED: withdraw (ADR-012)
+  CALIBRATION --> CANCELLED: withdraw (ADR-012)
+  QUESTION_ACTIVE --> CANCELLED: withdraw (ADR-012)
+  CANDIDATE_SPEAKING --> CANCELLED: withdraw (ADR-012)
+  PAUSED --> CANCELLED: withdraw (ADR-012)
+  PAUSED --> CANCELLED: pause_expired (ADR-012)
+  REPORT_READY --> [*]
+  CANCELLED --> [*]
