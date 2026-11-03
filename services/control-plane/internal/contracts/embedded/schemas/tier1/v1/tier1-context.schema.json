@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/tier1-context-v1.schema.json",
+  "title": "Tier-1 runtime context v1",
+  "description": "The complete allowlist of data the Tier-1 voice agent may receive (PROMPT_AND_EVALUATION section 1 'Runtime context injection'; BLUEPRINT 3.1). It contains only the active prompt, never the full plan, rubric references, evaluator output, reviewer notes, other candidates' data or candidate-provided text inside instructions. pending_text_inputs carries untrusted candidate content that must be passed to the model as user input, never as instructions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "context_schema",
+    "session_ref",
+    "state",
+    "state_version",
+    "language",
+    "seniority_band",
+    "modality",
+    "input_mode",
+    "recording_active",
+    "policy",
+    "active_prompt",
+    "completed_prompts",
+    "pending_completion_request",
+    "pending_text_inputs",
+    "timeline"
+  ],
+  "properties": {
+    "context_schema": {"const": "tier1-context/v1"},
+    "session_ref": {"type": "string", "pattern": "^ses_[A-Za-z0-9]{16,}$"},
+    "state": {
+      "enum": [
+        "CALIBRATION",
+        "QUESTION_ACTIVE",
+        "CANDIDATE_SPEAKING",
+        "PAUSED",
+        "INTERVIEW_COMPLETED",
+        "CANCELLED"
+      ]
+    },
+    "state_version": {"type": "integer", "minimum": 1},
+    "language": {"enum": ["en", "tr"]},
+    "seniority_band": {"enum": ["junior", "mid", "senior", "staff"]},
+    "modality": {"enum": ["voice_qa"]},
+    "input_mode": {"enum": ["voice", "text"]},
+    "recording_active": {"type": "boolean"},
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hints_allowed", "follow_up_source"],
+      "properties": {
+        "hints_allowed": {"type": "boolean"},
+        "follow_up_source": {"const": "approved_plan_only"}
+      }
+    },
+    "active_prompt": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["activation_id", "item_ref", "kind", "text", "turn_profile", "prompt_started"],
+          "properties": {
+            "activation_id": {"type": "string", "pattern": "^act_[A-Za-z0-9]{16,}$"},
+            "item_ref": {"type": "string", "minLength": 1, "maxLength": 64},
+            "kind": {"enum": ["question", "follow_up"]},
+            "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+            "turn_profile": {"enum": ["standard", "extended_pause"]},
+            "prompt_started": {"type": "boolean"}
+          }
+        }
+      ]
+    },
+    "completed_prompts": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item_ref", "kind", "text"],
+        "properties": {
+          "item_ref": {"type": "string", "minLength": 1, "maxLength": 64},
+          "kind": {"enum": ["question", "follow_up"]},
+          "text": {"type": "string", "minLength": 1, "maxLength": 4000}
+        }
+      }
+    },
+    "pending_completion_request": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["activation_id", "requested_by", "deadline_unix_ms"],
+          "properties": {
+            "activation_id": {"type": "string", "pattern": "^act_[A-Za-z0-9]{16,}$"},
+            "requested_by": {"enum": ["candidate"]},
+            "deadline_unix_ms": {"type": "integer", "minimum": 0}
+          }
+        }
+      ]
+    },
+    "pending_text_inputs": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["segment_id", "activation_id", "untrusted_text"],
+        "properties": {
+          "segment_id": {"type": "string", "pattern": "^seg_[A-Za-z0-9]{16,}$"},
+          "activation_id": {"type": "string", "pattern": "^act_[A-Za-z0-9]{16,}$"},
+          "untrusted_text": {"type": "string", "minLength": 1, "maxLength": 4000}
+        }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["epoch_unix_ms", "server_now_unix_ms"],
+      "properties": {
+        "epoch_unix_ms": {"type": ["integer", "null"], "minimum": 0},
+        "server_now_unix_ms": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

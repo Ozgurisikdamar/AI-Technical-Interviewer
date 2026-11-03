@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/transcript-segment-v1.schema.json",
+  "title": "Transcript segment v1 (canonical stored record)",
+  "description": "Append-only transcript evidence record. Extends the BLUEPRINT section 13 transcript event with provenance, attribution and integrity flags (ADR-014). Timestamps are milliseconds on the session timeline anchored at the server-recorded epoch. Synthetic test segments use source=synthetic_test and are never evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "segment_id",
+    "session_id",
+    "question_id",
+    "activation_id",
+    "turn_id",
+    "sequence",
+    "start_ms",
+    "end_ms",
+    "speaker",
+    "text",
+    "source",
+    "transcript_version",
+    "confidence",
+    "language",
+    "evidence_eligible",
+    "quality",
+    "interrupted",
+    "flags",
+    "prompt_similarity",
+    "provenance",
+    "audio_ref",
+    "created_at"
+  ],
+  "properties": {
+    "segment_id": {"type": "string", "pattern": "^seg_[A-Za-z0-9]{16,}$"},
+    "session_id": {"type": "string", "minLength": 1},
+    "question_id": {"type": ["string", "null"], "minLength": 1},
+    "activation_id": {"type": ["string", "null"], "minLength": 1},
+    "turn_id": {"type": ["string", "null"], "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "start_ms": {"type": "integer", "minimum": 0},
+    "end_ms": {"type": "integer", "minimum": 0},
+    "speaker": {"enum": ["candidate", "interviewer"]},
+    "text": {"type": "string"},
+    "source": {"enum": ["realtime_transcription", "interviewer_output", "candidate_text", "synthetic_test"]},
+    "transcript_version": {"type": "integer", "minimum": 1},
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "language": {"type": ["string", "null"], "pattern": "^[a-z]{2}(-[A-Z]{2})?$"},
+    "evidence_eligible": {"type": "boolean"},
+    "quality": {"enum": ["unverified", "human_verified"]},
+    "interrupted": {"type": "boolean"},
+    "flags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["possible_echo", "low_energy", "unassigned", "prompt_deviation", "late_arrival"],
+      "properties": {
+        "possible_echo": {"type": "boolean"},
+        "low_energy": {"type": "boolean"},
+        "unassigned": {"type": "boolean"},
+        "prompt_deviation": {"type": "boolean"},
+        "late_arrival": {"type": "boolean"}
+      }
+    },
+    "prompt_similarity": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["producer", "lease_id", "fencing_token", "provider_item_id", "asr_model", "engine"],
+      "properties": {
+        "producer": {"enum": ["tier1_agent", "control_plane"]},
+        "lease_id": {"type": ["string", "null"]},
+        "fencing_token": {"type": ["integer", "null"], "minimum": 1},
+        "provider_item_id": {"type": ["string", "null"]},
+        "asr_model": {"type": ["string", "null"]},
+        "engine": {"enum": ["openai_realtime", "scripted", null]}
+      }
+    },
+    "audio_ref": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["recording_id", "offset_ms"],
+          "properties": {
+            "recording_id": {"type": "string", "minLength": 1},
+            "offset_ms": {"type": "integer", "minimum": 0}
+          }
+        }
+      ]
+    },
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

@@ -23,7 +23,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | Milestone | Scope | Status |
 |---|---|---|
 | Phase 0 — contracts | State machine v1.1, schemas, prompts, content, fixtures, ADR-011–020, threat-model addendum, OpenAPI, test plan, hygiene checks, CI | **Verified (local)**: `make checks`, `make contracts-test` (117 tests). Human review pending |
-| M2 — Go engine, config, logging | | Not started |
+| M2 — Go engine, config, logging | Pure flow engine from the embedded contract; ADR-020 config refusals; redacting logger; HTTP plumbing; architecture tests | **Verified (local)**: `make go-lint` (vet + staticcheck), `make go-test` (model-based walk over 3,000 seeds: 208 completions / 2,792 cancellations with every invariant checked; fuzzing; refusal matrix; log sentinels) |
 | M3 — Schema, roles, transition service | | Not started |
 | M4 — Auth, API, LiveKit, ingestion, completion | | Not started |
 | M5 — Recording | | Not started |
@@ -37,7 +37,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | ID | Requirement (source) | Status | Evidence / target |
 |---|---|---|---|
 | G1 | Tier-1/Tier-2 isolation (ADR-001, BP §3.1) | Contract level **Verified (local)**; runtime Not started | `contracts/tests/test_isolation_contracts.py`, import-boundary check; runtime controls M3–M6 |
-| G2 | Modular control plane, contract tests (ADR-002) | Not started | M2–M4 |
+| G2 | Modular control plane, contract tests (ADR-002) | Partial: module boundaries **Verified (local)** | `internal/archtest`; API M4 |
 | G3 | LiveKit/WebRTC media (ADR-003) | Not started | M4, M7 |
 | G4 | App-owned provider adapter (ADR-004) | Not started | M6 (OpenAI path will be unverified: no credentials) |
 | G5 | PostgreSQL canonical; Qdrant projection (ADR-005) | Not started | M3; Qdrant Phase 2 |
@@ -46,7 +46,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | G8 | Human accountability (ADR-008) | Contract **Verified (local)** (INV-6, no decision fields) | Workflow Phase 5 |
 | G9 | Privacy by design (ADR-009) | Content **Verified (local)** (purpose-level DRAFT notices, recording optional) | M3–M5 |
 | G10 | No cheating inference (ADR-010) | Contract **Verified (local)** (no timing in handoff events) | — |
-| G11 | State machine + invariants (BP §4) | Contract **Verified (local)** | Engine M2 |
+| G11 | State machine + invariants (BP §4) | Contract and engine **Verified (local)** | `internal/flow` model-based + fuzz tests; persistence M3 |
 | G12 | Latency metrics (BP §5, §16) | Not started | M6–M7 (loopback only) |
 | G13 | Barge-in, turn policy (BP §6) | Not started | M6–M7 |
 | G14 | Rubric and weights (BP §7) | Contract **Verified (local)** (weights consistent across documents) | Phase 2 |

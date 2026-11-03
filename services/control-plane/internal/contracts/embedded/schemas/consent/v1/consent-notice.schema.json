@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/consent-notice-v1.schema.json",
+  "title": "Candidate notice and purpose decisions v1",
+  "description": "Versioned candidate-facing notice with purpose-level decisions (THREAT_MODEL_AND_QA section 4: do not assume a generic checkbox resolves all legal issues). The lawful basis per purpose is a legal decision; 'to_be_determined_by_legal' blocks production use. status 'draft' notices are refused in production mode (ADR-020).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["notice_id", "version", "status", "language", "title", "sections", "purposes"],
+  "properties": {
+    "notice_id": {"type": "string", "pattern": "^notice_[a-z0-9_]{3,60}$"},
+    "version": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[a-z0-9.]+$"},
+    "status": {"enum": ["draft", "approved"]},
+    "language": {"enum": ["en", "tr"]},
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["heading", "text"],
+        "properties": {
+          "heading": {"type": "string", "minLength": 1, "maxLength": 200},
+          "text": {"type": "string", "minLength": 1, "maxLength": 5000}
+        }
+      }
+    },
+    "purposes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["purpose_id", "required", "basis", "title", "description", "data_categories", "retention_category"],
+        "properties": {
+          "purpose_id": {
+            "enum": [
+              "voice_interview_processing",
+              "transcript_assessment_record",
+              "ai_assisted_evaluation_with_human_review",
+              "audio_recording"
+            ]
+          },
+          "required": {"type": "boolean"},
+          "basis": {"enum": ["consent", "contract", "legitimate_interest", "legal_obligation", "to_be_determined_by_legal"]},
+          "title": {"type": "string", "minLength": 1, "maxLength": 200},
+          "description": {"type": "string", "minLength": 1, "maxLength": 3000},
+          "data_categories": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"enum": ["live_audio_stream", "transcript", "interaction_timing", "audio_recording", "assessment_output"]}
+          },
+          "retention_category": {"enum": ["transcript", "audio_recording", "session_events", "assessment_output"]}
+        }
+      }
+    }
+  }
+}

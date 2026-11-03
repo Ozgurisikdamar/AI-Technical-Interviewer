@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/transcript-segment-submission-v1.schema.json",
+  "title": "Transcript segment submission v1 (Tier-1 agent to control plane)",
+  "description": "Body of POST /internal/v1/tier1/sessions/{id}/transcript-segments. The producer key makes retries idempotent; the same key with different content is rejected (409) and recorded as an integrity event. Attribution to a question is decided by the control plane from start_ms, never by the agent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["segment_key", "speaker", "text", "start_ms", "end_ms", "source", "confidence", "language", "interrupted", "provider_item_id", "asr_model", "engine", "signals"],
+  "properties": {
+    "segment_key": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{8,128}$"},
+    "speaker": {"enum": ["candidate", "interviewer"]},
+    "text": {"type": "string", "maxLength": 20000},
+    "start_ms": {"type": "integer", "minimum": 0},
+    "end_ms": {"type": "integer", "minimum": 0},
+    "source": {"enum": ["realtime_transcription", "interviewer_output", "synthetic_test"]},
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "language": {"type": ["string", "null"], "pattern": "^[a-z]{2}(-[A-Z]{2})?$"},
+    "interrupted": {"type": "boolean"},
+    "provider_item_id": {"type": ["string", "null"], "maxLength": 128},
+    "asr_model": {"type": ["string", "null"], "maxLength": 128},
+    "engine": {"enum": ["openai_realtime", "scripted"]},
+    "signals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["overlapped_interviewer_audio", "low_energy"],
+      "properties": {
+        "overlapped_interviewer_audio": {"type": "boolean"},
+        "low_energy": {"type": "boolean"}
+      }
+    }
+  }
+}
