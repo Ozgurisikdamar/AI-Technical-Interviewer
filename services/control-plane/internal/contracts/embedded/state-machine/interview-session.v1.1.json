@@ -33,7 +33,7 @@
     {"name": "CANCELLED", "kind": "terminal", "terminal": true, "transient": false, "requires_open_activation": false, "description": "Consent declined, candidate withdrew, or the pause expired. No completion event is emitted."}
   ],
   "guards": {
-    "invitation_valid_single_use": "Invitation token hash matches, is unexpired and unused; exchange was initiated by a user action.",
+    "invitation_valid": "Invitation token hash matches and is unexpired, and the exchange was initiated by a user action. The first exchange performs T01; later exchanges only replace the candidate session.",
     "required_purposes_decided": "Every purpose in the pinned notice version has an explicit decision and all required purposes are granted.",
     "notice_version_pinned": "The decision references the exact notice version that was displayed.",
     "any_required_purpose_declined": "At least one required purpose was explicitly declined.",
@@ -59,7 +59,7 @@
     }
   ],
   "transitions": [
-    {"id": "T01", "from": "CREATED", "to": "CONSENT_PENDING", "event": "invitation_exchanged", "actors": ["system"], "guards": ["invitation_valid_single_use"], "effects": [], "source": "diagram", "phase": 1},
+    {"id": "T01", "from": "CREATED", "to": "CONSENT_PENDING", "event": "invitation_exchanged", "actors": ["system"], "guards": ["invitation_valid"], "effects": [], "source": "diagram", "phase": 1},
     {"id": "T02", "from": "CONSENT_PENDING", "to": "READY", "event": "consent_accepted", "actors": ["candidate"], "guards": ["required_purposes_decided", "notice_version_pinned"], "effects": ["record_consent_decisions"], "source": "diagram", "diagram_label": "consent accepted", "phase": 1},
     {"id": "T03", "from": "CONSENT_PENDING", "to": "CANCELLED", "event": "consent_declined", "actors": ["candidate"], "guards": ["any_required_purpose_declined", "notice_version_pinned"], "effects": ["record_consent_decisions"], "source": "diagram", "diagram_label": "consent declined", "phase": 1},
     {"id": "T04", "from": "READY", "to": "CALIBRATION", "event": "start", "actors": ["candidate"], "guards": ["retention_policy_configured"], "effects": ["set_timeline_epoch"], "source": "diagram", "phase": 1},
@@ -71,20 +71,20 @@
     {"id": "T10", "from": "ANSWER_PROCESSING", "to": "QUESTION_ACTIVE", "event": "next_question", "actors": ["system"], "guards": ["next_plan_item_exists"], "effects": ["open_activation_next_item"], "source": "diagram", "diagram_label": "next question", "chain": true, "phase": 1},
     {"id": "T11", "from": "ANSWER_PROCESSING", "to": "INTERVIEW_COMPLETED", "event": "interview_completed", "actors": ["system"], "guards": ["plan_exhausted"], "effects": ["emit_interview_completed", "stop_recording"], "source": "diagram", "chain": true, "phase": 1},
     {"id": "T12", "from": "QUESTION_ACTIVE", "to": "PAUSED", "event": "pause", "actors": ["candidate", "system", "tier1_agent"], "guards": [], "effects": ["record_paused_from", "close_activation", "stop_recording"], "source": "diagram", "diagram_label": "interruption / network failure", "phase": 1},
-    {"id": "T13", "from": "PAUSED", "to": "QUESTION_ACTIVE", "event": "resume", "actors": ["candidate"], "guards": ["paused_from_question"], "effects": ["open_activation_same_item"], "source": "diagram", "diagram_label": "resume", "phase": 1},
+    {"id": "T13", "from": "PAUSED", "to": "QUESTION_ACTIVE", "event": "resume", "actors": ["candidate"], "guards": ["paused_from_question"], "effects": ["end_pause", "open_activation_same_item"], "source": "diagram", "diagram_label": "resume", "phase": 1},
     {"id": "T14", "from": "INTERVIEW_COMPLETED", "to": "EVALUATION_PENDING", "event": "evaluation_enqueued", "actors": ["system"], "guards": [], "effects": [], "source": "diagram", "phase": 2},
     {"id": "T15", "from": "EVALUATION_PENDING", "to": "HUMAN_REVIEW", "event": "review_required", "actors": ["tier2_pipeline"], "guards": [], "effects": [], "source": "diagram", "phase": 2},
     {"id": "T16", "from": "EVALUATION_PENDING", "to": "REPORT_READY", "event": "report_ready", "actors": ["tier2_pipeline"], "guards": [], "effects": [], "source": "diagram", "phase": 2},
     {"id": "T17", "from": "HUMAN_REVIEW", "to": "REPORT_READY", "event": "review_completed", "actors": ["reviewer"], "guards": [], "effects": [], "source": "diagram", "phase": 5},
     {"id": "T18", "from": "CALIBRATION", "to": "PAUSED", "event": "pause", "actors": ["candidate", "system", "tier1_agent"], "guards": [], "effects": ["record_paused_from"], "source": "ADR-012", "phase": 1},
     {"id": "T19", "from": "CANDIDATE_SPEAKING", "to": "PAUSED", "event": "pause", "actors": ["candidate", "system", "tier1_agent"], "guards": [], "effects": ["record_paused_from", "close_activation", "cancel_completion_request", "stop_recording"], "source": "ADR-012", "phase": 1},
-    {"id": "T20", "from": "PAUSED", "to": "CALIBRATION", "event": "resume", "actors": ["candidate"], "guards": ["paused_from_calibration"], "effects": [], "source": "ADR-012", "phase": 1},
+    {"id": "T20", "from": "PAUSED", "to": "CALIBRATION", "event": "resume", "actors": ["candidate"], "guards": ["paused_from_calibration"], "effects": ["end_pause"], "source": "ADR-012", "phase": 1},
     {"id": "T21", "from": "READY", "to": "CANCELLED", "event": "withdraw", "actors": ["candidate"], "guards": [], "effects": ["delete_room"], "source": "ADR-012", "phase": 1},
     {"id": "T22", "from": "CALIBRATION", "to": "CANCELLED", "event": "withdraw", "actors": ["candidate"], "guards": [], "effects": ["delete_room", "stop_recording"], "source": "ADR-012", "phase": 1},
     {"id": "T23", "from": "QUESTION_ACTIVE", "to": "CANCELLED", "event": "withdraw", "actors": ["candidate"], "guards": [], "effects": ["close_activation", "delete_room", "stop_recording"], "source": "ADR-012", "phase": 1},
     {"id": "T24", "from": "CANDIDATE_SPEAKING", "to": "CANCELLED", "event": "withdraw", "actors": ["candidate"], "guards": [], "effects": ["close_activation", "cancel_completion_request", "delete_room", "stop_recording"], "source": "ADR-012", "phase": 1},
-    {"id": "T25", "from": "PAUSED", "to": "CANCELLED", "event": "withdraw", "actors": ["candidate"], "guards": [], "effects": ["delete_room"], "source": "ADR-012", "phase": 1},
-    {"id": "T26", "from": "PAUSED", "to": "CANCELLED", "event": "pause_expired", "actors": ["system"], "guards": ["pause_timeout_elapsed"], "effects": ["delete_room"], "source": "ADR-012", "phase": 1}
+    {"id": "T25", "from": "PAUSED", "to": "CANCELLED", "event": "withdraw", "actors": ["candidate"], "guards": [], "effects": ["end_pause", "delete_room"], "source": "ADR-012", "phase": 1},
+    {"id": "T26", "from": "PAUSED", "to": "CANCELLED", "event": "pause_expired", "actors": ["system"], "guards": ["pause_timeout_elapsed"], "effects": ["end_pause", "delete_room"], "source": "ADR-012", "phase": 1}
   ],
   "invariants": [
     {"id": "INV-1", "source": "BLUEPRINT 4.1(1)", "statement": "A session has at most one open question activation."},

@@ -16,7 +16,7 @@ BLUEPRINT §17 lists an initial API but no consent, invitation, answer-completio
 
 1. **Principals.**
    - *Staff*: opaque bearer tokens, stored as SHA-256 hashes, with expiry, role (`admin`, `recruiter`) and tenant. Bootstrapped by CLI.
-   - *Candidate*: a single-use invitation token delivered in the URL **fragment**, so it never appears in request lines or server logs. It is exchanged only on an explicit user click, which protects against link scanners. The exchange returns an opaque session token in an `HttpOnly; Secure; SameSite=Strict` cookie, scoped to exactly one interview. A second exchange revokes the first session.
+   - *Candidate*: an expiring invitation token delivered in the URL **fragment**, so it never appears in request lines or server logs. It is exchanged only on an explicit user click, which protects against link scanners. Each exchange returns an opaque session token in an `HttpOnly; Secure; SameSite=Strict` cookie, scoped to exactly one interview, and revokes any earlier candidate session. Re-exchange is what lets a candidate recover after losing the cookie or switching device. Staff can revoke an invitation.
    - *Tier-1 agent*: see 3.
 2. **Object-level authorization on every request:** tenant scoping for staff; a candidate can only reach their own interview, and other IDs return 404 to prevent enumeration. Candidate and staff receive different response shapes. Mutating public endpoints check `Origin` and `Sec-Fetch-Site` against the configured public origin. `X-Forwarded-For` is trusted only from configured proxy addresses. Idempotency keys are scoped per principal.
 3. **Agent claim and lease.**

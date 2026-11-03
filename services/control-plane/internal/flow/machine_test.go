@@ -237,7 +237,7 @@ func (w *world) followPending() bool { return w.follow+1 < w.followUps[w.item] }
 
 func (w *world) guard(g string, t Transition) (bool, error) {
 	switch g {
-	case "invitation_valid_single_use":
+	case "invitation_valid":
 		return w.invitationValid, nil
 	case "required_purposes_decided":
 		return w.consentDecided && w.consentOK, nil

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/schemas/transcript-segment-v1.schema.json",
   "title": "Transcript segment v1 (canonical stored record)",
-  "description": "Append-only transcript evidence record. Extends the BLUEPRINT section 13 transcript event with provenance, attribution and integrity flags (ADR-014). Timestamps are milliseconds on the session timeline anchored at the server-recorded epoch. Synthetic test segments use source=synthetic_test and are never evidence.",
+  "description": "Append-only transcript evidence record. Extends the BLUEPRINT section 13 transcript event with provenance, attribution and integrity flags (ADR-014). Timestamps are milliseconds on the session timeline anchored at the server-recorded epoch. Synthetic test segments use source=synthetic_test; answers built from them carry the synthetic_source integrity flag and must never be evaluated.",
   "type": "object",
   "additionalProperties": false,
   "required": [

@@ -24,7 +24,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 |---|---|---|
 | Phase 0 — contracts | State machine v1.1, schemas, prompts, content, fixtures, ADR-011–020, threat-model addendum, OpenAPI, test plan, hygiene checks, CI | **Verified (local)**: `make checks`, `make contracts-test` (117 tests). Human review pending |
 | M2 — Go engine, config, logging | Pure flow engine from the embedded contract; ADR-020 config refusals; redacting logger; HTTP plumbing; architecture tests | **Verified (local)**: `make go-lint` (vet + staticcheck), `make go-test` (model-based walk over 3,000 seeds: 208 completions / 2,792 cancellations with every invariant checked; fuzzing; refusal matrix; log sentinels) |
-| M3 — Schema, roles, transition service | | Not started |
+| M3 — Schema, roles, transition service | Phase-1 schema with DB-enforced INV-1/INV-9, append-only triggers, least-privilege roles; transactional transition service (row lock + `state_version`, per-step events and audit, outbox with contract validation); ingestion with speech-time attribution; completion protocol; leases with fencing | **Verified (local)**: `make go-test` against PostgreSQL 16 as the real application role (privilege matrix, lifecycle, button/deadline paths, pause/resume, withdrawal, expiry, consent, attribution, concurrency storms, compromised-agent suite) |
 | M4 — Auth, API, LiveKit, ingestion, completion | | Not started |
 | M5 — Recording | | Not started |
 | M6 — Tier-1 agent | | Not started |
@@ -40,8 +40,8 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | G2 | Modular control plane, contract tests (ADR-002) | Partial: module boundaries **Verified (local)** | `internal/archtest`; API M4 |
 | G3 | LiveKit/WebRTC media (ADR-003) | Not started | M4, M7 |
 | G4 | App-owned provider adapter (ADR-004) | Not started | M6 (OpenAI path will be unverified: no credentials) |
-| G5 | PostgreSQL canonical; Qdrant projection (ADR-005) | Not started | M3; Qdrant Phase 2 |
-| G6 | Durable jobs, DLQ (ADR-006) | Contract **Verified (local)** (event schemas) | Outbox M3–M4; relay Phase 2 |
+| G5 | PostgreSQL canonical; Qdrant projection (ADR-005) | PostgreSQL **Verified (local)** | `internal/store`, `internal/interview`; Qdrant Phase 2 |
+| G6 | Durable jobs, DLQ (ADR-006) | Transactional outbox **Verified (local)** (contract-validated payloads, insertion order) | Relay/consumers/DLQ Phase 2 |
 | G7 | Evidence before score (ADR-007) | Contract **Verified (local)** (amended schema, fixtures) | Validator Phase 2 |
 | G8 | Human accountability (ADR-008) | Contract **Verified (local)** (INV-6, no decision fields) | Workflow Phase 5 |
 | G9 | Privacy by design (ADR-009) | Content **Verified (local)** (purpose-level DRAFT notices, recording optional) | M3–M5 |
@@ -55,7 +55,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | G17 | Adversarial controls (BP §9) | Contract **Verified (local)** (single request reachable by the model) | M4, M6 |
 | G18 | Coding sandbox, whiteboard (BP §10) | Not started | Phase 4 |
 | G19 | HITL routing, override audit (BP §11) | Not started | Phase 2, 5 |
-| G20 | Data entities, transcript immutability (BP §13) | Contract **Verified (local)** (segment schema) | M3 |
+| G20 | Data entities, transcript immutability (BP §13) | **Verified (local)** | Append-only grants + triggers tested even for the owner; answers bind exact segment IDs |
 | G21 | API surface (BP §17) | Contract **Verified (local)** (OpenAPI 3.1) | M4 |
 | G22 | Observability (BP §16) | Not started | M2–M7 |
 | G23 | QA/chaos matrix (BP §18) | Plan **Verified (local)** ([TEST_PLAN.md](../qa/TEST_PLAN.md)) | Per test plan |
