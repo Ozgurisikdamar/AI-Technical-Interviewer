@@ -307,6 +307,23 @@ describe('microphone follows the interview state', () => {
     expect(controller.getSnapshot().mic).toBe('error');
     expect(room().localParticipant.micCalls).toEqual([true]);
   });
+
+  it('explains a blocked microphone as blocked even when the browser reports another error', async () => {
+    const query = vi.fn(async () => ({ state: 'denied' }));
+    vi.stubGlobal('navigator', { ...globalThis.navigator, permissions: { query } });
+    try {
+      const { controller, callbacks, room } = setup();
+      controller.setDesired(true, false);
+      await flush();
+      room().localParticipant.nextFailure = new DOMException('Not supported', 'NotSupportedError'); // headless Chromium
+      controller.setDesired(true, true);
+      await flush();
+      expect(callbacks.onMicrophoneLost).toHaveBeenCalledWith('permission_denied');
+      expect(query).toHaveBeenCalledWith({ name: 'microphone' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('leaving and reconnecting', () => {
@@ -400,6 +417,31 @@ describe('captions', () => {
     room().emit(RoomEvent.TrackSubscribed, strangerTrack, {}, { identity: 'someone', isAgent: false });
     expect(agentTrack.attached).toEqual([element]);
     expect(strangerTrack.attached).toEqual([]);
+  });
+
+  // Automated Chromium grants a user activation on every scripted evaluation, so a blocked autoplay
+  // cannot be reproduced end to end; the controller's handling is verified here instead.
+  it('reports blocked playback and unblocks it from the enable-audio gesture', async () => {
+    const { controller, room } = setup();
+    controller.setDesired(true, false);
+    await flush();
+    expect(controller.getSnapshot().canPlaybackAudio).toBe(true);
+    room().canPlaybackAudio = false; // the browser refused to start the interviewer's audio
+    room().emit(RoomEvent.AudioPlaybackStatusChanged);
+    expect(controller.getSnapshot().canPlaybackAudio).toBe(false);
+    await controller.startAudio(); // the candidate pressed "enable audio"
+    expect(controller.getSnapshot().canPlaybackAudio).toBe(true);
+  });
+
+  it('a newly subscribed interviewer track re-reads the playback state', async () => {
+    const { controller, room } = setup();
+    controller.setAudioElement({ pause: vi.fn(), srcObject: null } as unknown as HTMLAudioElement);
+    controller.setDesired(true, false);
+    await flush();
+    room().remoteParticipants.set('agent-1', { identity: 'agent-1', isAgent: true, isSpeaking: false, attributes: {} });
+    room().canPlaybackAudio = false;
+    room().emit(RoomEvent.TrackSubscribed, new FakeRemoteAudioTrack(), {}, { identity: 'agent-1', isAgent: true });
+    expect(controller.getSnapshot().canPlaybackAudio).toBe(false);
   });
 
   it('tracks whether the interviewer is speaking from the agent state attribute', async () => {

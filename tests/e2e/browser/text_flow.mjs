@@ -1,7 +1,7 @@
 // Text mode in the browser (ADR-018): the microphone permission is refused, the device check offers
 // text mode, and the candidate answers every question in writing. The interviewer still speaks and
 // is captioned; the candidate never publishes a track.
-import { WEB, candidateTracks, createInvitation, findCandidateRoom, run, step, until } from './common.mjs';
+import { WEB, audit, candidateTracks, createInvitation, findCandidateRoom, run, step, until } from './common.mjs';
 
 const ANSWERS = [
   'MVCC keeps several versions of a row so that readers never block writers.',
@@ -50,6 +50,7 @@ await run(
           timeout: 30_000,
         });
         step('the interviewer is captioned in text mode', true);
+        await audit(page, 'room (text, question)');
       }
       const prompt = await page.getByTestId('prompt').textContent();
       await page.getByTestId('text-input').fill(answer);
@@ -67,6 +68,7 @@ await run(
     }
     await page.locator('#completed-heading').waitFor({ timeout: 60_000 });
     step('completion page shown', true);
+    await audit(page, 'completed (text)');
   },
   { microphone: 'denied' },
 );

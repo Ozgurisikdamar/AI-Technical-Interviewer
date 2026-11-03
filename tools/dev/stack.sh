@@ -250,6 +250,7 @@ web_up() { # build (once per source state) and start the web UI's production ser
   [ -d "$web/node_modules" ] || (cd "$web" && pnpm install --frozen-lockfile >/dev/null)
   stamp="$(cd "$web" && find . \( -path ./node_modules -o -path ./.next \) -prune -o -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
   if [ ! -f "$STATE/web.built" ] || [ "$(cat "$STATE/web.built")" != "$stamp" ]; then
+    stop web # a running server keeps serving the previous build's manifests
     log "building web UI"
     (cd "$web" && ATI_CONTROL_PLANE_URL="http://$CP_PUBLIC" NEXT_TELEMETRY_DISABLED=1 pnpm build >"$LOGS/web-build.log" 2>&1) || { tail -n 30 "$LOGS/web-build.log" >&2; return 1; }
     echo "$stamp" >"$STATE/web.built"

@@ -1,6 +1,6 @@
 // Voice flow in the browser: invitation, consent, device check, live room with pause/resume and a
 // page refresh, completion. The fake microphone drives the scripted interviewer.
-import { WEB, candidateTracks, createInvitation, findCandidateRoom, run, step, steps, until } from './common.mjs';
+import { WEB, audit, candidateTracks, createInvitation, findCandidateRoom, run, step, steps, until } from './common.mjs';
 
 const COMPLETE_WITHIN_MS = Number(process.env.ATI_E2E_COMPLETE_WITHIN_MS ?? 360_000);
 
@@ -13,6 +13,7 @@ await run(async ({ page, result }) => {
   await page.getByTestId('continue').click();
 
   await page.locator('#consent-heading').waitFor();
+  await audit(page, 'consent');
   result.interview_id = new URL(page.url()).pathname.split('/').filter(Boolean).pop() ?? '';
   step('DRAFT notice is labelled', await page.getByTestId('draft-banner').isVisible());
   step('pre-production banner shown', await page.getByTestId('preprod-banner').isVisible());
@@ -29,6 +30,7 @@ await run(async ({ page, result }) => {
   await page.locator('#setup-heading').waitFor();
   await page.getByTestId('check-mic').click();
   await page.waitForFunction(() => !document.querySelector('[data-testid="start-voice"]')?.hasAttribute('disabled'), null, { timeout: 15_000 });
+  await audit(page, 'setup (microphone live)');
   await page.getByTestId('start-voice').click();
 
   await page.locator('#room-heading').waitFor({ timeout: 15_000 });
@@ -40,6 +42,7 @@ await run(async ({ page, result }) => {
     timeout: 90_000,
   });
   step('first approved question shown for accessibility', true);
+  await audit(page, 'room (voice, question)');
 
   // Pause: the microphone track disappears from the media server; resume publishes a new one.
   let roomName = null;
@@ -48,6 +51,7 @@ await run(async ({ page, result }) => {
   const before = (await candidateTracks(roomName))[0].sid;
   await page.getByTestId('pause').click();
   await page.getByTestId('paused-notice').waitFor();
+  await audit(page, 'room (paused)');
   await until(async () => (await candidateTracks(roomName))?.length === 0, 15_000, 'microphone unpublished while paused');
   step('no candidate audio track on the media server while paused', true);
   step('still in the room while paused', (await candidateTracks(roomName)) !== null);
@@ -66,4 +70,5 @@ await run(async ({ page, result }) => {
 
   await page.locator('#completed-heading').waitFor({ timeout: COMPLETE_WITHIN_MS });
   step('completion page shown', true);
+  await audit(page, 'completed');
 });

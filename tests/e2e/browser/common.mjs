@@ -1,11 +1,14 @@
 // Shared helpers for the browser E2E flows (run by tests/e2e/test_browser.py).
 import { createHmac } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
 // The preinstalled Playwright (global node_modules, matching browser build); ESM imports ignore NODE_PATH.
 const require = createRequire(import.meta.url);
 export const { chromium } = require(path.join(process.env.NODE_PATH ?? '', 'playwright'));
+// axe-core is pinned in ./package.json (npm ci in this directory).
+const AXE_SOURCE = readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 
 export const env = (name) => {
   const v = process.env[name];
@@ -88,21 +91,22 @@ export async function createInvitation() {
 /**
  * Chromium with a fake microphone that loops the pitch-coded WAV; records policy violations.
  * microphone: 'granted' (default) or 'denied' (the permission request is refused).
+ * device: false runs without any (fake) capture device.
  */
-export async function launch({ microphone = 'granted' } = {}) {
+export async function launch({ microphone = 'granted', device = true } = {}) {
   const granted = microphone === 'granted';
   const browser = await chromium.launch({
     args: [
       ...(granted ? ['--use-fake-ui-for-media-stream'] : []),
-      '--use-fake-device-for-media-stream',
-      `--use-file-for-fake-audio-capture=${FAKE_MIC}`,
+      ...(device ? ['--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${FAKE_MIC}`] : []),
       '--autoplay-policy=no-user-gesture-required',
       '--no-proxy-server',
     ],
   });
   const context = await browser.newContext({ permissions: granted ? ['microphone'] : [] });
   const page = await context.newPage();
-  const seen = { violations: [], internalCalls: [], postsWithoutKey: [], pageErrors: [] };
+  const seen = { violations: [], internalCalls: [], postsWithoutKey: [], pageErrors: [], a11y: [], audited: [] };
+  current = seen;
   page.on('console', (m) => {
     if (/Content Security Policy|Refused to/i.test(m.text())) seen.violations.push(m.text());
   });
@@ -115,12 +119,87 @@ export async function launch({ microphone = 'granted' } = {}) {
   return { browser, context, page, seen };
 }
 
+let current = null;
+
+/**
+ * WCAG 2.1 A/AA audit of the current screen with axe-core (BP18 accessibility). axe is evaluated
+ * through the DevTools protocol, so the page's CSP stays in force (no inline script is added).
+ * Serious and critical violations fail the flow at the end; the others are reported.
+ */
+export async function audit(page, label) {
+  // A string is evaluated by DevTools as an expression: no eval() in the page, no CSP exception.
+  if (!(await page.evaluate(() => Boolean(window.axe)))) await page.evaluate(AXE_SOURCE);
+  // Colours are measured at rest: a button that just became enabled is still in its 120 ms
+  // background transition, and a mid-transition sample is not the colour a candidate reads.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => Number.isFinite(a.effect?.getComputedTiming().endTime ?? Infinity))
+        .map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
+  const results = await page.evaluate(async () =>
+    window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] }),
+  );
+  current.audited.push(label);
+  for (const v of results.violations) {
+    current.a11y.push({ screen: label, id: v.id, impact: v.impact, nodes: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) });
+  }
+}
+
+/** The document response must carry the security headers (ADR-016, THREAT_MODEL addendum). */
+export function checkDocumentHeaders(response, label) {
+  const h = response.headers();
+  const csp = h['content-security-policy'] ?? '';
+  step(`${label}: CSP with a per-request nonce`, /script-src 'self' 'nonce-[A-Za-z0-9+/_-]{16,}={0,2}' 'strict-dynamic'/.test(csp), csp);
+  for (const directive of ["default-src 'self'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "frame-src 'none'"]) {
+    step(`${label}: CSP ${directive}`, csp.includes(directive), csp);
+  }
+  step(`${label}: no unsafe-inline or unsafe-eval scripts`, !/script-src[^;]*'unsafe-(inline|eval)'/.test(csp), csp);
+  step(`${label}: Referrer-Policy no-referrer`, h['referrer-policy'] === 'no-referrer', h['referrer-policy']);
+  step(`${label}: X-Frame-Options DENY`, h['x-frame-options'] === 'DENY', h['x-frame-options']);
+  step(`${label}: nosniff`, h['x-content-type-options'] === 'nosniff', h['x-content-type-options']);
+  step(`${label}: microphone only for this origin`, (h['permissions-policy'] ?? '').includes('microphone=(self)') && (h['permissions-policy'] ?? '').includes('camera=()'), h['permissions-policy']);
+}
+
+/** Exchanges the invitation (user click) and answers every purpose of the notice. */
+export async function consent(page, token, { voice = true, transcript = true, ai = true, recording = false } = {}) {
+  const response = await page.goto(`${WEB}/i#token=${token}`);
+  await page.getByTestId('continue').waitFor();
+  await audit(page, 'invitation');
+  await page.getByTestId('continue').click();
+  await page.locator('#consent-heading').waitFor();
+  await audit(page, 'consent');
+  const id = new URL(page.url()).pathname.split('/').filter(Boolean).pop() ?? '';
+  for (const [purpose, yes] of [
+    ['voice_interview_processing', voice],
+    ['transcript_assessment_record', transcript],
+    ['ai_assisted_evaluation_with_human_review', ai],
+    ['audio_recording', recording],
+  ]) {
+    await page.getByTestId(`consent-${purpose}-${yes ? 'yes' : 'no'}`).check();
+  }
+  await page.getByTestId('consent-submit').click();
+  return { id, response };
+}
+
+/** Withdraws from the room (confirmation dialog) and waits for the cancelled screen. */
+export async function withdraw(page) {
+  await page.getByTestId('withdraw').click();
+  await page.getByTestId('withdraw-confirm').click();
+  await page.locator('#cancelled-heading').waitFor({ timeout: 15_000 });
+}
+
 /** Common policy checks at the end of every flow. */
 export function checkPolicies(seen) {
   step('no CSP violations', seen.violations.length === 0, seen.violations.slice(0, 2).join(' | '));
   step('no request to internal endpoints', seen.internalCalls.length === 0, seen.internalCalls.join(','));
   step('every API POST carried an Idempotency-Key', seen.postsWithoutKey.length === 0, seen.postsWithoutKey.join(','));
   step('no uncaught page errors', seen.pageErrors.length === 0, seen.pageErrors.slice(0, 2).join(' | '));
+  const blocking = seen.a11y.filter((v) => v.impact === 'serious' || v.impact === 'critical');
+  steps.push({ name: `accessibility audits (${seen.audited.join(', ')})`, ok: blocking.length === 0, detail: JSON.stringify(seen.a11y) });
+  step('no serious or critical accessibility violations', blocking.length === 0, JSON.stringify(blocking));
 }
 
 /** Runs a flow, prints one JSON result line and exits with its status. */
@@ -132,7 +211,7 @@ export async function run(flow, options = {}) {
     browser = launched.browser;
     await flow({ ...launched, result });
     checkPolicies(launched.seen);
-    console.log(JSON.stringify({ ok: true, ...result, steps }));
+    console.log(JSON.stringify({ ok: true, ...result, steps, a11y: launched.seen.a11y }));
     await browser.close();
     process.exit(0);
   } catch (e) {

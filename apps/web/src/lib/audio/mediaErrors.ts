@@ -42,6 +42,28 @@ export function classifyMediaError(error: unknown): MediaErrorKind {
   }
 }
 
+type PermissionsLike = { query(descriptor: { name: string }): Promise<{ state: string }> } | undefined;
+
+/** The microphone permission as the browser reports it; null when it cannot say (e.g. Firefox). */
+export async function microphonePermission(permissions: PermissionsLike = globalThis.navigator?.permissions): Promise<string | null> {
+  try {
+    return permissions ? (await permissions.query({ name: 'microphone' })).state : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The failure explained to the candidate. Browsers do not agree on the error a blocked microphone
+ * raises (headless Chromium reports NotSupportedError), so an unclear error is checked against
+ * the Permissions API: a blocked microphone must be explained as blocked, with the fix (QA-AN-01).
+ */
+export async function explainMediaError(error: unknown, permissions?: PermissionsLike): Promise<MediaErrorKind> {
+  const kind = classifyMediaError(error);
+  if (kind === 'permission_denied' || kind === 'insecure_context' || kind === 'no_device') return kind;
+  return (await microphonePermission(permissions)) === 'denied' ? 'permission_denied' : kind;
+}
+
 /** getUserMedia exists only in secure contexts (https or localhost). */
 export function microphoneApiAvailable(): boolean {
   return (

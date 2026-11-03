@@ -36,6 +36,12 @@ Set `ATI_E2E_REUSE_STACK=1` to run against a stack that is already up (`make sta
 | `test_participants_not_minted_by_the_control_plane_are_removed` | a participant with an API-key token and a second agent-kind participant (while the dispatched agent holds the lease) are removed at once and audited (`media.unexpected_participant`) |
 | `test_a_withdrawn_interview_room_cannot_be_rejoined` | withdrawal deletes the room; the old media token cannot rejoin it (`room.auto_create: false`) and no new token is issued |
 | `test_forged_webhooks_are_refused` | unsigned webhooks and webhooks signed with the API key (not the dedicated webhook key) are refused and not recorded |
+| `test_text_mode_when_the_microphone_is_refused` (`browser/text_flow.mjs`) | voice processing declined at consent: text mode end to end, the interviewer captioned, the candidate never publishes a track |
+| `test_declining_a_required_purpose_cancels_in_the_browser` (`browser/consent_decline_flow.mjs`) | declining a required purpose asks for confirmation, then cancels; every decision recorded; no outbox event; the document's security headers (nonce CSP, `frame-ancestors 'none'`, `Referrer-Policy`, `X-Frame-Options`, `nosniff`, `Permissions-Policy`) |
+| `test_a_refused_microphone_falls_back_to_text` (`browser/mic_denied_flow.mjs`) | voice consented but the browser refuses the microphone: the device check explains it is blocked, voice cannot start, a written answer finalizes the first question |
+| `test_no_microphone_device_falls_back_to_text` (`browser/no_device_flow.mjs`) | no capture device at all: "no microphone was found", text mode offered |
+| `test_leaving_the_page_pauses_and_returning_resumes` (`browser/reconnect_flow.mjs`) | leaving the room page pauses as `network`; returning rejoins the media room while paused (no microphone published) and resumes as a new activation of the same question |
+| accessibility (every browser flow) | axe-core 4.14.0 (pinned in `browser/package-lock.json`) audits each screen against WCAG 2.1 A/AA after transitions settle; serious or critical violations fail the flow |
 | post-run scans | no credential, JWT or transcript text in any process log; no audio file written anywhere |
 
 ## Limits and preconditions
@@ -45,7 +51,10 @@ Set `ATI_E2E_REUSE_STACK=1` to run against a stack that is already up (`make sta
   loopback only" and say nothing about a real provider, a real network, TURN, packet loss or jitter.
 - **Browser flows** use the Playwright that is preinstalled for Node (`npm root -g`) and Chromium's fake microphone
   playing a pitch-coded WAV generated at test time and deleted afterwards. They are skipped when Playwright is not
-  installed.
+  installed. axe-core is installed from `browser/package-lock.json` (`npm ci`) on first use.
+- **Autoplay.** Automated Chromium grants a user activation on every scripted evaluation, so blocked autoplay (the
+  enable-audio control) cannot be reproduced end to end; the web unit tests cover it. Automated accessibility checks
+  are not a screen-reader test.
 - **No recording service.** Recording is off by default, and this environment has no egress service: the
   recording test can only show that recording fails closed. A real recording (egress, encrypted storage) is
   unverified.

@@ -44,8 +44,15 @@ requires_playwright = pytest.mark.skipif(
 )
 
 
+BROWSER = ROOT / "tests" / "e2e" / "browser"
+
+
 def run_flow(stack: dict[str, str], staff_token: str, script: str) -> dict[str, Any]:
     stack_cmd("web-up")
+    if not (BROWSER / "node_modules" / "axe-core").exists():  # pinned in browser/package-lock.json
+        subprocess.run(
+            ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=BROWSER, check=True, capture_output=True, timeout=300
+        )
     mic = Path(stack["ATI_E2E_STATE_DIR"]) / "e2e-fake-microphone.wav"
     fake_microphone(mic)
     try:
@@ -57,15 +64,15 @@ def run_flow(stack: dict[str, str], staff_token: str, script: str) -> dict[str, 
             "NO_PROXY": "localhost,127.0.0.1",
             "no_proxy": "localhost,127.0.0.1",
         }
-        out = subprocess.run(
-            ["node", str(ROOT / "tests" / "e2e" / "browser" / script)], capture_output=True, text=True, env=env, timeout=600
-        )
+        out = subprocess.run(["node", str(BROWSER / script)], capture_output=True, text=True, env=env, timeout=600)
     finally:
         mic.unlink(missing_ok=True)
     lines = [line for line in out.stdout.splitlines() if line.startswith("{")]
     assert lines, out.stdout[-2000:] + out.stderr[-2000:]
     result: dict[str, Any] = json.loads(lines[-1])
     print(f"\n{script} steps:", ", ".join(s["name"] for s in result["steps"]))
+    if result.get("a11y"):
+        print(f"{script} minor accessibility findings:", json.dumps(result["a11y"]))
     assert result["ok"], result
     return result
 
@@ -106,3 +113,51 @@ def test_text_mode_when_the_microphone_is_refused(stack: dict[str, str], staff_t
     }
     assert sources == {"candidate_text"}  # no speech was transcribed: nothing was published
     assert db.one("SELECT count(*) FROM ati.audio_recordings WHERE session_id = %s", sid) == 0
+
+
+@requires_playwright
+def test_declining_a_required_purpose_cancels_in_the_browser(stack: dict[str, str], staff_token: str, db: Db) -> None:
+    sid = run_flow(stack, staff_token, "consent_decline_flow.mjs")["interview_id"]
+    state, reason = db.rows("SELECT state, cancel_reason FROM ati.interview_sessions WHERE id = %s", sid)[0]
+    assert (state, reason) == ("CANCELLED", "consent_declined")
+    decisions = dict(db.rows("SELECT purpose_id, granted FROM ati.consent_records WHERE session_id = %s", sid))
+    assert decisions["transcript_assessment_record"] is False and len(decisions) == 4
+    assert db.one("SELECT count(*) FROM ati.outbox_events WHERE session_id = %s", sid) == 0
+
+
+@requires_playwright
+def test_a_refused_microphone_falls_back_to_text(stack: dict[str, str], staff_token: str, db: Db) -> None:
+    sid = run_flow(stack, staff_token, "mic_denied_flow.mjs")["interview_id"]
+    state, mode, reason = db.rows("SELECT state, input_mode, cancel_reason FROM ati.interview_sessions WHERE id = %s", sid)[0]
+    assert (state, mode, reason) == ("CANCELLED", "text", "withdrawn")
+    assert (
+        db.one("SELECT granted FROM ati.consent_records WHERE session_id = %s AND purpose_id = 'voice_interview_processing'", sid) is True
+    )
+    answers = db.rows("SELECT item_id, finalization_cause FROM ati.candidate_answers WHERE session_id = %s", sid)
+    assert answers == [("q1", "candidate_request")]
+    sources = {
+        r[0] for r in db.rows("SELECT DISTINCT source FROM ati.transcript_segments WHERE session_id = %s AND speaker = 'candidate'", sid)
+    }
+    assert sources == {"candidate_text"}
+
+
+@requires_playwright
+def test_no_microphone_device_falls_back_to_text(stack: dict[str, str], staff_token: str, db: Db) -> None:
+    sid = run_flow(stack, staff_token, "no_device_flow.mjs")["interview_id"]
+    state, mode = db.rows("SELECT state, input_mode FROM ati.interview_sessions WHERE id = %s", sid)[0]
+    assert (state, mode) == ("CANCELLED", "text")
+
+
+@requires_playwright
+def test_leaving_the_page_pauses_and_returning_resumes(stack: dict[str, str], staff_token: str, db: Db) -> None:
+    sid = run_flow(stack, staff_token, "reconnect_flow.mjs")["interview_id"]
+    reasons = [r[0] for r in db.rows("SELECT reason FROM ati.pause_intervals WHERE session_id = %s ORDER BY started_ms", sid)]
+    assert reasons[0] == "network", reasons
+    closes = [
+        r[0]
+        for r in db.rows(
+            "SELECT close_reason FROM ati.question_activations WHERE session_id = %s AND item_id = 'q1' ORDER BY opened_at", sid
+        )
+    ]
+    assert closes[0] == "paused" and len(closes) >= 2  # resumed as a new activation of the same question
+    assert db.one("SELECT cancel_reason FROM ati.interview_sessions WHERE id = %s", sid) == "withdrawn"

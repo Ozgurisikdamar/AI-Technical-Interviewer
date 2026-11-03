@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { isVoiceDetected, levelFromSamples } from '@/lib/audio/level';
 import {
   AUDIO_CONSTRAINTS,
-  classifyMediaError,
+  explainMediaError,
   microphoneApiAvailable,
   type MediaErrorKind,
 } from '@/lib/audio/mediaErrors';
@@ -118,8 +118,11 @@ export function useMicrophoneCheck(): MicrophoneCheck {
       (caught: unknown) => {
         if (current !== attempt.current) return;
         release();
-        setStatus('error');
-        setError(classifyMediaError(caught));
+        void explainMediaError(caught).then((kind) => {
+          if (current !== attempt.current) return;
+          setStatus('error');
+          setError(kind);
+        });
       },
     );
   }, [release]);

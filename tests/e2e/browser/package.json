@@ -1,0 +1,9 @@
+{
+  "name": "ati-e2e-browser",
+  "private": true,
+  "type": "module",
+  "description": "Browser end-to-end flows. Playwright is the preinstalled global install; axe-core is pinned here.",
+  "dependencies": {
+    "axe-core": "4.14.0"
+  }
+}

@@ -24,7 +24,7 @@ import type {
 } from 'livekit-client';
 import type * as LiveKitModule from 'livekit-client';
 import type { RealtimeSession } from '@/lib/api/types';
-import { AUDIO_CONSTRAINTS, classifyMediaError, type MediaErrorKind } from '@/lib/audio/mediaErrors';
+import { AUDIO_CONSTRAINTS, explainMediaError, type MediaErrorKind } from '@/lib/audio/mediaErrors';
 import type { ConnectionStatus } from '@/lib/interview/viewModel';
 import {
   ATTR_SEGMENT_ID,
@@ -355,7 +355,9 @@ export class RealtimeController {
       publication = await room.localParticipant.setMicrophoneEnabled(true, AUDIO_CONSTRAINTS);
     } catch (error) {
       if (room !== this.room) return;
-      this.micFailed(classifyMediaError(error));
+      const kind = await explainMediaError(error);
+      if (room !== this.room) return;
+      this.micFailed(kind);
       return;
     }
     const track = publication?.audioTrack;
