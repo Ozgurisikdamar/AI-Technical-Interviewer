@@ -2,7 +2,9 @@
 
 The Go service that owns interview state (ADR-002, ADR-012, ADR-016): the backend-enforced state machine, consent,
 invitations, LiveKit rooms and agent dispatch, the Tier-1 agent's claim and lease, transcript ingestion and
-attribution, the completion protocol, the transactional outbox, optional recording, and audit.
+attribution, the completion protocol, the transactional outbox, optional recording, staff invitation revocation, and
+audit. Credentials (invitation, session cookie, media token, agent grant) are returned once and never kept at rest,
+not even for idempotent replays.
 
 ## Layout
 

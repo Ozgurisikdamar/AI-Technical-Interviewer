@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import subprocess
@@ -124,6 +125,14 @@ async def candidate(stack: dict[str, str], staff_token: str) -> AsyncIterator[Ca
     await c.create_and_join_api(staff_token)
     await c.join()
     yield c
+    await release(c)
+
+
+async def release(c: Candidate) -> None:
+    """Ends a test's interview: withdrawing deletes the room, so its agent leaves at once instead of
+    holding worker capacity until LiveKit's departure timeout (tests run back to back)."""
+    with contextlib.suppress(Exception):
+        await c.withdraw()  # refused when the interview already ended; nothing to release then
     await c.close()
 
 

@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from candidate import DONE, Candidate, calibrate, listen_to_prompt
-from conftest import Db, stack_cmd
+from conftest import Db, release, stack_cmd
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -69,4 +69,4 @@ async def test_recording_fails_closed_without_an_egress_service(recording_enable
         consent = db.one("SELECT granted FROM ati.consent_records WHERE session_id = %s AND purpose_id = 'audio_recording'", c.interview_id)
         assert consent is True
     finally:
-        await c.close()
+        await release(c)

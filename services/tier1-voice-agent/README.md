@@ -29,8 +29,26 @@ copies with the sources.
   transcription). **Not verified against the live provider** in this repository: no credentials are available
   here. Turn-taking settings are uncalibrated.
 - `scripted`: deterministic fake VAD, STT, LLM and TTS plugins inside the same `AgentSession`, for end-to-end
-  tests without a provider. Candidate intent is encoded in the length of a synthetic speech burst (see
-  `engines/scripted.py`). Its transcripts are marked `synthetic_test`. It is refused in production.
+  tests without a provider. Candidate intent is encoded in the pitch of a synthetic tone burst (see
+  `engines/scripted.py`), including failure injection: speech-recognition and synthesis failures, a model that never
+  answers, a stream dropped mid-reply, and a score disclosure for the output monitor. Its transcripts are marked
+  `synthetic_test`. It is refused in production.
+
+Each question's turn profile is applied when it is activated: `extended_pause` gives the candidate longer before a
+pause ends their turn (scripted: endpointing delay 0.3 s or 1.2 s; OpenAI: semantic VAD eagerness `medium` or
+`low`). The values are uncalibrated.
+
+## Signals and metrics
+
+- `low_energy`: the controller keeps the received level of the candidate's microphone per frame (no audio) and flags a
+  segment whose 90th-percentile level is below -35 dBFS (uncalibrated). Unmeasured segments are never flagged. It is a
+  transcript-reliability signal for review, never a judgement of the candidate.
+- Latency metrics come from the framework's per-reply measurements, with BLUEPRINT section 5 meanings: TTFB (first
+  model token), TTFA (first synthesized audio), end of turn (candidate turn end to first reply audio) and full
+  response (candidate turn end to the end of an uninterrupted reply); barge-in stop latency is measured from the
+  candidate's speech onset.
+- A provider failure, a voice session that closes on an error, or an approved question that could not be delivered
+  pauses the interview once (`provider_failure`); a replacement agent continues after the candidate resumes.
 
 ## Completion protocol (ADR-012)
 

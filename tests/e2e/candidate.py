@@ -179,6 +179,11 @@ class Candidate:
         data: dict[str, Any] = await self._call("POST", self._path("resume"), {"state_version": v["state_version"]})
         return data
 
+    async def withdraw(self) -> dict[str, Any]:
+        v = await self.view()
+        data: dict[str, Any] = await self._call("POST", self._path("withdraw"), {"state_version": v["state_version"], "confirm": True})
+        return data
+
     async def finish_answer(self) -> dict[str, Any]:
         v = await self.view()
         data: dict[str, Any] = await self._call(

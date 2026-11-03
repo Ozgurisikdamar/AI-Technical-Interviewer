@@ -19,7 +19,7 @@ import pytest
 from livekit import api, rtc
 
 from candidate import Candidate, calibrate, listen_to_prompt
-from conftest import Db
+from conftest import Db, release
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -102,7 +102,7 @@ async def test_a_text_mode_candidate_cannot_publish_audio(stack: dict[str, str],
         finally:
             await room.disconnect()
     finally:
-        await c.close()
+        await release(c)
 
 
 async def _connect_minted(room_name: str, identity: str, *, agent: bool) -> tuple[rtc.Room, asyncio.Event]:

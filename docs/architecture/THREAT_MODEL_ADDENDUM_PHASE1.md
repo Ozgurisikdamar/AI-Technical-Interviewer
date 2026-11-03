@@ -24,9 +24,9 @@
 | Compromised or hijacked Tier-1 model | Skipped questions, fake completion, score manipulation | Single no-argument tool reaching only request R01; backend guards per transition; no score or plan tools exist | Compromised-agent sequence suite; contract INV-5/INV-8 |
 | Late or misattributed transcript | Evidence under the wrong question | Server-side attribution by speech start time; answer windows open at prompt playback; unassigned/late flags | Attribution integration tests |
 | Spoofed webhook (e.g., fake participant_left) | Forced pause or completion | Dedicated webhook key; event-ID dedupe; stale-event drop; ListParticipants cross-check | Webhook integration tests |
-| Stale candidate token reused after withdrawal | Unauthorized rejoin | Room deleted on completion, withdrawal and expiry; `room.auto_create: false`; short initial TTL | Room-lifecycle tests |
-| Candidate data-channel injection | Bypass of backend validation | `canPublishData=false`; agent `text_input=False`; text answers only via authenticated API | Token-grant unit test; agent settings test |
-| Invitation token leakage via logs or referrers | Account takeover | Token only in URL fragment; `Referrer-Policy: no-referrer`; exchange only on click; hashed storage; second exchange revokes the first | API tests; web tests |
+| Stale candidate token reused after withdrawal | Unauthorized rejoin | Room deleted on completion, withdrawal and expiry; `room.auto_create: false`; short initial TTL | Room-lifecycle tests; E2E `test_a_withdrawn_interview_room_cannot_be_rejoined`; G `TestPauseExpiryDeletesTheRoomAndEmitsNoCompletion`, `TestCandidateTokenGrants` (lifetime) |
+| Candidate data-channel injection | Bypass of backend validation | `canPublishData=false`; agent `text_input=False`; text answers only via authenticated API | `TestCandidateTokenGrants` (decoded JWT); agent settings test; E2E `test_the_server_enforces_microphone_only_publishing` (server-side permission, refused camera and screen share, metadata not applied) |
+| Invitation token leakage via logs or referrers | Account takeover | Token only in URL fragment; `Referrer-Policy: no-referrer`; exchange only on click; hashed storage (also for idempotent replays, which never repeat the token); second exchange revokes the first; staff revocation ends every candidate session and deletes a live room | API tests (`TestCredentialsAreNeverStoredForReplays`, `TestStaffCanRevokeAnUnusedInvitation`, `TestRevokingALiveInterviewPausesItAndDeletesTheRoom`); browser header checks; web tests |
 | CSRF on candidate actions | Forced pause or withdraw | SameSite=Strict cookie; Origin and Sec-Fetch-Site checks against configured origin | API tests |
 | Framework-level recording or log export | Unconsented audio retention | `AgentSession(record=False)`; no audio files written (E2E check); egress only through the fail-closed policy | Agent unit test; E2E filesystem check |
 | Tier-1 learning evaluation outcomes | Score-aware behaviour | Post-interview states collapsed in Tier-1 context; context built through a restricted DB role | Context schema and isolation tests |
@@ -35,7 +35,7 @@
 
 ## 3. Residual risks (accepted for the MVP, revisit before production)
 
-- A compromised agent **host** holds LiveKit API credentials and can mint room tokens. Workers are treated as trusted infrastructure with a dedicated key pair, network isolation and alerts on unexpected participants.
+- A compromised agent **host** holds LiveKit API credentials and can mint room tokens. Workers are treated as trusted infrastructure with a dedicated key pair, network isolation and alerts on unexpected participants. The control plane removes and audits any participant it did not mint, including a second agent that joins while another holds the lease (tested end to end); an agent-kind token that joins while no lease is held is indistinguishable from the dispatched replacement until it claims, and claiming needs the single-use nonce.
 - Evidence transcription is produced inside the Tier-1 provider session and is `quality = unverified` (ADR-014).
 - Speech-to-speech output cannot be validated before it is spoken. Deviation is detected post hoc (ADR-011).
 - Self-hosted LiveKit does not revoke a connected participant's token on removal; room deletion is the mitigation.
