@@ -540,23 +540,145 @@ async def test_provider_failure_pauses_and_stops(harness: Harness) -> None:
     assert cp.named("pause") == [(14, "provider_failure")] and c._done.is_set()
 
 
-async def test_metrics_map_to_the_allowed_names(harness: Harness) -> None:
+def reply(c: InterviewController, *, interrupted: bool = False, text: str = "Please go on.", **metrics: float) -> None:
+    item = SimpleNamespace(role="assistant", text_content=text, interrupted=interrupted, id=f"item_{len(c._metrics)}", metrics=metrics)
+    c.session.emit("conversation_item_added", item=item)  # type: ignore[union-attr]
+
+
+async def test_latency_metrics_follow_the_blueprint_definitions(harness: Harness) -> None:
     c, _, _ = harness()
-
-    def emit(kind: str, **fields: float) -> None:
-        cls = type(kind, (), {})
-        m = cls()
-        for k, v in fields.items():
-            setattr(m, k, v)
-        c.session.emit("metrics_collected", metrics=m)  # type: ignore[union-attr]
-
-    emit("TTSMetrics", ttfb=0.21)
-    emit("LLMMetrics", ttft=0.4)
-    emit("RealtimeModelMetrics", ttft=0.3)
-    emit("EOUMetrics", end_of_utterance_delay=0.6)
-    emit("TTSMetrics", ttfb=-1.0)
+    # A pipeline reply to a candidate turn: model first token, first audio, turn end -> first audio,
+    # and turn end -> end of the reply (it played to the end).
+    reply(c, llm_node_ttft=0.4, tts_node_ttfb=0.21, e2e_latency=0.6, started_speaking_at=100.0, stopped_speaking_at=102.5)
+    # A realtime reply reports only the end-to-end latency; an interrupted one has no full response.
+    reply(c, interrupted=True, e2e_latency=0.7, started_speaking_at=110.0, stopped_speaking_at=110.4)
+    # A prompt that follows no candidate turn has no end-of-turn latency.
+    reply(c, tts_node_ttfb=0.18, started_speaking_at=120.0, stopped_speaking_at=125.0)
     names = [(m["name"], m["value_ms"]) for m in c._metrics]
-    assert names == [("voice_ttfa_ms", 210.0), ("voice_ttfb_ms", 400.0), ("voice_ttfb_ms", 300.0), ("voice_end_of_turn_ms", 600.0)]
+    assert names == [
+        ("voice_ttfb_ms", 400.0),
+        ("voice_ttfa_ms", 210.0),
+        ("voice_end_of_turn_ms", 600.0),
+        ("voice_full_response_ms", 3100.0),
+        ("voice_end_of_turn_ms", 700.0),
+        ("voice_ttfa_ms", 180.0),
+    ]
+    reply(c, e2e_latency=-0.1)  # out of range values are dropped, not reported
+    assert len(c._metrics) == 6
+
+
+async def test_each_question_applies_its_turn_profile(harness: Harness) -> None:
+    c, _, engine = harness(make_ctx("QUESTION_ACTIVE", activation=ACT1))
+    await c._apply(make_ctx("QUESTION_ACTIVE", version=8, activation=ACT2))
+    await c._apply(make_ctx("CANDIDATE_SPEAKING", version=9, activation=ACT2))  # same question: unchanged
+    third = make_ctx("QUESTION_ACTIVE", version=10, activation="act_ZZZZZZZZZZZZZZZZzz")
+    third["active_prompt"]["turn_profile"] = "standard"
+    await c._apply(third)
+    assert engine.turn_profiles == ["extended_pause", "standard"]
+
+
+def tone_frame(amplitude: int, n: int = 320) -> Any:
+    import numpy as np
+    from livekit import rtc
+
+    wave = (np.sin(2 * np.pi * 300 * np.arange(n) / 16000) * amplitude).astype(np.int16)
+    return rtc.AudioFrame(data=wave.tobytes(), sample_rate=16000, num_channels=1, samples_per_channel=n)
+
+
+def test_level_meter_flags_only_measured_quiet_turns() -> None:
+    now = [100.0]
+    meter = controller_mod.LevelMeter(lambda: now[0])
+    for i in range(50):  # 1 s of speech at about -15 dBFS
+        meter.add(tone_frame(8000), at=100.0 + i * 0.02)
+    for i in range(50):  # 1 s at about -39 dBFS
+        meter.add(tone_frame(500), at=102.0 + i * 0.02)
+    assert meter.low_energy(100.0, 101.0) is False
+    assert meter.low_energy(102.0, 103.0) is True
+    assert meter.low_energy(105.0, 106.0) is False  # nothing received: never claimed
+    # Trailing silence after quiet speech does not change the verdict; a loud tail does.
+    assert meter.low_energy(101.5, 103.0) is True
+    assert meter.low_energy(100.9, 102.5) is False
+
+
+async def test_quiet_candidate_speech_is_marked_low_energy(harness: Harness, worker: Callable[[InterviewController], None]) -> None:
+    c, cp, _ = harness(make_ctx("CANDIDATE_SPEAKING"))
+    worker(c)
+    frames = [SimpleNamespace(frame=tone_frame(400)) for _ in range(40)] + [SimpleNamespace(frame=tone_frame(9000)) for _ in range(40)]
+    fed = asyncio.Event()
+
+    class Stream:
+        def __init__(self, events: list[Any]) -> None:
+            self.events, self.closed = events, False
+
+        def __aiter__(self) -> Stream:
+            return self
+
+        async def __anext__(self) -> Any:
+            if not self.events:
+                fed.set()
+                await asyncio.sleep(3600)
+            ev = self.events.pop(0)
+            await asyncio.sleep(0.002)
+            return ev
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    stream = Stream(frames[:40])
+    c._open_audio_stream = lambda track: stream  # type: ignore[method-assign]
+    from livekit import rtc
+
+    room: FakeRoom = c.room  # type: ignore[assignment]
+    c._wire_room()
+    candidate = SimpleNamespace(identity="candidate")
+    speak(c, start=True)
+    room.emit("track_subscribed", SimpleNamespace(kind=rtc.TrackKind.KIND_AUDIO), object(), candidate)
+    await asyncio.wait_for(fed.wait(), 2)
+    speak(c, start=False)
+    transcript(c, "a quiet answer")
+    await settle(0.05)
+    assert cp.segments[-1]["signals"]["low_energy"] is True
+    # The microphone goes away: metering stops and the stream is closed.
+    room.emit("track_unsubscribed", SimpleNamespace(kind=rtc.TrackKind.KIND_AUDIO), object(), candidate)
+    await settle(0.05)
+    assert stream.closed and c._meter_task is None
+    # Other participants' tracks are never metered.
+    room.emit("track_subscribed", SimpleNamespace(kind=rtc.TrackKind.KIND_AUDIO), object(), SimpleNamespace(identity="agent-other"))
+    assert c._meter_task is None
+
+
+async def test_an_errored_voice_session_close_pauses_the_interview(harness: Harness) -> None:
+    c, cp, _ = harness(make_ctx("CANDIDATE_SPEAKING", version=31))
+    c.session.emit("close", reason="error", error=SimpleNamespace(recoverable=False))  # type: ignore[union-attr]
+    c.session.emit("error", error=SimpleNamespace(recoverable=False), source=object())  # type: ignore[union-attr]
+    await settle()
+    assert cp.named("pause") == [(31, "provider_failure")] and c._done.is_set()  # paused once
+
+
+async def test_a_normal_voice_session_close_stops_without_pausing(harness: Harness) -> None:
+    c, cp, _ = harness(make_ctx("CANDIDATE_SPEAKING"))
+    c.session.emit("close", reason="job_shutdown", error=None)  # type: ignore[union-attr]
+    await settle()
+    assert not cp.named("pause") and c._done.is_set()
+
+
+async def test_our_own_shutdown_close_is_ignored(harness: Harness) -> None:
+    c, cp, _ = harness(make_ctx("CANDIDATE_SPEAKING"))
+    c.stop()
+    c.session.emit("close", reason="error", error=SimpleNamespace(recoverable=False))  # type: ignore[union-attr]
+    await settle()
+    assert not cp.named("pause")
+
+
+async def test_an_undelivered_prompt_pauses_the_interview(harness: Harness) -> None:
+    c, cp, engine = harness(make_ctx("QUESTION_ACTIVE", version=40, activation=ACT1))
+    await c._apply(make_ctx("QUESTION_ACTIVE", version=41, activation=ACT2))
+    handle = engine.handles[-1]
+    handle.exception = lambda: TimeoutError("generate_reply timed out")  # type: ignore[attr-defined]
+    handle.finish(started_at=None)
+    await settle()
+    assert cp.named("pause") == [(41, "provider_failure")] and c._done.is_set()
+    assert not cp.named("prompt_started")
 
 
 async def test_text_answers_reach_the_model_once_as_user_input(harness: Harness) -> None:

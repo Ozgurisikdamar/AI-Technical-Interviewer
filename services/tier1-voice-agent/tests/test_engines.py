@@ -8,17 +8,24 @@ from typing import Any
 import numpy as np
 import pytest
 from livekit import rtc
-from livekit.agents import APIConnectionError, llm, vad
+from livekit.agents import APIConnectionError, APIConnectOptions, APITimeoutError, llm, vad
+from livekit.plugins.openai.realtime import RealtimeModel
 
-from tier1_voice_agent.engines import LOCAL_INTERRUPTION_MODE, turn_handling
-from tier1_voice_agent.engines.openai_realtime import OpenAIRealtimeEngine
+from tier1_voice_agent import monitor
+from tier1_voice_agent.engines import LOCAL_INTERRUPTION_MODE, TURN_PROFILES, turn_handling
+from tier1_voice_agent.engines.openai_realtime import EAGERNESS, OpenAIRealtimeEngine
 from tier1_voice_agent.engines.scripted import (
     END_SILENCE_S,
+    ENDPOINTING_S,
+    FAIL_FAST,
     INTENT_TONES_HZ,
+    SCRIPTED_DISCLOSURE,
     SCRIPTED_TEXT,
+    TTS_FAILURE_MARK,
     EnergyVAD,
     ScriptedEngine,
     ScriptedLLM,
+    ScriptedSTT,
     ToneTTS,
     classify,
 )
@@ -167,6 +174,104 @@ async def test_scripted_llm_injection_emits_a_forbidden_tool_call() -> None:
 async def test_scripted_llm_failure_injection() -> None:
     with pytest.raises(APIConnectionError):
         await run_llm(SCRIPTED_TEXT["fail_llm"])
+
+
+async def test_scripted_llm_enforces_its_timeout_when_the_provider_never_answers() -> None:
+    ctx = llm.ChatContext.empty()
+    ctx.add_message(role="user", content=SCRIPTED_TEXT["llm_timeout"])
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(APITimeoutError):
+        async with ScriptedLLM().chat(chat_ctx=ctx, conn_options=APIConnectOptions(max_retry=0, timeout=0.2)) as stream:
+            async for _ in stream:
+                pass
+    assert 0.15 <= asyncio.get_running_loop().time() - started < 2.0
+
+
+async def test_scripted_llm_stream_drops_after_a_partial_reply() -> None:
+    ctx = llm.ChatContext.empty()
+    ctx.add_message(role="user", content=SCRIPTED_TEXT["llm_drop"])
+    received: list[str] = []
+    with pytest.raises(APIConnectionError):
+        async with ScriptedLLM().chat(chat_ctx=ctx, conn_options=FAIL_FAST) as stream:
+            async for chunk in stream:
+                received.append(chunk.delta.content or "" if chunk.delta else "")
+    assert received == ["Please go"]
+
+
+async def test_scripted_disclosure_is_caught_by_the_output_monitor() -> None:
+    chunks = await run_llm(SCRIPTED_TEXT["disclose"])
+    text = "".join(ch.delta.content or "" for ch in chunks if ch.delta)
+    assert text == SCRIPTED_DISCLOSURE and "possible_score_disclosure" in monitor.scan(text)
+
+
+async def test_scripted_speech_recognition_failure() -> None:
+    burst = tone(INTENT_TONES_HZ["fail_stt"], 0.8, rate=16000)
+    f = rtc.AudioFrame(data=burst.tobytes(), sample_rate=16000, num_channels=1, samples_per_channel=burst.size)
+    with pytest.raises(APIConnectionError):
+        await ScriptedSTT("en").recognize([f], conn_options=FAIL_FAST)
+
+
+async def test_scripted_speech_synthesis_failure_only_for_marked_replies() -> None:
+    chunks = await run_llm(SCRIPTED_TEXT["fail_tts"])
+    reply = "".join(ch.delta.content or "" for ch in chunks if ch.delta)
+    assert reply.startswith(TTS_FAILURE_MARK)
+    with pytest.raises(APIConnectionError):
+        async with ToneTTS().synthesize(reply, conn_options=FAIL_FAST) as stream:
+            async for _ in stream:
+                pass
+    async with ToneTTS().synthesize("An approved question?", conn_options=FAIL_FAST) as ok:
+        assert [ev async for ev in ok]
+
+
+async def test_scripted_session_fails_fast() -> None:
+    session = ScriptedEngine().build_session(language="en")
+    try:
+        opts = session.conn_options
+        for conn in (opts.stt_conn_options, opts.llm_conn_options, opts.tts_conn_options):
+            assert conn.max_retry == 0 and conn.timeout <= 2.0
+    finally:
+        await session.aclose()
+
+
+async def test_turn_profiles_change_endpointing_in_the_scripted_session() -> None:
+    engine = ScriptedEngine()
+    session = engine.build_session(language="en")
+    try:
+        assert session.options.endpointing["min_delay"] == ENDPOINTING_S["standard"]
+        engine.apply_turn_profile(session, "extended_pause")
+        assert session.options.endpointing["min_delay"] == ENDPOINTING_S["extended_pause"] > ENDPOINTING_S["standard"]
+        engine.apply_turn_profile(session, "standard")
+        assert session.options.endpointing["min_delay"] == ENDPOINTING_S["standard"]
+    finally:
+        await session.aclose()
+    assert set(ENDPOINTING_S) == set(TURN_PROFILES)
+
+
+async def test_turn_profiles_change_semantic_vad_eagerness_in_the_openai_session() -> None:
+    engine = openai_engine()
+    session = engine.build_session(language="en")
+    try:
+        model = session.llm
+        assert isinstance(model, RealtimeModel)
+        for profile in TURN_PROFILES:
+            engine.apply_turn_profile(session, profile)
+            td = model._opts.turn_detection  # pinned livekit-agents 1.8.10 internals
+            assert (td.type, td.eagerness, td.create_response, td.interrupt_response) == ("semantic_vad", EAGERNESS[profile], True, True)
+    finally:
+        await session.aclose()
+    assert EAGERNESS["extended_pause"] == "low" and set(EAGERNESS) == set(TURN_PROFILES)
+
+
+async def test_energy_vad_hears_quiet_speech_but_not_near_silence() -> None:
+    def quiet(amplitude: int) -> rtc.AudioFrame:
+        wave = (np.sin(2 * np.pi * 300 * np.arange(FRAME) / SR) * amplitude).astype(np.int16)
+        return rtc.AudioFrame(data=wave.tobytes(), sample_rate=SR, num_channels=1, samples_per_channel=FRAME)
+
+    silence_frames = int(END_SILENCE_S / 0.02) + 2
+    soft = await collect_vad([quiet(500)] * 50 + [frame(False)] * silence_frames)  # about -39 dBFS
+    assert [e.type for e in soft] == [vad.VADEventType.START_OF_SPEECH, vad.VADEventType.END_OF_SPEECH]
+    hiss = await collect_vad([quiet(150)] * 50 + [frame(False)] * silence_frames)  # about -47 dBFS
+    assert hiss == []
 
 
 async def test_tone_tts_duration_scales_with_text() -> None:

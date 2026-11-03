@@ -15,12 +15,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 from livekit import rtc
 from livekit.agents import Agent, AgentSession, function_tool
 from livekit.agents.voice.room_io import RoomOptions
@@ -38,6 +40,36 @@ GRACE_MAX_WAIT_S = 6.0
 TRANSCRIPT_WAIT_S = 3.0  # how long completion waits for transcripts of speech that already ended
 CLOSING_HOLD_S = 8.0  # time for the closing remark before the agent leaves
 LIVE_STATES = ("CALIBRATION", "QUESTION_ACTIVE", "CANDIDATE_SPEAKING")
+# A candidate segment is low_energy when the 90th percentile of its received frame levels is below
+# this (uncalibrated, ADR-014). It is a transcript-reliability signal for review, never a judgement.
+LOW_ENERGY_DBFS = -35.0
+LEVEL_WINDOW_S = 120.0  # how much received-level history is kept
+METER_SAMPLE_RATE = 16000
+SILENCE_DBFS = -120.0
+
+
+class LevelMeter:
+    """Levels (dBFS per received frame) of the candidate's microphone, timestamped on arrival. Only
+    levels are kept: no audio, no content."""
+
+    def __init__(self, clock: Callable[[], float]) -> None:
+        self._clock = clock
+        self._levels: deque[tuple[float, float]] = deque()
+
+    def add(self, frame: rtc.AudioFrame, at: float | None = None) -> None:
+        samples = np.frombuffer(frame.data, dtype=np.int16)
+        rms = math.sqrt(float(np.mean(samples.astype(np.float64) ** 2))) if samples.size else 0.0
+        level = 20.0 * math.log10(rms / 32768.0) if rms > 0 else SILENCE_DBFS
+        now = self._clock() if at is None else at
+        self._levels.append((now, level))
+        while self._levels and self._levels[0][0] < now - LEVEL_WINDOW_S:
+            self._levels.popleft()
+
+    def low_energy(self, start: float, end: float) -> bool:
+        levels = [level for t, level in self._levels if start <= t <= end]
+        if len(levels) < 5:
+            return False  # not measured: never claim a quiet turn without evidence
+        return float(np.percentile(levels, 90)) < LOW_ENERGY_DBFS
 
 
 def room_options() -> RoomOptions:
@@ -119,6 +151,9 @@ class InterviewController:
         self._barge_in_at: float | None = None
         self._barge_latency_ms: float | None = None
         self._audio_degraded = False
+        self._meter = LevelMeter(clock)
+        self._meter_task: asyncio.Task[None] | None = None
+        self._failing = False
         self._metrics: list[dict[str, Any]] = []
         self._flags: list[dict[str, Any]] = []
         self._input_audio_s = 0.0
@@ -180,6 +215,7 @@ class InterviewController:
     async def _shutdown(self) -> None:
         for t in self._tasks:
             t.cancel()
+        self._stop_meter()
         with contextlib.suppress(Exception):
             await self._drain_segments(limit_s=3.0)
         with contextlib.suppress(Exception):
@@ -268,6 +304,8 @@ class InterviewController:
             if state in ("QUESTION_ACTIVE", "CANDIDATE_SPEAKING") and active and active["activation_id"] != self._spoken_activation:
                 self._spoken_activation = active["activation_id"]
                 self._activation_keys = []
+                self.engine.apply_turn_profile(self.session, active["turn_profile"])
+                log.info("turn profile applied", extra={"turn_profile": active["turn_profile"], "item_ref": active["item_ref"]})
                 await self.agent.update_instructions(prompt.render_instructions(ctx))
                 if prev == "PAUSED":
                     await self.engine.speak_free(self.session, prompt.WELCOME_BACK.get(lang, prompt.WELCOME_BACK["en"]))
@@ -358,8 +396,8 @@ class InterviewController:
         session.on("user_input_transcribed", self._on_user_transcript)
         session.on("user_transcription_timeout", self._on_transcription_timeout)
         session.on("conversation_item_added", self._on_item)
-        session.on("metrics_collected", self._on_metrics)
         session.on("error", self._on_error)
+        session.on("close", self._on_close)
 
     def _wire_room(self) -> None:
         def candidate(participant: Any) -> bool:
@@ -373,10 +411,54 @@ class InterviewController:
             if candidate(args[-1]):
                 self._audio_degraded = False
 
+        def subscribed(track: Any, _publication: Any, participant: Any) -> None:
+            if candidate(participant) and getattr(track, "kind", None) == rtc.TrackKind.KIND_AUDIO:
+                self._start_meter(track)
+
+        def unsubscribed(track: Any, _publication: Any, participant: Any) -> None:
+            if candidate(participant) and getattr(track, "kind", None) == rtc.TrackKind.KIND_AUDIO:
+                self._stop_meter()
+
         self.room.on("track_muted", degraded)
         self.room.on("track_unpublished", degraded)
         self.room.on("track_unmuted", restored)
         self.room.on("track_subscribed", restored)
+        self.room.on("track_subscribed", subscribed)
+        self.room.on("track_unsubscribed", unsubscribed)
+        # The job connected (and may have subscribed) before the controller existed.
+        for participant in list(getattr(self.room, "remote_participants", {}).values()):
+            for pub in list(getattr(participant, "track_publications", {}).values()):
+                if getattr(pub, "track", None) is not None:
+                    subscribed(pub.track, pub, participant)
+
+    # -- received candidate audio level (low_energy signal) ----------------------------------------
+    def _open_audio_stream(self, track: Any) -> AsyncIterator[Any]:
+        stream: AsyncIterator[Any] = rtc.AudioStream(track, sample_rate=METER_SAMPLE_RATE, num_channels=1)
+        return stream
+
+    def _start_meter(self, track: Any) -> None:
+        self._stop_meter()
+        self._meter_task = asyncio.create_task(self._meter_loop(track))
+
+    def _stop_meter(self) -> None:
+        if self._meter_task is not None:
+            self._meter_task.cancel()
+            self._meter_task = None
+
+    async def _meter_loop(self, track: Any) -> None:
+        stream = self._open_audio_stream(track)
+        try:
+            async for event in stream:
+                self._meter.add(event.frame)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # metering is best effort: it never affects the interview
+            log.info("audio level metering stopped")
+        finally:
+            closer = getattr(stream, "aclose", None)
+            if closer is not None:
+                with contextlib.suppress(Exception):
+                    await closer()
 
     def _on_user_state(self, ev: Any) -> None:
         now = self.clock()
@@ -425,6 +507,7 @@ class InterviewController:
                 "interrupted": False,
                 "provider_item_id": getattr(ev, "item_id", None),
                 "overlap": turn.overlap,
+                "low_energy": self._meter.low_energy(turn.start, turn.end or now),
                 "language": getattr(ev, "language", None),
             }
         )
@@ -457,7 +540,6 @@ class InterviewController:
             self._agent_speaking = False
             if self._agent_speech_start is not None:
                 self._output_audio_s += now - self._agent_speech_start
-                self._metric("voice_full_response_ms", (now - self._agent_speech_start) * 1000)
             if self._barge_in_at is not None:
                 # Recorded only if the interviewer's item reports an interruption (see _on_item).
                 self._barge_latency_ms, self._barge_in_at = (now - self._barge_in_at) * 1000, None
@@ -482,6 +564,15 @@ class InterviewController:
             self._report_prompt(handle, float(ev.created_at))
 
     def _on_prompt_done(self, handle: Any) -> None:
+        failure = getattr(handle, "exception", None)
+        if callable(failure) and failure() is not None:
+            # The approved question could not be delivered (e.g. a realtime reply timed out): the
+            # candidate must not be left waiting for a question that never comes.
+            log.warning("approved prompt not delivered; pausing interview")
+            if self._prompt_handle is handle:
+                self._prompt_handle = None
+            self._spawn(self._provider_failed())
+            return
         if self._prompt_handle is not handle:
             return  # already reported, or superseded by a newer prompt
         for item in getattr(handle, "chat_items", []) or []:
@@ -514,12 +605,13 @@ class InterviewController:
         if interrupted and self._barge_latency_ms is not None:
             self._metric("barge_in_stop_latency_ms", self._barge_latency_ms)
             self._barge_latency_ms = None
+        # Per-item measurements by the framework: playout timing (agent state alone cannot separate
+        # back-to-back speeches) and the latencies of BLUEPRINT section 5.
+        timing = getattr(item, "metrics", None) or {}
+        self._record_latencies(timing, interrupted)
         text = getattr(item, "text_content", None) or ""
         if not text.strip():
             return
-        # Per-item playout timing measured by the framework; agent state alone cannot separate
-        # back-to-back speeches.
-        timing = getattr(item, "metrics", None) or {}
         end = float(timing.get("stopped_speaking_at") or self.clock())
         started = timing.get("started_speaking_at")
         start = float(started or self._agent_speech_start or end)
@@ -549,15 +641,23 @@ class InterviewController:
         for flag in monitor.scan(text):
             self._flags.append({"flag": flag, "activation_id": active.get("activation_id")})
 
-    def _on_metrics(self, ev: Any) -> None:
-        m = ev.metrics
-        kind = type(m).__name__
-        if kind == "TTSMetrics" and getattr(m, "ttfb", -1) >= 0:
-            self._metric("voice_ttfa_ms", m.ttfb * 1000)
-        elif kind in ("LLMMetrics", "RealtimeModelMetrics") and getattr(m, "ttft", -1) >= 0:
-            self._metric("voice_ttfb_ms", m.ttft * 1000)
-        elif kind == "EOUMetrics" and getattr(m, "end_of_utterance_delay", -1) >= 0:
-            self._metric("voice_end_of_turn_ms", m.end_of_utterance_delay * 1000)
+    def _record_latencies(self, m: dict[str, Any], interrupted: bool) -> None:
+        """BLUEPRINT section 5 metrics from one interviewer reply's framework measurements:
+        TTFB (first model token), TTFA (first synthesized audio), end of turn (candidate turn end to
+        the first reply audio) and full response (candidate turn end to the end of a reply that
+        played without interruption). A reply that follows no candidate turn has no end-of-turn
+        latency."""
+        if (ttft := m.get("llm_node_ttft")) is not None:
+            self._metric("voice_ttfb_ms", float(ttft) * 1000)
+        if (ttfb := m.get("tts_node_ttfb")) is not None:
+            self._metric("voice_ttfa_ms", float(ttfb) * 1000)
+        e2e = m.get("e2e_latency")
+        if e2e is None:
+            return
+        self._metric("voice_end_of_turn_ms", float(e2e) * 1000)
+        started, stopped = m.get("started_speaking_at"), m.get("stopped_speaking_at")
+        if not interrupted and started is not None and stopped is not None:
+            self._metric("voice_full_response_ms", (float(e2e) + float(stopped) - float(started)) * 1000)
 
     def _on_error(self, ev: Any) -> None:
         if getattr(ev.error, "recoverable", True):
@@ -565,7 +665,19 @@ class InterviewController:
         log.warning("provider failure; pausing interview", extra={"source": type(ev.source).__name__})
         self._spawn(self._provider_failed())
 
+    def _on_close(self, ev: Any) -> None:
+        if self._done.is_set():
+            return  # our own shutdown
+        if getattr(ev, "error", None) is not None or getattr(ev, "reason", None) == "error":
+            log.warning("voice session closed by a provider error; pausing interview")
+            self._spawn(self._provider_failed())
+        else:
+            self.stop()  # the control plane pauses a live interview when the lease is released
+
     async def _provider_failed(self) -> None:
+        if self._failing:
+            return
+        self._failing = True
         if self.ctx.get("state") in LIVE_STATES:
             with contextlib.suppress(ControlPlaneError):
                 await self.cp.pause(self.ctx.get("state_version", 0), "provider_failure")
@@ -614,7 +726,7 @@ class InterviewController:
             "provider_item_id": seg["provider_item_id"],
             "asr_model": self.engine.asr_model if seg["speaker"] == "candidate" else None,
             "engine": self.engine.name,
-            "signals": {"overlapped_interviewer_audio": bool(seg["overlap"]), "low_energy": False},
+            "signals": {"overlapped_interviewer_audio": bool(seg["overlap"]), "low_energy": bool(seg.get("low_energy", False))},
             "prompt_activation_id": seg.get("prompt_activation_id") if seg["speaker"] == "interviewer" else None,
         }
 

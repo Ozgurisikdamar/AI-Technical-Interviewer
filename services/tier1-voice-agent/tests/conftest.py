@@ -128,10 +128,14 @@ class FakeEngine:
         self.spoken: list[tuple[str, str]] = []  # (kind, text)
         self.handles: list[FakeHandle] = []
         self.user_inputs: list[str] = []  # text-mode answers passed to the model as user input
+        self.turn_profiles: list[str] = []
 
     def build_session(self, *, language: str) -> Any:
         self.language = language
         return self.session
+
+    def apply_turn_profile(self, session: Any, profile: str) -> None:
+        self.turn_profiles.append(profile)
 
     async def speak_prompt(self, session: Any, text: str, kind: str) -> Any:
         self.spoken.append((kind, text))

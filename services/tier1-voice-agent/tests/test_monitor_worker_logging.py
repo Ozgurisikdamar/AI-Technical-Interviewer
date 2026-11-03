@@ -77,6 +77,16 @@ def test_registered_entrypoint_can_be_sent_to_job_processes() -> None:
     assert server._agent_name == "ati-tier1-interviewer"
 
 
+def test_worker_uses_only_the_configured_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    # ADR-011: the LiveKit connection never inherits a proxy from the process environment; only the
+    # explicitly configured one is used (the framework would otherwise read HTTPS_PROXY).
+    for var in ("HTTPS_PROXY", "HTTP_PROXY"):
+        monkeypatch.setenv(var, "http://inherited.invalid:3128")
+    assert build_server(load(BASE))._http_proxy is None
+    configured = build_server(load({**BASE, "ATI_AGENT_HTTP_PROXY": "http://proxy.example.com:3128"}))
+    assert configured._http_proxy == "http://proxy.example.com:3128"
+
+
 def test_worker_capacity_is_counted_in_interviews() -> None:
     server = build_server(load({**BASE, "ATI_AGENT_MAX_SESSIONS": "2"}))
     calc = server.load_fnc

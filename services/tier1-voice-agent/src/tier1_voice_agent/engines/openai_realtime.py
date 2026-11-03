@@ -20,6 +20,14 @@ from . import MAX_TOOL_STEPS, turn_handling
 
 Eagerness = Literal["low", "medium", "high", "auto"]
 
+# Semantic VAD eagerness per turn profile: "low" waits longest before treating a pause as the end
+# of the candidate's turn. Uncalibrated (BLUEPRINT section 6) and unverified against the provider.
+EAGERNESS: dict[str, Eagerness] = {"standard": "medium", "extended_pause": "low"}
+
+
+def semantic_vad(eagerness: Eagerness) -> SemanticVad:
+    return SemanticVad(type="semantic_vad", eagerness=eagerness, create_response=True, interrupt_response=True)
+
 
 class OpenAIRealtimeEngine:
     name = "openai_realtime"
@@ -41,7 +49,7 @@ class OpenAIRealtimeEngine:
             "voice": self._voice,
             "api_key": self._api_key,
             "input_audio_transcription": AudioTranscription(model=self.asr_model, language=language),
-            "turn_detection": SemanticVad(type="semantic_vad", eagerness=self._eagerness, create_response=True, interrupt_response=True),
+            "turn_detection": semantic_vad(self._eagerness),
         }
 
     def build_session(self, *, language: str) -> AgentSession[None]:
@@ -54,6 +62,12 @@ class OpenAIRealtimeEngine:
             turn_handling=turn_handling("realtime_llm", min_interruption_s=0.3),  # type: ignore[arg-type]
             max_tool_steps=MAX_TOOL_STEPS,
         )
+
+    def apply_turn_profile(self, session: AgentSession[None], profile: str) -> None:
+        # Updates the model options and every live provider session (a session.update event).
+        model = session.llm
+        if isinstance(model, RealtimeModel):
+            model.update_options(turn_detection=semantic_vad(EAGERNESS[profile]))
 
     async def speak_prompt(self, session: AgentSession[None], text: str, kind: str) -> SpeechHandle | None:
         return session.generate_reply(instructions=ask_instruction(text, kind))

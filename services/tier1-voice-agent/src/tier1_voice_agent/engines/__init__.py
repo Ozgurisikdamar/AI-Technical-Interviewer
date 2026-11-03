@@ -39,6 +39,11 @@ def turn_handling(turn_detection: str, *, min_interruption_s: float, min_endpoin
 # One tool step per model turn: the model cannot chain tool calls (single-tool policy, ADR-011).
 MAX_TOOL_STEPS = 1
 
+# Per-question turn profiles (tier1-context/v1 active_prompt.turn_profile). "extended_pause" gives
+# the candidate longer to think before a pause counts as the end of their turn. Each engine maps a
+# profile to its own turn-detection setting; the values are uncalibrated (BLUEPRINT section 6).
+TURN_PROFILES = ("standard", "extended_pause")
+
 
 class VoiceEngine(Protocol):
     """Builds an AgentSession and delivers approved prompts. Implementations are interchangeable;
@@ -50,6 +55,9 @@ class VoiceEngine(Protocol):
     asr_model: str | None
 
     def build_session(self, *, language: str) -> AgentSession[None]: ...
+
+    def apply_turn_profile(self, session: AgentSession[None], profile: str) -> None:
+        """Apply the active question's turn profile; takes effect at the next end-of-turn decision."""
 
     async def speak_prompt(self, session: AgentSession[None], text: str, kind: str) -> SpeechHandle | None:
         """Deliver an approved prompt; the returned handle identifies its playout (answer window, ADR-014)."""
