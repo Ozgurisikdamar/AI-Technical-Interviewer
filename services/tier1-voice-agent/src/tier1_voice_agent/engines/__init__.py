@@ -1,0 +1,55 @@
+"""Application-owned voice engine interface (ADR-004, ADR-011)."""
+
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+from livekit.agents import AgentSession
+
+# livekit-agents 1.8 can select hosted LiveKit Inference services on its own: the cloud end-of-turn
+# model (default turn detector in dev or hosted mode) and the adaptive interruption detector. Both
+# would send candidate audio or transcripts to a processor that the consent notice does not name,
+# so every engine pins local modes explicitly and tests assert it (ADR-011, THREAT_MODEL addendum).
+LOCAL_TURN_DETECTION = ("vad", "realtime_llm", "manual")
+LOCAL_INTERRUPTION_MODE = "vad"
+
+
+def turn_handling(turn_detection: str, *, min_interruption_s: float, min_endpointing_s: float | None = None) -> dict[str, Any]:
+    if turn_detection not in LOCAL_TURN_DETECTION:
+        raise ValueError(f"turn detection {turn_detection!r} is not a local mode")
+    options: dict[str, Any] = {
+        "turn_detection": turn_detection,
+        "interruption": {
+            "enabled": True,
+            "mode": LOCAL_INTERRUPTION_MODE,
+            "min_duration": min_interruption_s,
+            # A barge-in is never "undone": the interviewer does not resume a cut-off sentence.
+            "resume_false_interruption": False,
+            "false_interruption_timeout": None,
+        },
+        # No speculative replies: the interviewer only speaks approved prompts or short neutral turns.
+        "preemptive_generation": {"enabled": False},
+    }
+    if min_endpointing_s is not None:
+        options["endpointing"] = {"mode": "fixed", "min_delay": min_endpointing_s}
+    return options
+
+
+# One tool step per model turn: the model cannot chain tool calls (single-tool policy, ADR-011).
+MAX_TOOL_STEPS = 1
+
+
+class VoiceEngine(Protocol):
+    """Builds an AgentSession and delivers approved prompts. Implementations are interchangeable;
+    the interview controller never depends on a specific provider."""
+
+    name: str  # "scripted" | "openai_realtime" (segment provenance engine)
+    model: str | None  # provider model reported in usage
+    transcript_source: str  # "synthetic_test" | "realtime_transcription"
+    asr_model: str | None
+
+    def build_session(self, *, language: str) -> AgentSession[None]: ...
+
+    async def speak_prompt(self, session: AgentSession[None], text: str, kind: str) -> None: ...
+
+    async def speak_free(self, session: AgentSession[None], text: str) -> None: ...

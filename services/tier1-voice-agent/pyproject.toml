@@ -1,0 +1,55 @@
+[project]
+name = "tier1-voice-agent"
+version = "0.1.0"
+description = "Tier-1 realtime interviewer (LiveKit Agents). Never scores; has no database access and no Tier-2 code (ADR-001, ADR-011)."
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  "livekit-agents==1.8.10",
+  "livekit-plugins-openai==1.8.10",
+  "httpx>=0.28,<1",
+  "numpy>=2.1",
+  "jsonschema>=4.26,<5",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=9.1,<10",
+  "pytest-asyncio>=1.2",
+  "ruff>=0.16",
+  "mypy>=2.3",
+]
+
+[project.scripts]
+tier1-voice-agent = "tier1_voice_agent.__main__:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tier1_voice_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers"
+markers = ["livekit: needs a local LiveKit server (tools/dev)"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "RUF"]
+ignore = ["S101"]
+# Turkish text (dotless i) is intentional in the bilingual phrases and monitor patterns.
+allowed-confusables = ["ı"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+packages = ["tier1_voice_agent"]
+mypy_path = "src"
+ignore_missing_imports = true
