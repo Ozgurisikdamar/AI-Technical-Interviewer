@@ -76,6 +76,30 @@ paths:
         '401': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
 
+  /api/v1/interviews/{interview_id}/invitation/revoke:
+    post:
+      tags: [staff]
+      operationId: revokeInvitation
+      summary: Revoke the interview's invitation and every candidate session (ADR-016).
+      description: |
+        The invitation can no longer be exchanged and any candidate session cookie stops working. A live interview
+        is paused with reason `access_revoked` and its media room is deleted at once (self-hosted LiveKit cannot
+        revoke a connected participant's token); nobody can resume it, so the pause expires to CANCELLED. Contract
+        v1.1 has no staff cancellation, so other states are left unchanged. Repeating the request changes nothing.
+      security: [{staffBearer: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200':
+          description: Access revoked (or already revoked).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RevokeInvitationResponse'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
   /api/v1/invitations/exchange:
     post:
       tags: [candidate]
@@ -272,6 +296,10 @@ paths:
       tags: [candidate]
       operationId: issueRealtimeSession
       summary: Ensure the room and agent dispatch exist and issue a short-lived candidate media token.
+      description: |
+        Never replayed from storage, because the response is a media credential: repeating the request (with the
+        same or a new Idempotency-Key) is safe and returns a fresh token. Room creation and agent dispatch are
+        idempotent under the session lock.
       security: [{candidateSession: []}]
       parameters: [{$ref: '#/components/parameters/InterviewId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       responses:
@@ -640,7 +668,12 @@ components:
       required: [interview, invitation_url, invitation_expires_at]
       properties:
         interview: {$ref: '#/components/schemas/InterviewStaffView'}
-        invitation_url: {type: string, description: 'Public origin + /i#token=… (fragment-borne token).'}
+        invitation_url:
+          type: [string, 'null']
+          description: |
+            Public origin + /i#token=… (fragment-borne token). Returned exactly once: an idempotent replay returns
+            null because the token is stored only as a hash. A caller that lost it revokes the invitation and creates
+            a new interview.
         invitation_expires_at: {type: string, format: date-time}
 
     Progress:
@@ -707,6 +740,22 @@ components:
           type: array
           items: {enum: [consent, start, begin, pause, resume, finish_answer, withdraw, text_response, join_media]}
         environment: {enum: [dev, test, staging, production]}
+
+    RevokeInvitationResponse:
+      type: object
+      additionalProperties: false
+      required: [interview, revoked]
+      properties:
+        interview: {$ref: '#/components/schemas/InterviewStaffView'}
+        revoked:
+          type: object
+          additionalProperties: false
+          required: [invitations, candidate_sessions, paused, room_deleted]
+          properties:
+            invitations: {type: integer, minimum: 0, description: 'Invitations revoked by this request (0 when repeated).'}
+            candidate_sessions: {type: integer, minimum: 0}
+            paused: {type: boolean, description: 'A live interview was paused with reason access_revoked.'}
+            room_deleted: {type: boolean}
 
     InvitationExchangeRequest:
       type: object

@@ -88,18 +88,23 @@ func (f *fakeRecorder) snapshot() (starts, stops, egress []string) {
 	return append([]string(nil), f.starts...), append([]string(nil), f.stops...), append([]string(nil), f.egress...)
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvWith(t, nil) }
+
+// newEnvWith builds the environment with configuration overrides (for example APP_ENV).
+func newEnvWith(t *testing.T, overrides map[string]string) *env {
 	t.Helper()
 	db := testdb.New(t)
-	cfg, err := config.Load(func(k string) string {
-		return map[string]string{
-			"APP_ENV": "test", "ATI_PUBLIC_ORIGIN": origin, "ATI_DATABASE_URL": "unused", "ATI_TIER1_CTX_DATABASE_URL": "unused",
-			"ATI_LIVEKIT_URL": "ws://localhost:7880", "ATI_LIVEKIT_API_KEY": "k", "ATI_LIVEKIT_API_SECRET": "ati-dev-secret",
-			"ATI_LIVEKIT_WEBHOOK_API_KEY": "wk", "ATI_LIVEKIT_WEBHOOK_API_SECRET": "ati-dev-wsecret",
-			"ATI_AGENT_SERVICE_TOKEN_SHA256": ids.Hash(agentToken), "ATI_RETENTION_TRANSCRIPT_DAYS": "30",
-			"ATI_RETENTION_SESSION_EVENTS_DAYS": "30", "ATI_RETENTION_ASSESSMENT_OUTPUT_DAYS": "30", "ATI_INVITATION_EXCHANGES_PER_MINUTE": "5",
-		}[k]
-	})
+	settings := map[string]string{
+		"APP_ENV": "test", "ATI_PUBLIC_ORIGIN": origin, "ATI_DATABASE_URL": "unused", "ATI_TIER1_CTX_DATABASE_URL": "unused",
+		"ATI_LIVEKIT_URL": "ws://localhost:7880", "ATI_LIVEKIT_API_KEY": "k", "ATI_LIVEKIT_API_SECRET": "ati-dev-secret",
+		"ATI_LIVEKIT_WEBHOOK_API_KEY": "wk", "ATI_LIVEKIT_WEBHOOK_API_SECRET": "ati-dev-wsecret",
+		"ATI_AGENT_SERVICE_TOKEN_SHA256": ids.Hash(agentToken), "ATI_RETENTION_TRANSCRIPT_DAYS": "30",
+		"ATI_RETENTION_SESSION_EVENTS_DAYS": "30", "ATI_RETENTION_ASSESSMENT_OUTPUT_DAYS": "30", "ATI_INVITATION_EXCHANGES_PER_MINUTE": "5",
+	}
+	for k, v := range overrides {
+		settings[k] = v
+	}
+	cfg, err := config.Load(func(k string) string { return settings[k] })
 	if err != nil {
 		t.Fatal(err)
 	}

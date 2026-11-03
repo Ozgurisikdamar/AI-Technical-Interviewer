@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -244,6 +245,77 @@ func TestRecordingFollowsOpenQuestionsAndFeedsAudioRefs(t *testing.T) {
 	}
 	if _, err := e.db.CP.Exec(ctx, `DELETE FROM ati.audio_recordings WHERE session_id = $1`, id); err == nil {
 		t.Fatal("the control-plane role must not delete recording rows")
+	}
+}
+
+// Completing the interview (T11) stops the recording: the egress ends and the row is complete.
+func TestCompletionStopsTheRecording(t *testing.T) {
+	e := newEnv(t, allowed)
+	id, _, lease := e.toFirstQuestion(allowed)
+	started, _ := e.egress.Snapshot()
+	if len(started) != 1 {
+		t.Fatalf("one recording expected: %+v", started)
+	}
+	e.must(e.rec.OnEgressEvent(ctx, &realtime.Webhook{Event: "egress_started", EgressID: started[0].EgressID, EgressStatus: "EGRESS_ACTIVE"}))
+	var epoch time.Time
+	e.must(e.db.CP.QueryRow(ctx, `SELECT timeline_epoch FROM ati.interview_sessions WHERE id = $1`, id).Scan(&epoch))
+	ms := func() int64 { return time.Since(epoch).Milliseconds() }
+	for i := 0; ; i++ {
+		v, err := e.svc.CandidateView(ctx, id, "test")
+		e.must(err)
+		if v.State == flow.InterviewCompleted {
+			break
+		}
+		if i > 8 {
+			t.Fatalf("the interview did not complete: %s", v.State)
+		}
+		if _, stopped := e.egress.Snapshot(); len(stopped) != 0 {
+			t.Fatalf("the recording stopped before the interview completed (item %d)", i)
+		}
+		act := v.ActivePrompt.ActivationID
+		e.must(e.svc.PromptStarted(ctx, agent, lease, id, act, ms()))
+		time.Sleep(15 * time.Millisecond)
+		start := ms()
+		time.Sleep(15 * time.Millisecond)
+		key := fmt.Sprintf("t11-seg-%05d", i)
+		_, err = e.svc.IngestSegment(ctx, agent, lease, id, interview.Submission{SegmentKey: key, Speaker: "candidate", Text: "answer",
+			StartMs: start, EndMs: ms(), Source: "synthetic_test", Engine: "scripted"})
+		e.must(err)
+		e.must(e.svc.AgentAnswerComplete(ctx, agent, lease, id, e.version(id), act, []string{key}, "agent_tool"))
+	}
+	if _, stopped := e.egress.Snapshot(); len(stopped) != 1 || stopped[0] != started[0].EgressID {
+		t.Fatalf("completion must stop the egress: %v", stopped)
+	}
+	if e.count(`SELECT count(*) FROM ati.audio_recordings WHERE session_id = $1 AND status = 'complete' AND ended_ms >= started_ms`, id) != 1 {
+		t.Fatal("the recording is complete with an end bound")
+	}
+	if e.svc.RecordingActive(ctx, id) {
+		t.Fatal("no recording after the interview")
+	}
+}
+
+// A microphone published before the first question (calibration) is not recorded: calibration
+// input is never evidence and the policy records only answers.
+func TestNoRecordingOutsideAnOpenQuestion(t *testing.T) {
+	e := newEnv(t, allowed)
+	c, err := e.svc.CreateInterview(ctx, staff, interview.CreateRequest{TenantID: e.tenant, StaffID: "stf_test", CandidateRef: ids.New("ref"), PlanID: "plan_demo_backend_en", PlanVersion: 1})
+	e.must(err)
+	_, err = e.svc.ExchangeInvitation(ctx, candidate, c.InvitationToken)
+	e.must(err)
+	e.must(e.svc.SubmitConsent(ctx, candidate, c.SessionID, "notice_default", "2026-11-draft.1", map[string]bool{
+		"voice_interview_processing": true, "transcript_assessment_record": true, "ai_assisted_evaluation_with_human_review": true, "audio_recording": true,
+	}))
+	e.must(e.svc.Start(ctx, candidate, c.SessionID, e.version(c.SessionID), "voice"))
+	room, _, _, err := e.svc.RoomFor(ctx, c.SessionID)
+	e.must(err)
+	e.media.Join(room, realtime.CandidateIdentity, false)
+	e.media.PublishMic(room, realtime.CandidateIdentity, "TR_mic0003")
+	e.rec.Start(ctx, c.SessionID) // the track_published webhook during calibration
+	if started, _ := e.egress.Snapshot(); len(started) != 0 {
+		t.Fatalf("nothing may be recorded during calibration: %+v", started)
+	}
+	if reasons := e.skippedReasons(c.SessionID); !slices.Contains(reasons, recording.ReasonNotAnswering) {
+		t.Fatalf("skip must be audited with %q, got %v", recording.ReasonNotAnswering, reasons)
 	}
 }
 

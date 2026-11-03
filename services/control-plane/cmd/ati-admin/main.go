@@ -6,8 +6,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -31,19 +33,26 @@ commands:
                                                       leaving audited tombstones
 `
 
+var errUnknownCommand = errors.New("unknown command")
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
-	if err := run(os.Args[1], os.Args[2:]); err != nil {
+	if err := run(context.Background(), os.Args[1], os.Args[2:], os.Stdout, os.Getenv); err != nil {
+		if errors.Is(err, errUnknownCommand) || errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(os.Stderr, usage)
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
-func run(cmd string, args []string) error {
-	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
+// run executes one command, writing its result (an id, a token shown once, a count) to out.
+func run(ctx context.Context, cmd string, args []string, out io.Writer, getenv func(string) string) error {
+	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	url := fs.String("url", "", "owner database URL")
 	adminURL := fs.String("admin-url", "", "administrator database URL")
 	name := fs.String("name", "", "tenant name")
@@ -52,8 +61,9 @@ func run(cmd string, args []string) error {
 	label := fs.String("label", "", "token label")
 	ttl := fs.Duration("ttl", 30*24*time.Hour, "token lifetime")
 	allowed := fs.Bool("allowed", false, "tenant-recording: whether the tenant allows consented recordings")
-	_ = fs.Parse(args)
-	ctx := context.Background()
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	switch cmd {
 	case "bootstrap-roles":
 		return store.BootstrapRoles(ctx, *adminURL)
@@ -79,11 +89,14 @@ func run(cmd string, args []string) error {
 		if _, err := pool.Exec(ctx, `INSERT INTO ati.tenants (id, name) VALUES ($1, $2)`, id, *name); err != nil {
 			return err
 		}
-		fmt.Println(id)
-		return nil
+		_, err = fmt.Fprintln(out, id)
+		return err
 	case "create-staff-token":
 		if *tenant == "" || *label == "" || (*role != "recruiter" && *role != "admin") {
 			return fmt.Errorf("--tenant, --label and --role recruiter|admin are required")
+		}
+		if *ttl <= 0 {
+			return fmt.Errorf("--ttl must be positive")
 		}
 		pool, err := store.Open(ctx, *url, 2)
 		if err != nil {
@@ -95,8 +108,8 @@ func run(cmd string, args []string) error {
 			ids.New(ids.Staff), *tenant, ids.Hash(token), *role, *label, time.Now().Add(*ttl)); err != nil {
 			return err
 		}
-		fmt.Println(token)
-		return nil
+		_, err = fmt.Fprintln(out, token)
+		return err
 	case "tenant-recording":
 		// Owner connection: the control plane itself cannot change tenant policy.
 		if *tenant == "" {
@@ -122,8 +135,8 @@ func run(cmd string, args []string) error {
 		if len(fs.Args()) != 1 || fs.Arg(0) != "purge-expired" {
 			return fmt.Errorf("usage: ati-admin recordings --url <control-plane role URL> purge-expired (storage from ATI_RECORDING_S3_*)")
 		}
-		objects, err := recording.NewS3Store(os.Getenv("ATI_RECORDING_S3_ENDPOINT"), os.Getenv("ATI_RECORDING_S3_BUCKET"),
-			os.Getenv("ATI_RECORDING_S3_ACCESS_KEY"), os.Getenv("ATI_RECORDING_S3_SECRET_KEY"), os.Getenv("ATI_RECORDING_S3_USE_SSL") == "true")
+		objects, err := recording.NewS3Store(getenv("ATI_RECORDING_S3_ENDPOINT"), getenv("ATI_RECORDING_S3_BUCKET"),
+			getenv("ATI_RECORDING_S3_ACCESS_KEY"), getenv("ATI_RECORDING_S3_SECRET_KEY"), getenv("ATI_RECORDING_S3_USE_SSL") == "true")
 		if err != nil {
 			return err
 		}
@@ -133,9 +146,10 @@ func run(cmd string, args []string) error {
 		}
 		defer pool.Close()
 		n, err := recording.PurgeExpired(ctx, pool, objects, time.Now())
-		fmt.Printf("purged %d recording(s)\n", n)
+		if _, werr := fmt.Fprintf(out, "purged %d recording(s)\n", n); werr != nil && err == nil {
+			err = werr
+		}
 		return err
 	}
-	fmt.Fprint(os.Stderr, usage)
-	return fmt.Errorf("unknown command %q", cmd)
+	return fmt.Errorf("%w %q", errUnknownCommand, cmd)
 }

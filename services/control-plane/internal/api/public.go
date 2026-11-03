@@ -67,16 +67,11 @@ type createInterviewRequest struct {
 }
 
 func (s *Server) createInterview(w http.ResponseWriter, r *http.Request) {
-	staff, ok := s.authStaff(r)
+	p, ok := s.staffWriter(w, r)
 	if !ok {
-		unauthorized(w, r)
 		return
 	}
-	if staff.Role != "admin" && staff.Role != "recruiter" {
-		httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeForbidden, "role not permitted")
-		return
-	}
-	p := principal{kind: kindStaff, staff: staff}
+	staff := p.staff
 	s.idempotent(w, r, p.idemKey(), func(w http.ResponseWriter, r *http.Request) {
 		var req createInterviewRequest
 		if err := httpx.DecodeJSON(w, r, &req, maxPublicBody); err != nil {
@@ -100,11 +95,51 @@ func (s *Server) createInterview(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, r, err)
 			return
 		}
+		// A replay confirms the interview but never repeats the invitation: the token is shown once
+		// and stored only as a hash. A caller that lost it revokes the invitation and creates anew.
+		replayBody(w, map[string]any{"interview": view, "invitation_url": nil, "invitation_expires_at": created.InvitationExpiresAt})
 		httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 			"interview":             view,
 			"invitation_url":        s.cfg.PublicOrigin.String() + "/i#token=" + created.InvitationToken,
 			"invitation_expires_at": created.InvitationExpiresAt,
 		})
+	})
+}
+
+// staffWriter authenticates a staff member allowed to manage interviews.
+func (s *Server) staffWriter(w http.ResponseWriter, r *http.Request) (principal, bool) {
+	staff, ok := s.authStaff(r)
+	if !ok {
+		unauthorized(w, r)
+		return principal{}, false
+	}
+	if staff.Role != "admin" && staff.Role != "recruiter" {
+		httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeForbidden, "role not permitted")
+		return principal{}, false
+	}
+	return principal{kind: kindStaff, staff: staff}, true
+}
+
+// revokeInvitation ends every way into an interview: the invitation and all candidate sessions
+// (ADR-016). Interviews of another tenant return 404.
+func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.staffWriter(w, r)
+	if !ok {
+		return
+	}
+	s.idempotent(w, r, p.idemKey(), func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("interview_id")
+		res, err := s.svc.RevokeInvitation(r.Context(), actorFor(r.Context(), p), id, p.staff.TenantID)
+		if err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		view, err := s.svc.StaffView(r.Context(), id, p.staff.TenantID)
+		if err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"interview": view, "revoked": res})
 	})
 }
 
@@ -132,8 +167,7 @@ func (s *Server) exchangeInvitation(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many attempts; wait and try again")
 		return
 	}
-	if !idemKeyPattern.MatchString(r.Header.Get("Idempotency-Key")) {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeIdempotencyKeyRequired, "a valid Idempotency-Key header is required")
+	if !requireIdempotencyKey(w, r) {
 		return
 	}
 	// Not replayed from storage: each execution yields a fresh session cookie and revokes the
@@ -288,36 +322,36 @@ func (s *Server) withdraw(w http.ResponseWriter, r *http.Request) {
 
 var mediaStates = map[flow.State]bool{flow.Calibration: true, flow.QuestionActive: true, flow.CandidateSpeaking: true, flow.Paused: true}
 
+// realtimeSession is not replayed from storage: its response is a media credential, and repeating
+// the request is safe (room creation and dispatch are idempotent under the session lock).
 func (s *Server) realtimeSession(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.candidate(w, r)
-	if !ok {
+	if !ok || !requireIdempotencyKey(w, r) {
 		return
 	}
-	s.idempotent(w, r, p.idemKey(), func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		room, state, mode, err := s.svc.RoomFor(ctx, p.sessionID)
-		if err != nil {
-			s.writeError(w, r, err)
-			return
-		}
-		if !mediaStates[state] {
-			httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeTransitionNotAllowed, "the interview is not live")
-			return
-		}
-		if err := s.ensureInterviewer(ctx, p.sessionID); err != nil {
-			s.log.Warn("media setup failed", "session_id", p.sessionID, "error", err)
-			httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "media service or interviewer unavailable")
-			return
-		}
-		token, expires, err := s.media.CandidateToken(room, mode == "voice")
-		if err != nil {
-			s.writeError(w, r, err)
-			return
-		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"livekit_url": s.media.PublicURL(), "token": token, "room": room, "identity": realtime.CandidateIdentity,
-			"can_publish_audio": mode == "voice", "expires_at": expires.UTC(),
-		})
+	ctx := r.Context()
+	room, state, mode, err := s.svc.RoomFor(ctx, p.sessionID)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	if !mediaStates[state] {
+		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeTransitionNotAllowed, "the interview is not live")
+		return
+	}
+	if err := s.ensureInterviewer(ctx, p.sessionID); err != nil {
+		s.log.Warn("media setup failed", "session_id", p.sessionID, "error", err)
+		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "media service or interviewer unavailable")
+		return
+	}
+	token, expires, err := s.media.CandidateToken(room, mode == "voice")
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"livekit_url": s.media.PublicURL(), "token": token, "room": room, "identity": realtime.CandidateIdentity,
+		"can_publish_audio": mode == "voice", "expires_at": expires.UTC(),
 	})
 }
 

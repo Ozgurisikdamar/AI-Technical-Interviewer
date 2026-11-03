@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/ids"
@@ -174,6 +175,30 @@ func TestLeastPrivilegeCheck(t *testing.T) {
 	}
 	if err := store.VerifyLeastPrivilege(ctx, db.Owner); err == nil {
 		t.Fatal("superuser connection must be refused")
+	}
+	// A role that is not a superuser but owns application tables (for example the migration role
+	// reused by the service) is refused too.
+	role := pgx.Identifier{"ati_lp_probe_" + strings.TrimPrefix(db.Name, "ati_t_")}.Sanitize()
+	for _, stmt := range []string{
+		`CREATE ROLE ` + role + ` LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE`,
+		`CREATE TABLE ati.lp_probe (id int)`,
+		`ALTER TABLE ati.lp_probe OWNER TO ` + role,
+	} {
+		if _, err := db.Owner.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = db.Owner.Exec(context.Background(), `DROP TABLE IF EXISTS ati.lp_probe`)
+		_, _ = db.Owner.Exec(context.Background(), `DROP ROLE IF EXISTS `+role)
+	})
+	probe, err := store.Open(ctx, db.URLFor(strings.Trim(role, `"`)), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer probe.Close()
+	if err := store.VerifyLeastPrivilege(ctx, probe); err == nil || !strings.Contains(err.Error(), "owns 1 application tables") {
+		t.Fatalf("a non-superuser table owner must be refused, got %v", err)
 	}
 }
 

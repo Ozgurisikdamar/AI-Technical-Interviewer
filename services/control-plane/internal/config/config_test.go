@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,23 +149,106 @@ func TestProductionIsRefusedWhileNoticeIsDraft(t *testing.T) {
 	}
 }
 
+const (
+	approvedNoticeID      = "notice_fixture"
+	approvedNoticeVersion = "2027-01-approved.1"
+)
+
+// withNotices replaces the shipped (draft) notices with an approved fixture for one test, so each
+// production refusal below starts from a configuration that would otherwise be accepted.
+func withNotices(t *testing.T, basis string) {
+	t.Helper()
+	orig := notices
+	t.Cleanup(func() { notices = orig })
+	doc := fmt.Sprintf(`{"notice_id":%q,"version":%q,"status":"approved","purposes":[{"basis":"consent"},{"basis":%q}]}`,
+		approvedNoticeID, approvedNoticeVersion, basis)
+	notices = func() (map[string][]byte, error) { return map[string][]byte{"fixture.en.json": []byte(doc)}, nil }
+}
+
+func approvedProdEnv(t *testing.T) map[string]string {
+	t.Helper()
+	withNotices(t, "legitimate_interest")
+	return with(prodEnv(t), "ATI_NOTICE_ID", approvedNoticeID, "ATI_NOTICE_VERSION", approvedNoticeVersion)
+}
+
+func TestApprovedProductionConfigurationIsAccepted(t *testing.T) {
+	c, err := Load(getter(approvedProdEnv(t)))
+	if err != nil {
+		t.Fatalf("a production configuration meeting every ADR-020 gate was refused: %v", err)
+	}
+	if !c.SecureCookies() || c.IsDevLike() || len(c.TrustedProxies) != 0 {
+		t.Fatalf("production defaults: secure=%v devlike=%v proxies=%v", c.SecureCookies(), c.IsDevLike(), c.TrustedProxies)
+	}
+}
+
+// Each case breaks exactly one gate of an otherwise valid production configuration and must be
+// refused for that reason alone.
 func TestProductionRefusalReasons(t *testing.T) {
+	gates := func(t *testing.T, security string) string {
+		p := filepath.Join(t.TempDir(), "gates.json")
+		var parts []string
+		for _, g := range RequiredGates {
+			entry := fmt.Sprintf(`{"id":%q,"approved":true,"approver":"R. Eviewer","approved_on":"2027-01-10"}`, g)
+			if g == "security" {
+				entry = security
+			}
+			parts = append(parts, entry)
+		}
+		if err := os.WriteFile(p, []byte(`{"gates":[`+strings.Join(parts, ",")+`]}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	shipped := notices
 	cases := map[string]struct {
-		kv   []string
-		want string
+		kv      []string
+		basis   string
+		shipped bool // check against the notices in this repository (all drafts)
+		want    string
 	}{
-		"dev secret":     {[]string{"ATI_LIVEKIT_API_SECRET", DevSecretPrefix + "x"}, "development placeholder"},
-		"http origin":    {[]string{"ATI_PUBLIC_ORIGIN", "http://interview.example.com"}, "https ATI_PUBLIC_ORIGIN"},
-		"ws livekit":     {[]string{"ATI_LIVEKIT_URL", "ws://media.example.com"}, "wss://"},
-		"no retention":   {[]string{"ATI_RETENTION_ASSESSMENT_OUTPUT_DAYS", ""}, "explicit retention"},
-		"no gates file":  {[]string{"ATI_PRODUCTION_GATES_FILE", ""}, "human sign-off"},
-		"unknown notice": {[]string{"ATI_NOTICE_VERSION", "2099-01-x"}, "not found"},
+		"dev api secret":      {kv: []string{"ATI_LIVEKIT_API_SECRET", DevSecretPrefix + "x"}, want: "ATI_LIVEKIT_API_SECRET is a development placeholder"},
+		"dev webhook secret":  {kv: []string{"ATI_LIVEKIT_WEBHOOK_API_SECRET", DevSecretPrefix + "x"}, want: "ATI_LIVEKIT_WEBHOOK_API_SECRET is a development placeholder"},
+		"dev s3 secret":       {kv: []string{"ATI_RECORDING_S3_SECRET_KEY", DevSecretPrefix + "x"}, want: "ATI_RECORDING_S3_SECRET_KEY is a development placeholder"},
+		"http origin":         {kv: []string{"ATI_PUBLIC_ORIGIN", "http://interview.example.com"}, want: "https ATI_PUBLIC_ORIGIN"},
+		"ws livekit":          {kv: []string{"ATI_LIVEKIT_URL", "ws://media.example.com"}, want: "wss://"},
+		"no retention":        {kv: []string{"ATI_RETENTION_ASSESSMENT_OUTPUT_DAYS", ""}, want: "explicit retention"},
+		"no gates file":       {kv: []string{"ATI_PRODUCTION_GATES_FILE", ""}, want: "human sign-off"},
+		"unknown notice":      {kv: []string{"ATI_NOTICE_VERSION", "2099-01-x"}, want: "not found"},
+		"draft notice":        {kv: []string{"ATI_NOTICE_ID", "notice_default", "ATI_NOTICE_VERSION", "2026-11-draft.1"}, shipped: true, want: "legally approved notice"},
+		"undetermined basis":  {basis: "to_be_determined_by_legal", want: "undetermined lawful basis"},
+		"gate not approved":   {kv: []string{"ATI_PRODUCTION_GATES_FILE", "security:false"}, want: "[security]"},
+		"gate without signer": {kv: []string{"ATI_PRODUCTION_GATES_FILE", "security:anonymous"}, want: "[security]"},
 	}
 	for name, c := range cases {
-		_, err := Load(getter(with(prodEnv(t), c.kv...)))
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%s: want error containing %q, got %v", name, c.want, err)
-		}
+		t.Run(name, func(t *testing.T) {
+			env := approvedProdEnv(t)
+			if c.basis != "" {
+				withNotices(t, c.basis)
+			}
+			if c.shipped {
+				notices = shipped
+			}
+			kv := append([]string(nil), c.kv...)
+			for i := 0; i+1 < len(kv); i += 2 {
+				switch kv[i+1] {
+				case "security:false":
+					kv[i+1] = gates(t, `{"id":"security","approved":false,"approver":"R. Eviewer","approved_on":"2027-01-10"}`)
+				case "security:anonymous":
+					kv[i+1] = gates(t, `{"id":"security","approved":true,"approver":"","approved_on":"2027-01-10"}`)
+				}
+			}
+			if strings.HasPrefix(name, "dev s3") {
+				kv = append(kv, "ATI_RECORDING_ENABLED", "true", "ATI_RETENTION_AUDIO_RECORDING_DAYS", "14", "ATI_RECORDING_STORAGE_ENCRYPTION_ATTESTED", "true",
+					"ATI_RECORDING_S3_ENDPOINT", "s3.example.com", "ATI_RECORDING_S3_BUCKET", "recordings")
+			}
+			_, err := Load(getter(with(env, kv...)))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want error containing %q, got %v", c.want, err)
+			}
+			if lines := strings.Count(err.Error(), "\n") + 1; lines != 1 {
+				t.Fatalf("exactly one gate was broken, but %d reasons were reported:\n%v", lines, err)
+			}
+		})
 	}
 }
 

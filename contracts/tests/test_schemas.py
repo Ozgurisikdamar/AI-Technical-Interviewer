@@ -61,6 +61,10 @@ def test_shipped_plans_validate(path: Path) -> None:
     ids = [i["item_id"] for i in plan["items"]] + [f["item_id"] for i in plan["items"] for f in i["follow_ups"]]
     assert len(ids) == len(set(ids)), "item ids (including follow-ups) must be unique within a plan"
     assert path.name == f"{plan['plan_id']}.v{plan['version']}.json"
+    # Nothing shipped here is a validated assessment: every plan must say it is synthetic, which
+    # the control plane carries into audit records and integrity flags (ADR-020).
+    assert plan["synthetic"] is True, f"{path.name} must be marked synthetic"
+    assert plan["plan_id"].startswith("plan_demo_"), "shipped plans are demo plans"
 
 
 @pytest.mark.parametrize("path", sorted((CONTRACTS / "content/notices").glob("*.json")), ids=lambda p: p.name)

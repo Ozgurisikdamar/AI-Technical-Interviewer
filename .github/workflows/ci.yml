@@ -57,6 +57,8 @@ jobs:
           cache-dependency-path: services/control-plane/go.sum
       - name: gofmt, vet, staticcheck
         run: make go-lint
+      - name: Workflow lint (actionlint)
+        run: make workflow-lint
       - name: Tests (race detector)
         run: make go-test
 

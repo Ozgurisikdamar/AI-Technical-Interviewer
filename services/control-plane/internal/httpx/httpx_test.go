@@ -29,6 +29,34 @@ func TestProblemFormat(t *testing.T) {
 	}
 }
 
+// API responses are never cached, sniffed, framed or referred, and always say which environment
+// produced them, whatever the handler wrote (ADR-016, ADR-020).
+func TestAPIHeadersHardenEveryResponse(t *testing.T) {
+	for _, env := range []string{"dev", "staging", "production"} {
+		for name, handler := range map[string]http.HandlerFunc{
+			"json": func(w http.ResponseWriter, _ *http.Request) {
+				WriteJSON(w, http.StatusOK, map[string]string{"ok": "yes"})
+			},
+			"problem": func(w http.ResponseWriter, r *http.Request) {
+				WriteProblem(w, r, http.StatusNotFound, CodeNotFound, "nope")
+			},
+			"empty": func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+		} {
+			rr := httptest.NewRecorder()
+			WithAPIHeaders(env, handler).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+			want := map[string]string{
+				"X-ATI-Environment": env, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+				"X-Frame-Options": "DENY", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+			}
+			for k, v := range want {
+				if got := rr.Header().Get(k); got != v {
+					t.Errorf("%s/%s: %s = %q, want %q", env, name, k, got, v)
+				}
+			}
+		}
+	}
+}
+
 func TestMalformedRequestIDIsReplaced(t *testing.T) {
 	var seen string
 	h := WithRequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { seen = RequestIDFrom(r.Context()) }))

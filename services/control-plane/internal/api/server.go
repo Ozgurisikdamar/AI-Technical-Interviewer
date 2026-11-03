@@ -75,6 +75,7 @@ type Route struct {
 var publicRoutes = []Route{
 	{"POST", "/api/v1/interviews", (*Server).createInterview},
 	{"GET", "/api/v1/interviews/{interview_id}", (*Server).getInterview},
+	{"POST", "/api/v1/interviews/{interview_id}/invitation/revoke", (*Server).revokeInvitation},
 	{"POST", "/api/v1/invitations/exchange", (*Server).exchangeInvitation},
 	{"GET", "/api/v1/interviews/{interview_id}/consent-notice", (*Server).getConsentNotice},
 	{"POST", "/api/v1/interviews/{interview_id}/consent", (*Server).submitConsent},

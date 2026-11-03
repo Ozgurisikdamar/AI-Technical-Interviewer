@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -312,11 +313,30 @@ func (c *Config) productionErrors() []error {
 	return errs
 }
 
-func (c *Config) checkNoticeApproved() error {
+// notices returns the notice documents the production refusal checks, keyed by file name. Every
+// shipped notice is a draft, so only a test can supply an approved one through this variable.
+var notices = func() (map[string][]byte, error) {
 	files, err := contracts.ListDir(contracts.NoticesDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]byte, len(files))
+	for _, f := range files {
+		out[f] = contracts.MustRead(f)
+	}
+	return out, nil
+}
+
+func (c *Config) checkNoticeApproved() error {
+	docs, err := notices()
 	if err != nil {
 		return fmt.Errorf("notices unavailable: %w", err)
 	}
+	files := make([]string, 0, len(docs))
+	for f := range docs {
+		files = append(files, f)
+	}
+	sort.Strings(files)
 	found := false
 	for _, f := range files {
 		var n struct {
@@ -327,7 +347,7 @@ func (c *Config) checkNoticeApproved() error {
 				Basis string `json:"basis"`
 			} `json:"purposes"`
 		}
-		if err := json.Unmarshal(contracts.MustRead(f), &n); err != nil {
+		if err := json.Unmarshal(docs[f], &n); err != nil {
 			return err
 		}
 		if n.NoticeID != c.NoticeID || n.Version != c.NoticeVersion {

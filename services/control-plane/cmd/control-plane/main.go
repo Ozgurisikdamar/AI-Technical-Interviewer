@@ -29,6 +29,19 @@ func main() {
 	}
 }
 
+// enforceLeastPrivilege makes a failed database least-privilege check fatal in production and a
+// warning elsewhere (ADR-020): dev and test clusters often connect as a superuser.
+func enforceLeastPrivilege(env string, checkErr error, log *slog.Logger) error {
+	if checkErr == nil {
+		return nil
+	}
+	if env == config.EnvProduction {
+		return checkErr
+	}
+	log.Warn("least-privilege check failed (enforced in production)", slog.Any("error", checkErr))
+	return nil
+}
+
 func run() error {
 	cfg, err := config.FromEnvironment() // refuses unknown environments and unsafe production setups
 	if err != nil {
@@ -48,11 +61,8 @@ func run() error {
 		return err
 	}
 	defer tier1Pool.Close()
-	if err := store.VerifyLeastPrivilege(ctx, pool); err != nil {
-		if cfg.Env == config.EnvProduction {
-			return err
-		}
-		log.Warn("least-privilege check failed (enforced in production)", slog.Any("error", err))
+	if err := enforceLeastPrivilege(cfg.Env, store.VerifyLeastPrivilege(ctx, pool), log); err != nil {
+		return err
 	}
 
 	machine, err := flow.Default()

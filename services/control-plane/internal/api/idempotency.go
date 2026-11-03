@@ -23,6 +23,25 @@ type recorder struct {
 	header http.Header
 	status int
 	body   bytes.Buffer
+	replay []byte // stored instead of body when set (see replayBody)
+}
+
+// replayBody sets what an idempotent replay returns instead of the response itself. Credentials
+// such as an invitation token are returned once and never stored (THREAT_MODEL_ADDENDUM_PHASE1).
+func replayBody(w http.ResponseWriter, v any) {
+	if rec, ok := w.(*recorder); ok {
+		rec.replay, _ = json.Marshal(v)
+	}
+}
+
+// requireIdempotencyKey checks the header on endpoints whose responses are never replayed from
+// storage because they hold a fresh credential, and whose repetition is safe.
+func requireIdempotencyKey(w http.ResponseWriter, r *http.Request) bool {
+	if !idemKeyPattern.MatchString(r.Header.Get("Idempotency-Key")) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeIdempotencyKeyRequired, "a valid Idempotency-Key header is required")
+		return false
+	}
+	return true
 }
 
 func newRecorder() *recorder                    { return &recorder{header: http.Header{}} }
@@ -126,7 +145,11 @@ func (s *Server) idempotent(w http.ResponseWriter, r *http.Request, principalKey
 	if status >= 500 {
 		_, _ = s.pool.Exec(ctx, `UPDATE ati.idempotency_records SET status = 0 WHERE principal = $1 AND idem_key = $2`, principalKey, key)
 	} else {
-		stored, _ := json.Marshal(storedResponse{ContentType: rec.header.Get("Content-Type"), Body: json.RawMessage(nonEmptyJSON(rec.body.Bytes()))})
+		body := rec.body.Bytes()
+		if rec.replay != nil {
+			body = rec.replay
+		}
+		stored, _ := json.Marshal(storedResponse{ContentType: rec.header.Get("Content-Type"), Body: json.RawMessage(nonEmptyJSON(body))})
 		_, _ = s.pool.Exec(ctx, `UPDATE ati.idempotency_records SET status = $3, response = $4 WHERE principal = $1 AND idem_key = $2`, principalKey, key, status, stored)
 	}
 	rec.flush(w)
