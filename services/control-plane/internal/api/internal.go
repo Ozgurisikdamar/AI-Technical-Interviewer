@@ -358,7 +358,17 @@ func (s *Server) handleWebhook(ctx context.Context, ev *realtime.Webhook) string
 			return "recording_" + strings.TrimPrefix(ev.Event, "track_")
 		}
 	case "participant_joined":
-		if ev.ParticipantIdentity != realtime.CandidateIdentity && !ev.ParticipantAgent {
+		unexpected := ev.ParticipantIdentity != realtime.CandidateIdentity && !ev.ParticipantAgent
+		if ev.ParticipantAgent {
+			// While an agent holds the lease no other is dispatched, so a second agent participant
+			// (for example one minted with a leaked API key to listen in) is removed too.
+			holder, err := s.svc.CurrentLeaseHolder(ctx, sessionID)
+			if err != nil {
+				return "error"
+			}
+			unexpected = holder != "" && holder != ev.ParticipantIdentity
+		}
+		if unexpected {
 			// Only tokens minted by the control plane can join; anything else indicates key misuse.
 			_ = s.media.RemoveParticipant(ctx, ev.Room, ev.ParticipantIdentity)
 			s.svc.AuditDenied(ctx, sessionID, system, "media.unexpected_participant", fmt.Errorf("removed participant %q", ev.ParticipantIdentity))

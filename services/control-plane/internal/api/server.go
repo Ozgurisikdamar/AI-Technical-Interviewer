@@ -191,8 +191,11 @@ func (e Effects) StopRecording(ctx context.Context, sessionID string) {
 	}
 }
 
+// StartRecording does not hold up the request that opened the question (the agent's calibration,
+// the candidate's resume): an egress service that is slow or absent delays only the recording,
+// which the recorder bounds and fails closed. Start serializes with transitions on the session row.
 func (e Effects) StartRecording(ctx context.Context, sessionID string) {
 	if e.Rec != nil {
-		e.Rec.Start(ctx, sessionID)
+		go e.Rec.Start(context.WithoutCancel(ctx), sessionID)
 	}
 }

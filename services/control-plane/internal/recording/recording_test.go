@@ -59,6 +59,7 @@ type options struct {
 	retentionDays                                        int
 	inputMode                                            string
 	noMic                                                bool
+	egressTimeout                                        time.Duration
 }
 
 var allowed = options{deployEnabled: true, deployAttested: true, tenantAllows: true, consent: true, retentionDays: 30, inputMode: "voice"}
@@ -72,7 +73,8 @@ func newEnv(t *testing.T, o options) *env {
 	}
 	e := &env{t: t, db: db, media: realtime.NewFake(), egress: &realtime.FakeEgress{}, tenant: ids.New(ids.Tenant)}
 	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	e.rec = recording.New(db.CP, e.media, e.egress, recording.Settings{Enabled: o.deployEnabled, EncryptionAttested: o.deployAttested, RetentionDays: o.retentionDays}, log, nil)
+	e.rec = recording.New(db.CP, e.media, e.egress, recording.Settings{Enabled: o.deployEnabled, EncryptionAttested: o.deployAttested, RetentionDays: o.retentionDays,
+		EgressTimeout: o.egressTimeout}, log, nil)
 	e.svc, err = interview.New(db.CP, m, interview.Settings{
 		CompletionDeadline: 8 * time.Second, PauseTimeout: 30 * time.Minute, InvitationTTL: time.Hour, CandidateSessionTTL: time.Hour, LeaseTTL: time.Hour,
 		Retention:        config.Retention{TranscriptDays: 30, SessionEventsDays: 30, AssessmentOutputDays: 30, AudioRecordingDays: o.retentionDays},
@@ -363,6 +365,36 @@ func TestEgressFailuresFailClosedAndAreAudited(t *testing.T) {
 	}
 	// Events for unknown egresses are ignored.
 	e.must(e.rec.OnEgressEvent(ctx, &realtime.Webhook{Event: "egress_ended", EgressID: "EG_unknown", EgressStatus: "EGRESS_COMPLETE"}))
+}
+
+// LiveKit never answers a start request when no egress service is connected (observed against
+// LiveKit OSS in the E2E run): the recording fails within the egress timeout instead of staying
+// "starting", and a caller that gives up early cannot leave it half-started either.
+func TestAnUnansweredEgressStartFailsClosedWithinTheTimeout(t *testing.T) {
+	o := allowed
+	o.egressTimeout = 150 * time.Millisecond
+	e := newEnv(t, o)
+	e.egress.Hang = true
+	began := time.Now()
+	id, _, _ := e.toFirstQuestion(o)
+	if d := time.Since(began); d > 5*time.Second {
+		t.Fatalf("the start was not bounded: %v", d)
+	}
+	var status, failure string
+	e.must(e.db.CP.QueryRow(ctx, `SELECT status, failure FROM ati.audio_recordings WHERE session_id = $1`, id).Scan(&status, &failure))
+	if status != "failed" || !strings.Contains(failure, "timed out") {
+		t.Fatalf("an unanswered start must fail: %s %q", status, failure)
+	}
+	if e.count(`SELECT count(*) FROM ati.audit_logs WHERE subject_id = $1 AND action = 'recording.failed'`, id) != 1 || e.svc.RecordingActive(ctx, id) {
+		t.Fatal("the failure is audited and nothing is reported as recording")
+	}
+	e.egress.Hang = false
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	e.rec.Start(cancelled, id) // e.g. the webhook request ended before the start finished
+	if e.count(`SELECT count(*) FROM ati.audio_recordings WHERE session_id = $1 AND status = 'starting' AND egress_id IS NOT NULL`, id) != 1 {
+		t.Fatal("a start must complete even when its caller was cancelled")
+	}
 }
 
 func TestPurgeDeletesExpiredRecordingsAndLeavesTombstones(t *testing.T) {

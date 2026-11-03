@@ -24,7 +24,14 @@ type Settings struct {
 	Enabled            bool
 	EncryptionAttested bool
 	RetentionDays      int
+	// EgressTimeout bounds every egress API call (default DefaultEgressTimeout). LiveKit never
+	// answers a start request when no egress service is connected; the bound turns that into a
+	// failed recording instead of one left "starting".
+	EgressTimeout time.Duration
 }
+
+// DefaultEgressTimeout is used when Settings.EgressTimeout is zero (uncalibrated).
+const DefaultEgressTimeout = 10 * time.Second
 
 // Skip reasons (audited as recording.skipped).
 const (
@@ -53,7 +60,17 @@ func New(pool *pgxpool.Pool, media realtime.Media, egress realtime.Egress, set S
 	if now == nil {
 		now = time.Now
 	}
+	if set.EgressTimeout <= 0 {
+		set.EgressTimeout = DefaultEgressTimeout
+	}
 	return &Recorder{pool: pool, media: media, egress: egress, set: set, log: log, now: now}
+}
+
+// call runs one egress API call within the egress timeout.
+func (r *Recorder) call(ctx context.Context, fn func(ctx context.Context) error) error {
+	c, cancel := context.WithTimeout(ctx, r.set.EgressTimeout)
+	defer cancel()
+	return fn(c)
 }
 
 type session struct {
@@ -132,8 +149,10 @@ func audit(ctx context.Context, tx pgx.Tx, tenant, sessionID, action, outcome st
 // Start records the candidate's microphone if every precondition holds. Idempotent: a session has
 // at most one live recording. Called after an activation opens (T05, T13) and when the candidate's
 // microphone is published while a question is open.
+// The caller's cancellation is ignored: a request that ends early must not leave a recording
+// half-started; every egress call is bounded instead.
 func (r *Recorder) Start(ctx context.Context, sessionID string) {
-	if err := r.start(ctx, sessionID); err != nil {
+	if err := r.start(context.WithoutCancel(ctx), sessionID); err != nil {
 		r.log.Warn("recording start failed", slog.String("session_id", sessionID), slog.Any("error", err))
 	}
 }
@@ -186,7 +205,14 @@ func (r *Recorder) start(ctx context.Context, sessionID string) error {
 	if r.egress == nil {
 		return r.fail(ctx, rec.id, "no egress service configured")
 	}
-	egressID, err := r.egress.StartTrackEgress(ctx, rec.room, rec.track, rec.key)
+	var egressID string
+	err = r.call(ctx, func(c context.Context) (err error) {
+		egressID, err = r.egress.StartTrackEgress(c, rec.room, rec.track, rec.key)
+		return err
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		return r.fail(ctx, rec.id, "egress start timed out (no egress service answered)")
+	}
 	if err != nil {
 		return r.fail(ctx, rec.id, "egress start failed")
 	}
@@ -196,7 +222,7 @@ func (r *Recorder) start(ctx context.Context, sessionID string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		// Stopped while the egress was starting: stop it now so nothing is captured past the stop.
-		return r.egress.StopEgress(ctx, egressID)
+		return r.call(ctx, func(c context.Context) error { return r.egress.StopEgress(c, egressID) })
 	}
 	return nil
 }
@@ -214,7 +240,7 @@ func (r *Recorder) fail(ctx context.Context, id, why string) error {
 
 // Stop ends the session's live recording, if any (pause, withdrawal, completion, expiry, track loss).
 func (r *Recorder) Stop(ctx context.Context, sessionID string) {
-	if err := r.stop(ctx, sessionID); err != nil {
+	if err := r.stop(context.WithoutCancel(ctx), sessionID); err != nil {
 		r.log.Warn("recording stop failed", slog.String("session_id", sessionID), slog.Any("error", err))
 	}
 }
@@ -248,7 +274,7 @@ func (r *Recorder) stop(ctx context.Context, sessionID string) error {
 		return err
 	}
 	if r.egress != nil {
-		if err := r.egress.StopEgress(ctx, *egressID); err != nil {
+		if err := r.call(ctx, func(c context.Context) error { return r.egress.StopEgress(c, *egressID) }); err != nil {
 			return err
 		}
 	}

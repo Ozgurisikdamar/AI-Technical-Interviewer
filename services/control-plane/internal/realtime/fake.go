@@ -151,6 +151,9 @@ type FakeEgress struct {
 	Stopped []string
 	seq     int
 	Fail    error
+	// Hang makes StartTrackEgress block until its context ends, like LiveKit when no egress
+	// service is connected (the request is never answered).
+	Hang bool
 }
 
 // FakeEgressStart is one recorded StartTrackEgress call.
@@ -158,7 +161,14 @@ type FakeEgressStart struct {
 	EgressID, Room, TrackSID, Filepath string
 }
 
-func (f *FakeEgress) StartTrackEgress(_ context.Context, room, trackSID, filepath string) (string, error) {
+func (f *FakeEgress) StartTrackEgress(ctx context.Context, room, trackSID, filepath string) (string, error) {
+	f.mu.Lock()
+	hang := f.Hang
+	f.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.Fail != nil {

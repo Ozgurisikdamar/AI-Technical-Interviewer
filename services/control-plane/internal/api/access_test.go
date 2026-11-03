@@ -7,9 +7,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/api"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/ids"
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/realtime"
 )
 
 func (e *env) createInterview(token, key string, ref string) response {
@@ -405,5 +407,46 @@ func TestExpiredClaimNoncesAreRefused(t *testing.T) {
 	}
 	if e.count(`SELECT count(*) FROM ati.agent_leases WHERE session_id = $1`, id) != 0 {
 		t.Fatal("no lease may be issued for an expired nonce")
+	}
+}
+
+// Threat model (B10): an API key holder can mint an agent-kind token. While an agent holds the
+// lease no other is dispatched, so a second agent participant is removed and audited; the lease
+// holder reconnecting, or a replacement joining when no lease is held, is kept.
+func TestASecondAgentWhileOneHoldsTheLeaseIsRemoved(t *testing.T) {
+	e := newEnv(t)
+	id, cookie := e.interviewToReady()
+	a, _ := e.startAndClaim(id, cookie)
+	room := e.do(req{method: "POST", url: e.public.URL + "/api/v1/interviews/" + id + "/realtime-session", cookie: cookie}).str("room")
+	present := func(identity string) bool {
+		parts, _ := e.media.ListParticipants(context.Background(), room)
+		for _, p := range parts {
+			if p.Identity == identity {
+				return true
+			}
+		}
+		return false
+	}
+	join := func(eventID, identity string) {
+		e.media.Join(room, identity, true)
+		e.webhook(realtime.Webhook{ID: eventID, Event: "participant_joined", CreatedAt: time.Now().Unix(), Room: room, ParticipantIdentity: identity, ParticipantAgent: true}, "fake-valid-signature")
+	}
+	join("EV_agent_spy", "agent-eavesdropper")
+	if present("agent-eavesdropper") || !present("agent-AJ_1") {
+		t.Fatal("a second agent while the lease is held must be removed, and only it")
+	}
+	if n := e.count(`SELECT count(*) FROM ati.audit_logs WHERE subject_id = $1 AND action = 'media.unexpected_participant'`, id); n != 1 {
+		t.Fatalf("the removal must be audited: %d", n)
+	}
+	e.webhook(realtime.Webhook{ID: "EV_agent_rejoin", Event: "participant_joined", CreatedAt: time.Now().Unix(), Room: room, ParticipantIdentity: "agent-AJ_1", ParticipantAgent: true}, "fake-valid-signature")
+	if !present("agent-AJ_1") {
+		t.Fatal("the lease holder reconnecting is kept")
+	}
+	if r := e.do(req{method: "POST", url: e.internal.URL + "/internal/v1/tier1/sessions/" + id + "/lease/release", headers: a.headers()}); r.status != 204 {
+		t.Fatalf("release: %d", r.status)
+	}
+	join("EV_agent_next", "agent-AJ_2")
+	if !present("agent-AJ_2") {
+		t.Fatal("with no lease held, a joining agent may be the dispatched replacement and is kept")
 	}
 }

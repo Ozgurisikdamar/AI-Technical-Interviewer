@@ -226,6 +226,19 @@ func (s *Service) SweepMissingAgents(ctx context.Context) (int, error) {
 	return paused, nil
 }
 
+// CurrentLeaseHolder returns the identity holding an unexpired lease, if any. While one agent holds
+// the session, the control plane dispatches no other (EnsureAgentDispatch), so a second agent
+// participant was not dispatched by it.
+func (s *Service) CurrentLeaseHolder(ctx context.Context, sessionID string) (string, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `SELECT agent_identity FROM ati.agent_leases WHERE session_id = $1 AND ended_at IS NULL AND expires_at > $2
+		ORDER BY fencing_token DESC LIMIT 1`, sessionID, s.now().UTC()).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
 // ActiveAgentIdentity returns the identity holding the current lease, if any.
 func (s *Service) ActiveAgentIdentity(ctx context.Context, sessionID string) (string, error) {
 	var id string
