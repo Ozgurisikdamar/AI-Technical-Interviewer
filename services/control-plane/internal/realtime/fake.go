@@ -104,6 +104,17 @@ func (f *Fake) Join(room, identity string, agent bool) {
 	f.Participants[room] = append(f.Participants[room], Participant{Identity: identity, Agent: agent})
 }
 
+// PublishMic simulates the candidate publishing (or, with "", unpublishing) a microphone track.
+func (f *Fake) PublishMic(room, identity, trackSID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, p := range f.Participants[room] {
+		if p.Identity == identity {
+			f.Participants[room][i].MicTrackSID = trackSID
+		}
+	}
+}
+
 // Leave simulates a participant leaving.
 func (f *Fake) Leave(room, identity string) {
 	f.mu.Lock()
@@ -132,3 +143,43 @@ func (f *Fake) ReceiveWebhook(r *http.Request) (*Webhook, error) {
 
 var _ Media = (*Fake)(nil)
 var _ Media = (*LiveKit)(nil)
+
+// FakeEgress records egress requests in memory (tests only).
+type FakeEgress struct {
+	mu      sync.Mutex
+	Started []FakeEgressStart
+	Stopped []string
+	seq     int
+	Fail    error
+}
+
+// FakeEgressStart is one recorded StartTrackEgress call.
+type FakeEgressStart struct {
+	EgressID, Room, TrackSID, Filepath string
+}
+
+func (f *FakeEgress) StartTrackEgress(_ context.Context, room, trackSID, filepath string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.Fail != nil {
+		return "", f.Fail
+	}
+	f.seq++
+	id := fmt.Sprintf("EG_fake%04d", f.seq)
+	f.Started = append(f.Started, FakeEgressStart{EgressID: id, Room: room, TrackSID: trackSID, Filepath: filepath})
+	return id, nil
+}
+
+func (f *FakeEgress) StopEgress(_ context.Context, egressID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Stopped = append(f.Stopped, egressID)
+	return nil
+}
+
+// Snapshot returns copies of the recorded calls.
+func (f *FakeEgress) Snapshot() ([]FakeEgressStart, []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]FakeEgressStart(nil), f.Started...), append([]string(nil), f.Stopped...)
+}

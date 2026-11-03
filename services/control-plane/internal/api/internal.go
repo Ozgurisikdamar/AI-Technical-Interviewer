@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
@@ -299,6 +300,17 @@ func (s *Server) handleWebhook(ctx context.Context, ev *realtime.Webhook) string
 	if tag.RowsAffected() == 0 {
 		return "duplicate"
 	}
+	switch ev.Event {
+	case "egress_started", "egress_updated", "egress_ended":
+		if s.rec == nil {
+			return "ignored"
+		}
+		if err := s.rec.OnEgressEvent(ctx, ev); err != nil {
+			s.log.Warn("egress webhook failed", slog.Any("error", err))
+			return "error"
+		}
+		return "processed"
+	}
 	if ev.Room == "" {
 		return "ignored"
 	}
@@ -333,6 +345,17 @@ func (s *Server) handleWebhook(ctx context.Context, ev *realtime.Webhook) string
 				}
 			}
 			return "agent_left"
+		}
+	case "track_published", "track_unpublished":
+		// Recording follows the candidate's microphone: it can start only once the track exists, and
+		// it stops when the track goes away (ADR-017). The recorder re-checks every precondition.
+		if s.rec != nil && ev.ParticipantIdentity == realtime.CandidateIdentity && ev.TrackSource == "microphone" {
+			if ev.Event == "track_published" {
+				s.rec.Start(ctx, sessionID)
+			} else {
+				s.rec.Stop(ctx, sessionID)
+			}
+			return "recording_" + strings.TrimPrefix(ev.Event, "track_")
 		}
 	case "participant_joined":
 		if ev.ParticipantIdentity != realtime.CandidateIdentity && !ev.ParticipantAgent {

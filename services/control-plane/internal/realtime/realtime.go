@@ -23,6 +23,8 @@ const CandidateIdentity = "candidate"
 type Participant struct {
 	Identity string
 	Agent    bool
+	// MicTrackSID is the published microphone track, if any (the only track recording may capture).
+	MicTrackSID string
 }
 
 // Dispatch is an agent dispatch.
@@ -44,6 +46,8 @@ type Webhook struct {
 	TrackSource         string
 	EgressID            string
 	EgressStatus        string
+	EgressStartedAt     int64 // unix ns
+	EgressEndedAt       int64 // unix ns
 	EgressFiles         []EgressFile
 }
 
@@ -186,9 +190,50 @@ func (l *LiveKit) ListParticipants(ctx context.Context, room string) ([]Particip
 	}
 	out := make([]Participant, 0, len(res.Participants))
 	for _, p := range res.Participants {
-		out = append(out, Participant{Identity: p.Identity, Agent: p.Kind == livekit.ParticipantInfo_AGENT})
+		part := Participant{Identity: p.Identity, Agent: p.Kind == livekit.ParticipantInfo_AGENT}
+		for _, t := range p.Tracks {
+			if t.Type == livekit.TrackType_AUDIO && t.Source == livekit.TrackSource_MICROPHONE {
+				part.MicTrackSID = t.Sid
+			}
+		}
+		out = append(out, part)
 	}
 	return out, nil
+}
+
+// Egress records one track to object storage (ADR-017). Storage credentials are configured on the
+// egress service itself and never sent with a request.
+type Egress interface {
+	StartTrackEgress(ctx context.Context, room, trackSID, filepath string) (egressID string, err error)
+	StopEgress(ctx context.Context, egressID string) error
+}
+
+// LiveKitEgress uses the LiveKit egress API: TrackEgress without transcoding (OGG/Opus).
+type LiveKitEgress struct{ client *lksdk.EgressClient }
+
+// NewLiveKitEgress returns an egress client for the server API.
+func NewLiveKitEgress(apiURL, key, secret string) *LiveKitEgress {
+	return &LiveKitEgress{client: lksdk.NewEgressClient(apiURL, key, secret)}
+}
+
+func (e *LiveKitEgress) StartTrackEgress(ctx context.Context, room, trackSID, filepath string) (string, error) {
+	info, err := e.client.StartTrackEgress(ctx, &livekit.TrackEgressRequest{
+		RoomName: room,
+		TrackId:  trackSID,
+		Output:   &livekit.TrackEgressRequest_File{File: &livekit.DirectFileOutput{Filepath: filepath}},
+	})
+	if err != nil {
+		return "", err
+	}
+	return info.EgressId, nil
+}
+
+func (e *LiveKitEgress) StopEgress(ctx context.Context, egressID string) error {
+	_, err := e.client.StopEgress(ctx, &livekit.StopEgressRequest{EgressId: egressID})
+	if isNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 // RemoveParticipant removes a member (stale agents after re-dispatch).
@@ -223,6 +268,7 @@ func FromEvent(ev *livekit.WebhookEvent) *Webhook {
 	if ev.EgressInfo != nil {
 		w.EgressID = ev.EgressInfo.EgressId
 		w.EgressStatus = ev.EgressInfo.Status.String()
+		w.EgressStartedAt, w.EgressEndedAt = ev.EgressInfo.StartedAt, ev.EgressInfo.EndedAt
 		for _, f := range ev.EgressInfo.FileResults {
 			w.EgressFiles = append(w.EgressFiles, EgressFile{Location: f.Location, Filename: f.Filename, Size: f.Size, StartedAt: f.StartedAt, EndedAt: f.EndedAt})
 		}

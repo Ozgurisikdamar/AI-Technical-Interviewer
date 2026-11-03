@@ -34,6 +34,8 @@ type Deps struct {
 	Log       *slog.Logger
 	Metrics   *Metrics
 	Now       func() time.Time
+	// Recorder is nil when recording is disabled (the default, ADR-017).
+	Recorder Recorder
 }
 
 // Server holds handlers for both listeners.
@@ -48,6 +50,7 @@ type Server struct {
 	metrics   *Metrics
 	now       func() time.Time
 	limiter   *ipLimiter
+	rec       Recorder
 }
 
 // New builds the server.
@@ -59,7 +62,7 @@ func New(d Deps) *Server {
 		d.Metrics = NewMetrics()
 	}
 	return &Server{cfg: d.Config, svc: d.Service, tier1: d.Tier1, media: d.Media, pool: d.Pool, tier1Pool: d.Tier1Pool,
-		log: d.Log, metrics: d.Metrics, now: d.Now, limiter: newIPLimiter(d.Config.InvitationExchangesPerMinute)}
+		log: d.Log, metrics: d.Metrics, now: d.Now, limiter: newIPLimiter(d.Config.InvitationExchangesPerMinute), rec: d.Recorder}
 }
 
 // Route is one registered endpoint.
@@ -172,6 +175,7 @@ type Effects struct {
 type Recorder interface {
 	Start(ctx context.Context, sessionID string)
 	Stop(ctx context.Context, sessionID string)
+	OnEgressEvent(ctx context.Context, ev *realtime.Webhook) error
 }
 
 func (e Effects) DeleteRoom(ctx context.Context, sessionID, room string) {

@@ -71,10 +71,12 @@ func (s *Service) progress(ctx context.Context, sess *sessionRow) (Progress, err
 
 // RecordingActive reports whether a recording is currently running (ADR-017).
 func (s *Service) RecordingActive(ctx context.Context, sessionID string) bool {
-	if s.recordingActive == nil {
-		return false
+	if s.recordingActive != nil {
+		return s.recordingActive(ctx, sessionID)
 	}
-	return s.recordingActive(ctx, sessionID)
+	var live bool
+	_ = s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM ati.audio_recordings WHERE session_id = $1 AND status IN ('starting','active'))`, sessionID).Scan(&live)
+	return live
 }
 
 // SetRecordingProbe installs the recording-status lookup (internal/recording).

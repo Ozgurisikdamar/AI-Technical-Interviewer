@@ -97,7 +97,7 @@ func New(pool *pgxpool.Pool, now func() time.Time) *Builder {
 	if now == nil {
 		now = time.Now
 	}
-	return &Builder{pool: pool, now: now}
+	return &Builder{pool: pool, now: now, recordingActive: recordingFromView}
 }
 
 // Build returns the validated context for a session.
@@ -175,4 +175,11 @@ func (b *Builder) Build(ctx context.Context, sessionID string) (*Context, error)
 		return nil, fmt.Errorf("tier-1 context violates its contract (refusing to send): %w", err)
 	}
 	return c, nil
+}
+
+// recordingFromView reads tier1_recording_v: whether a consented recording is running (ADR-017).
+func recordingFromView(ctx context.Context, q pgx.Tx, sessionID string) (bool, error) {
+	var active bool
+	err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM ati.tier1_recording_v WHERE session_id = $1)`, sessionID).Scan(&active)
+	return active, err
 }

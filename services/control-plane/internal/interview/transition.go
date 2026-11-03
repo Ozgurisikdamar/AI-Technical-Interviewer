@@ -27,7 +27,7 @@ var implementedEffects = []string{
 	"record_consent_decisions", "set_timeline_epoch", "open_activation_first_item", "open_activation_follow_up",
 	"open_activation_next_item", "open_activation_same_item", "close_activation", "finalize_answer",
 	"emit_answer_finalized", "emit_interview_completed", "record_paused_from", "end_pause",
-	"cancel_completion_request", "stop_recording", "delete_room",
+	"cancel_completion_request", "start_recording", "stop_recording", "delete_room",
 }
 
 type consentInput struct {
@@ -239,6 +239,10 @@ func (s *Service) execute(ctx context.Context, oc *opCtx, tr flow.Transition, ac
 			_, err = oc.tx.Exec(ctx, `UPDATE ati.pause_intervals SET ended_ms = greatest($2, started_ms) WHERE session_id = $1 AND ended_ms IS NULL`, oc.sess.ID, nowMs)
 		case "cancel_completion_request":
 			_, err = oc.tx.Exec(ctx, `UPDATE ati.completion_requests SET resolved_at = $2, resolution = 'cancelled' WHERE session_id = $1 AND resolved_at IS NULL`, oc.sess.ID, oc.now)
+		case "start_recording":
+			// Only an attempt: the recorder applies the fail-closed policy (ADR-017).
+			id := oc.sess.ID
+			*oc.after = append(*oc.after, func(c context.Context) { s.effects.StartRecording(c, id) })
 		case "stop_recording":
 			id := oc.sess.ID
 			*oc.after = append(*oc.after, func(c context.Context) { s.effects.StopRecording(c, id) })

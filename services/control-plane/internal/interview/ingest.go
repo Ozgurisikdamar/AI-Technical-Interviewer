@@ -202,13 +202,28 @@ func (s *Service) IngestSegment(ctx context.Context, actor Actor, lease LeaseRef
 		}
 		segID := ids.New(ids.Segment)
 		flagsJSON, _ := json.Marshal(flags)
+		// audio_ref (ADR-017): the consented recording that captured this candidate speech, if any.
+		var recordingID *string
+		var recordingOffset *int64
+		if sub.Speaker == "candidate" {
+			var id string
+			var startedMs int64
+			err := tx.QueryRow(ctx, `SELECT id, started_ms FROM ati.audio_recordings WHERE session_id = $1 AND started_ms IS NOT NULL AND started_ms <= $2
+				AND (ended_ms IS NULL OR $2 < ended_ms) AND status IN ('active','stopping','complete') ORDER BY started_ms DESC LIMIT 1`, sessionID, sub.StartMs).Scan(&id, &startedMs)
+			if err == nil {
+				offset := sub.StartMs - startedMs
+				recordingID, recordingOffset = &id, &offset
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO ati.transcript_segments (id, session_id, sequence, segment_key, content_sha256, speaker, text, start_ms, end_ms,
 			source, confidence, language, activation_id, item_id, evidence_eligible, interrupted, flags, prompt_similarity, producer, lease_id, fencing_token,
-			provider_item_id, asr_model, engine, created_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'tier1_agent',$19,$20,$21,$22,$23,$24)`,
+			provider_item_id, asr_model, engine, audio_recording_id, audio_offset_ms, created_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'tier1_agent',$19,$20,$21,$22,$23,$24,$25,$26)`,
 			segID, sessionID, seq, sub.SegmentKey, hash, sub.Speaker, sub.Text, sub.StartMs, sub.EndMs, sub.Source, sub.Confidence, sub.Language,
 			activationID, itemID, evidence, sub.Interrupted, flagsJSON, similarity, lease.LeaseID, lease.FencingToken, sub.ProviderItemID, sub.ASRModel,
-			sub.Engine, now); err != nil {
+			sub.Engine, recordingID, recordingOffset, now); err != nil {
 			return err
 		}
 		out = &SegmentResult{SegmentID: segID, Sequence: seq, QuestionID: itemID, ActivationID: activationID, EvidenceEligible: evidence, Flags: flags, Created: true}

@@ -185,8 +185,9 @@ up() {
     "$BIN/ati-admin" seed-plans --url "$owner"
     "$BIN/ati-admin" create-tenant --url "$owner" --name "Synthetic development tenant" >"$STATE/tenant_id"
     (umask 077 && "$BIN/ati-admin" create-staff-token --url "$owner" --tenant "$(cat "$STATE/tenant_id")" --label dev-stack --role recruiter >"$STATE/staff_token")
-  elif [ ! -x "$BIN/control-plane" ]; then
-    (cd "$ROOT/services/control-plane" && go build -o "$BIN/control-plane" ./cmd/control-plane && go build -o "$BIN/ati-admin" ./cmd/ati-admin)
+  else
+    [ -x "$BIN/control-plane" ] || (cd "$ROOT/services/control-plane" && go build -o "$BIN/control-plane" ./cmd/control-plane && go build -o "$BIN/ati-admin" ./cmd/ati-admin)
+    "$BIN/ati-admin" migrate --url "${admin%/postgres*}/ati?sslmode=disable" # idempotent: applies new migrations
   fi
   local lk; lk="$(fetch_livekit)"
   write_livekit_config
@@ -244,6 +245,8 @@ restart() { # rebuild the control plane and restart it and the agent (PostgreSQL
   stop agent
   stop control-plane
   (cd "$ROOT/services/control-plane" && go build -o "$BIN/control-plane" ./cmd/control-plane && go build -o "$BIN/ati-admin" ./cmd/ati-admin)
+  local admin; admin="$(cat "$ROOT/.cache/pg/admin_url")"
+  "$BIN/ati-admin" migrate --url "${admin%/postgres*}/ati?sslmode=disable"
   cp_env >"$STATE/control-plane.env"
   start control-plane "$STATE" env -i PATH="$PATH" HOME="$HOME" $(grep -v '^#' "$STATE/control-plane.env" | xargs) "$BIN/control-plane"
   wait_http control-plane "http://$CP_INTERNAL/readyz"

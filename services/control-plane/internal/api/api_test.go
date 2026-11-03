@@ -348,3 +348,25 @@ func TestResumeDispatchesAReplacementForALostAgent(t *testing.T) {
 		t.Fatal("pending dispatch must not be duplicated")
 	}
 }
+
+func TestRecordingFollowsTheCandidateMicrophoneAndEgressWebhooks(t *testing.T) {
+	e := newEnv(t)
+	id, cookie := e.interviewToReady()
+	e.startAndClaim(id, cookie)
+	room := e.do(req{method: "POST", url: e.public.URL + "/api/v1/interviews/" + id + "/realtime-session", cookie: cookie}).str("room")
+	now := time.Now().Unix()
+	send := func(ev realtime.Webhook) { e.webhook(ev, "fake-valid-signature") }
+	send(realtime.Webhook{ID: "EV_tp_1", Event: "track_published", CreatedAt: now, Room: room, ParticipantIdentity: "candidate", TrackSID: "TR_1", TrackSource: "microphone"})
+	send(realtime.Webhook{ID: "EV_tp_2", Event: "track_published", CreatedAt: now, Room: room, ParticipantIdentity: "agent-AJ_1", ParticipantAgent: true, TrackSID: "TR_2", TrackSource: "microphone"})
+	send(realtime.Webhook{ID: "EV_tp_3", Event: "track_published", CreatedAt: now, Room: room, ParticipantIdentity: "candidate", TrackSID: "TR_3", TrackSource: "screen_share"})
+	send(realtime.Webhook{ID: "EV_tu_1", Event: "track_unpublished", CreatedAt: now, Room: room, ParticipantIdentity: "candidate", TrackSID: "TR_1", TrackSource: "microphone"})
+	send(realtime.Webhook{ID: "EV_eg_1", Event: "egress_ended", CreatedAt: now, EgressID: "EG_1", EgressStatus: "EGRESS_COMPLETE"})
+	send(realtime.Webhook{ID: "EV_eg_1", Event: "egress_ended", CreatedAt: now, EgressID: "EG_1", EgressStatus: "EGRESS_COMPLETE"}) // duplicate
+	starts, stops, egress := e.rec.snapshot()
+	if len(starts) != 1 || starts[0] != id || len(stops) != 1 || stops[0] != id {
+		t.Fatalf("only the candidate's microphone starts and stops recording: starts=%v stops=%v", starts, stops)
+	}
+	if len(egress) != 1 || egress[0] != "EG_1:EGRESS_COMPLETE" {
+		t.Fatalf("egress webhooks reach the recorder once: %v", egress)
+	}
+}

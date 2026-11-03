@@ -55,6 +55,37 @@ type env struct {
 	logs     *syncBuffer
 	keys     atomic.Int64
 	svc      *interview.Service
+	rec      *fakeRecorder
+}
+
+// fakeRecorder records the calls the API makes to the recorder.
+type fakeRecorder struct {
+	mu     sync.Mutex
+	starts []string
+	stops  []string
+	egress []string
+}
+
+func (f *fakeRecorder) Start(_ context.Context, id string) {
+	f.mu.Lock()
+	f.starts = append(f.starts, id)
+	f.mu.Unlock()
+}
+func (f *fakeRecorder) Stop(_ context.Context, id string) {
+	f.mu.Lock()
+	f.stops = append(f.stops, id)
+	f.mu.Unlock()
+}
+func (f *fakeRecorder) OnEgressEvent(_ context.Context, ev *realtime.Webhook) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.egress = append(f.egress, ev.EgressID+":"+ev.EgressStatus)
+	return nil
+}
+func (f *fakeRecorder) snapshot() (starts, stops, egress []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.starts...), append([]string(nil), f.stops...), append([]string(nil), f.egress...)
 }
 
 func newEnv(t *testing.T) *env {
@@ -88,8 +119,10 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(tier1Pool.Close)
-	srv := api.New(api.Deps{Config: cfg, Service: svc, Tier1: tier1ctx.New(tier1Pool, nil), Media: media, Pool: db.CP, Tier1Pool: tier1Pool, Log: log})
-	e := &env{t: t, db: db, media: media, logs: logs, svc: svc, tenant: ids.New(ids.Tenant)}
+	rec := &fakeRecorder{}
+	srv := api.New(api.Deps{Config: cfg, Service: svc, Tier1: tier1ctx.New(tier1Pool, nil), Media: media, Pool: db.CP, Tier1Pool: tier1Pool, Log: log,
+		Recorder: rec})
+	e := &env{t: t, db: db, media: media, logs: logs, svc: svc, tenant: ids.New(ids.Tenant), rec: rec}
 	e.public = httptest.NewServer(srv.PublicHandler())
 	e.internal = httptest.NewServer(srv.InternalHandler())
 	t.Cleanup(e.public.Close)

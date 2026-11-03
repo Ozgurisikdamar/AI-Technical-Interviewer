@@ -191,6 +191,16 @@ def test_owner_decision_pause_withdraw_expiry_is_complete(state_machine: dict[st
             assert "delete_room" in t["effects"], t["id"]
 
 
+def test_recording_starts_only_when_answers_can_begin(state_machine: dict[str, Any]) -> None:
+    """A consented recording (ADR-017) starts only when the first question opens after calibration or
+    when a paused question resumes: calibration and pauses are never recorded."""
+    starts = {t["id"] for t in state_machine["transitions"] if "start_recording" in t["effects"]}
+    assert starts == {"T05", "T13"}
+    for t in state_machine["transitions"]:
+        if "start_recording" in t["effects"]:
+            assert t["to"] == "QUESTION_ACTIVE" and any(e.startswith("open_activation") for e in t["effects"]), t["id"]
+
+
 def test_recording_stops_whenever_audio_intake_should_stop(state_machine: dict[str, Any]) -> None:
     """Pause, withdraw and completion must stop any active recording (ADR-017)."""
     # Recording is only active while an activation is open (QUESTION_ACTIVE / CANDIDATE_SPEAKING),
