@@ -1,0 +1,152 @@
+/*
+ * Global tokens and base styles. Component styles live in CSS modules.
+ * Colours are chosen for WCAG 2.2 AA: text >= 4.5:1, UI boundaries and focus rings >= 3:1.
+ * No external fonts or CDNs: the system font stack only.
+ */
+:root {
+  color-scheme: light;
+  --color-bg: #ffffff;
+  --color-surface: #f4f5f7;
+  --color-surface-strong: #e8eaee;
+  --color-text: #1b1d21;
+  --color-text-muted: #4a4f57;
+  --color-border: #767b84;
+  --color-border-subtle: #c9ccd1;
+  --color-primary: #1d4ed8;
+  --color-primary-hover: #1e40af;
+  --color-on-primary: #ffffff;
+  --color-danger: #b91c1c;
+  --color-danger-hover: #991b1b;
+  --color-on-danger: #ffffff;
+  --color-focus: #1d4ed8;
+  --color-warning-bg: #fef3c7;
+  --color-warning-text: #78350f;
+  --color-warning-border: #b45309;
+  --color-info-bg: #e8f0fe;
+  --color-info-text: #1e3a8a;
+  --color-success-text: #166534;
+  --color-error-bg: #fdecec;
+  --color-error-text: #991b1b;
+  --color-disabled-bg: #e8eaee;
+  --color-disabled-text: #4a4f57;
+  --radius: 8px;
+  --content-width: 48rem;
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+  margin: 0 0 0.75rem;
+}
+
+h1 {
+  font-size: 1.75rem;
+}
+
+h2 {
+  font-size: 1.3rem;
+}
+
+h3 {
+  font-size: 1.1rem;
+}
+
+p {
+  margin: 0 0 0.75rem;
+}
+
+a {
+  color: var(--color-primary);
+  text-underline-offset: 0.15em;
+}
+
+a:hover {
+  color: var(--color-primary-hover);
+}
+
+/* Visible focus for keyboard users on every interactive element. */
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Headings and landmarks focused programmatically on step changes. */
+[tabindex='-1']:focus {
+  outline: none;
+}
+
+[tabindex='-1']:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 4px;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -10rem;
+  z-index: 100;
+  padding: 0.75rem 1rem;
+  background: var(--color-bg);
+  color: var(--color-primary);
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius);
+  font-weight: 600;
+}
+
+.skip-link:focus {
+  top: 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}

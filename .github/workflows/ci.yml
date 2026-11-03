@@ -71,3 +71,18 @@ jobs:
       - name: ruff, mypy (strict), pytest
         run: make agent-test
 
+  web:
+    name: Web UI (Next.js)
+    runs-on: ubuntu-24.04
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      ATI_CONTROL_PLANE_URL: http://127.0.0.1:8080
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Enable the pinned pnpm (packageManager field)
+        run: corepack enable
+      - name: lint, typecheck, unit tests, build, bundle scan
+        run: make web-test

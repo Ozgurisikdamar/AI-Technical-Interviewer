@@ -1,0 +1,43 @@
+.header {
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg);
+}
+
+.brandBar {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 0.85rem 1rem;
+}
+
+.brand {
+  margin: 0;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.main {
+  flex: 1 0 auto;
+  width: 100%;
+}
+
+.noscript {
+  max-width: var(--content-width);
+  margin: 1rem auto 0;
+  padding: 0.75rem 1rem;
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+  border-left: 4px solid var(--color-warning-border);
+}
+
+.footer {
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  padding: 1rem;
+  text-align: center;
+}
+
+.footer p {
+  margin: 0;
+}

@@ -17,12 +17,12 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 |---|---|---|---|---|
 | QA-AN-01 | Microphone permission denied | 1 | W: mic-denied path → text mode | Planned (M8) |
 | QA-AN-02 | No microphone device | 1 | W: device check | Planned (M8) |
-| QA-AN-03 | Device removed mid-session | 1 | W: device-loss patch → pause | Planned (M8) |
+| QA-AN-03 | Device removed mid-session | 1 | W: `keyboard_flow.mjs` (capture track ends → `device_lost` pause, mic unpublished) | Verified (scripted, loopback) |
 | QA-AN-04 | Browser tab suspended | 6 | — | Phase 6 |
 | QA-AN-05 | 1/5/10% packet loss | 6 | — | Blocked: no `tc`/netem in this environment |
 | QA-AN-06 | High jitter, bandwidth throttling | 6 | — | Blocked: no `tc`/netem |
 | QA-AN-07 | TURN relay path | 6 | — | Blocked: no TURN/relay lab |
-| QA-AN-08 | Reconnect after temporary disconnect | 1 | E: `test_disconnect_pauses_and_resume_reasks_as_a_new_activation`; W: refresh (M8) | E: Verified (scripted, loopback); W: Planned (M8) |
+| QA-AN-08 | Reconnect after temporary disconnect | 1 | E: `test_disconnect_pauses_and_resume_reasks_as_a_new_activation`; W: `voice_flow.mjs` page refresh | Verified (scripted, loopback) |
 | QA-AN-09 | Candidate speaks while AI output is active (barge-in) | 1 | E: `test_barge_in_stops_the_interviewer_and_keeps_the_answer_open` | Verified (scripted, loopback) |
 | QA-AN-10 | Candidate silence vs packet loss | 1 | A: `test_missing_frames_never_end_a_turn`, `test_tool_refuses_while_candidate_audio_is_degraded`; E: participant loss pauses | Verified (A); E: Verified (scripted, loopback) for participant loss; packet loss Blocked |
 | QA-AN-11 | Multiple browsers and devices | 6 | — | Phase 6 (Chromium only in Phase 1) |
@@ -77,7 +77,7 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | QA-FA-05 | Text-only alternative | 1 | G + A + W: text responses | Planned (M9) |
 | QA-FA-06 | Long thinking pauses | 1 | G/A: answers close only by the tool or the candidate's button, never by silence; A: tool refuses while the candidate speaks | Verified; per-question turn profile not yet applied to the provider |
 | QA-FA-07 | Low-quality microphone | 6 | — | Phase 6 |
-| QA-FA-08 | Screen reader and keyboard navigation | 1 | W: keyboard path, ARIA live region | Planned (M8) |
+| QA-FA-08 | Screen reader and keyboard navigation | 1 | W: `keyboard_flow.mjs` (keyboard-only path, `aria-live` status, dialog focus) | Verified for keyboard and ARIA wiring; no screen-reader run |
 | QA-FA-09 | No scoring on accent or vocal traits | 1–2 | C: no such fields; recordings never used for voice assessment | Verified (C) structurally |
 | QA-FA-10 | Human review of disputed assessment | 5 | — | Phase 5 |
 
@@ -86,8 +86,8 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | ID | Scenario | Maps to | Status |
 |---|---|---|---|
 | BP18-01 | 1/5/10% loss, high jitter | QA-AN-05/06 | Blocked |
-| BP18-02 | Mic denied, device switch | QA-AN-01/03 | Planned (M8) |
-| BP18-03 | Refresh and reconnect | QA-AN-08 | E: Verified (scripted, loopback); W: Planned (M8) |
+| BP18-02 | Mic denied, device switch | QA-AN-01/03 | Device loss Verified (W); mic denied → text mode Planned (M9) |
+| BP18-03 | Refresh and reconnect | QA-AN-08 | Verified (E and W, scripted, loopback) |
 | BP18-04 | Barge-in during speech | QA-AN-09 | Verified (scripted, loopback) |
 | BP18-05 | Duplicate/out-of-order transcript events | QA-SD-01/03 | Verified (G: `TestSegmentIdempotencyAndConflicts` + QA-SD-01/03) |
 | BP18-06 | Realtime, STT, evaluator timeout | A + E: provider failure → PAUSED, no finalization | Verified (scripted failure injection, loopback); evaluator Phase 2 |

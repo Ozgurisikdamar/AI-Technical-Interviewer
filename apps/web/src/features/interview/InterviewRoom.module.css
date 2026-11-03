@@ -1,0 +1,169 @@
+.room > * + * {
+  margin-top: 1rem;
+}
+
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.heading {
+  margin: 0;
+}
+
+.progress {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.statusBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.4rem 0.85rem;
+  border: 2px solid var(--color-border);
+  border-radius: 999px;
+  font-weight: 700;
+  background: var(--color-bg);
+}
+
+.dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--color-border);
+  flex: none;
+}
+
+.dot_interviewer_speaking {
+  background: var(--color-primary);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.dot_listening {
+  background: var(--color-success-text);
+}
+
+.dot_paused {
+  background: var(--color-warning-border);
+}
+
+.dot_reconnecting,
+.dot_connecting,
+.dot_disconnected {
+  background: var(--color-danger);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.chip {
+  margin: 0;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 0.95rem;
+}
+
+.recording {
+  color: var(--color-error-text);
+  border-color: var(--color-error-text);
+  background: var(--color-error-bg);
+  font-weight: 700;
+}
+
+.noticeHeading {
+  font-size: 1.1rem;
+  margin-bottom: 0.35rem;
+}
+
+.prompt {
+  padding: 1rem 1.25rem;
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+
+.promptHeading {
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.promptText {
+  margin: 0;
+  font-size: 1.2rem;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.textForm {
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.textLabel {
+  display: block;
+  font-weight: 700;
+  font-size: 1.05rem;
+  margin-bottom: 0.25rem;
+}
+
+.textarea {
+  display: block;
+  width: 100%;
+  min-height: 9rem;
+  padding: 0.65rem 0.75rem;
+  font: inherit;
+  line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius);
+  resize: vertical;
+}
+
+.textarea:disabled {
+  background: var(--color-disabled-bg);
+}
+
+.counter {
+  margin: 0.35rem 0 0;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.sent {
+  margin: 0.75rem 0 0;
+  color: var(--color-success-text);
+  font-weight: 600;
+}
