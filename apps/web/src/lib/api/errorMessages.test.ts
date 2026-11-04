@@ -34,7 +34,7 @@ const SERVER_CODES = [
 describe('errorMessage', () => {
   it('has a specific friendly message for every candidate-facing problem code', () => {
     for (const code of SERVER_CODES) {
-      const message = errorMessage(t, new ApiError(409, code));
+      const message = errorMessage(t.errors, new ApiError(409, code));
       expect(message, code).not.toBe(t.errors.generic);
       // Messages are written for people: no raw snake_case codes.
       if (code.includes('_')) expect(message, code).not.toContain(code);
@@ -43,17 +43,50 @@ describe('errorMessage', () => {
 
   it('covers client-side failures', () => {
     for (const code of ['network_error', 'timeout', 'invalid_response']) {
-      expect(errorMessage(t, new ApiError(0, code))).not.toBe(t.errors.generic);
+      expect(errorMessage(t.errors, new ApiError(0, code))).not.toBe(t.errors.generic);
     }
   });
 
   it('falls back by status, then to a generic message', () => {
-    expect(errorMessage(t, new ApiError(429, 'unknown'))).toBe(t.errors.byStatus[429]);
-    expect(errorMessage(t, new ApiError(503, 'unknown'))).toBe(t.errors.serverError);
-    expect(errorMessage(t, new ApiError(418, 'unknown'))).toBe(t.errors.generic);
+    expect(errorMessage(t.errors, new ApiError(429, 'unknown'))).toBe(t.errors.byStatus[429]);
+    expect(errorMessage(t.errors, new ApiError(503, 'unknown'))).toBe(t.errors.serverError);
+    expect(errorMessage(t.errors, new ApiError(418, 'unknown'))).toBe(t.errors.generic);
   });
 
   it('cannot be tricked by prototype keys', () => {
-    expect(errorMessage(t, new ApiError(400, 'constructor'))).toBe(t.errors.byStatus[400]);
+    expect(errorMessage(t.errors, new ApiError(400, 'constructor'))).toBe(t.errors.byStatus[400]);
+  });
+});
+
+/** Codes the review console can receive (control plane: staff session, review and report endpoints). */
+const STAFF_CODES = [
+  'unauthorized',
+  'forbidden',
+  'not_found',
+  'review_not_open',
+  'review_already_completed',
+  'rubric_unavailable',
+  'invalid_request',
+  'rate_limited',
+  'origin_mismatch',
+  'idempotency_key_required',
+  'payload_too_large',
+  'unavailable',
+  'internal_error',
+];
+
+describe('errorMessage for the review console', () => {
+  it('has a specific message for every staff problem code', () => {
+    for (const code of STAFF_CODES) {
+      const message = errorMessage(t.staff.errors, new ApiError(409, code));
+      expect(message, code).not.toBe(t.staff.errors.generic);
+      if (code.includes('_')) expect(message, code).not.toContain(code);
+    }
+  });
+
+  it('never tells staff to open a candidate invitation', () => {
+    for (const message of [...Object.values(t.staff.errors.byCode), ...Object.values(t.staff.errors.byStatus)]) {
+      expect(message.toLowerCase()).not.toContain('invitation');
+    }
   });
 });

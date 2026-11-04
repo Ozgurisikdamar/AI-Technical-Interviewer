@@ -6,6 +6,7 @@
  * environment is treated as non-production and an unknown notice status as a draft.
  */
 import { isActivationId, isInterviewId } from './ids';
+import { ResponseShapeError, array, boolean, integer, nonEmptyString, record, string } from './shape';
 import {
   CANDIDATE_ACTIONS,
   ENVIRONMENTS,
@@ -27,51 +28,7 @@ import {
   type TextResponseAccepted,
 } from './types';
 
-export class ResponseShapeError extends Error {
-  constructor(readonly field: string) {
-    super(`Unexpected response shape at ${field}`);
-    this.name = 'ResponseShapeError';
-  }
-}
-
-type Json = Record<string, unknown>;
-
-function record(value: unknown, field: string): Json {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new ResponseShapeError(field);
-  return value as Json;
-}
-
-function string(obj: Json, key: string, field: string, maxLength = 10_000): string {
-  const value = obj[key];
-  if (typeof value !== 'string' || value.length > maxLength) throw new ResponseShapeError(`${field}.${key}`);
-  return value;
-}
-
-function nonEmptyString(obj: Json, key: string, field: string, maxLength = 10_000): string {
-  const value = string(obj, key, field, maxLength);
-  if (value.length === 0) throw new ResponseShapeError(`${field}.${key}`);
-  return value;
-}
-
-function integer(obj: Json, key: string, field: string, min: number): number {
-  const value = obj[key];
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min) {
-    throw new ResponseShapeError(`${field}.${key}`);
-  }
-  return value;
-}
-
-function boolean(obj: Json, key: string, field: string): boolean {
-  const value = obj[key];
-  if (typeof value !== 'boolean') throw new ResponseShapeError(`${field}.${key}`);
-  return value;
-}
-
-function array(obj: Json, key: string, field: string, maxItems = 200): unknown[] {
-  const value = obj[key];
-  if (!Array.isArray(value) || value.length > maxItems) throw new ResponseShapeError(`${field}.${key}`);
-  return value;
-}
+export { ResponseShapeError } from './shape';
 
 function state(value: unknown, field: string): InterviewState {
   if (typeof value !== 'string' || !/^[A-Z][A-Z_]{0,39}$/.test(value)) throw new ResponseShapeError(field);

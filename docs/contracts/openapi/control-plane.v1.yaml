@@ -8,6 +8,10 @@ info:
     the **public** listener (`/api/v1`, reachable through the same-origin web rewrite) and the
     **internal** listener (`/internal/v1`, `/healthz`, `/readyz`, `/metrics`), which is never routed publicly.
 
+    Staff authenticate with a bearer token, or in the review console with the browser session that a token is
+    exchanged for (`ati_ss`, ADR-023). The session is accepted only by the review, report and staff session
+    operations; when an `Authorization` header is present it alone decides.
+
     Cross-cutting rules:
     - Errors are RFC 9457 `application/problem+json` with a stable `code`.
     - Every response carries `X-Request-ID` (echoed when supplied, generated otherwise) and `X-ATI-Environment`.
@@ -68,6 +72,10 @@ paths:
       tags: [staff, candidate]
       operationId: getInterview
       summary: Role-specific view of an interview.
+      description: >-
+        A staff bearer token receives the staff view, which names the candidate (`candidate_ref`): roles admin and
+        recruiter only. Reviewers judge answers without knowing whose they are, so they get 403 (ADR-022). The staff
+        browser session is not accepted here: a browser that also holds the candidate cookie gets the candidate view.
       security: [{staffBearer: []}, {candidateSession: []}]
       parameters: [{$ref: '#/components/parameters/InterviewId'}]
       responses:
@@ -80,6 +88,7 @@ paths:
                   - {$ref: '#/components/schemas/InterviewStaffView'}
                   - {$ref: '#/components/schemas/InterviewCandidateView'}
         '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
 
   /api/v1/interviews/{interview_id}/invitation/revoke:
@@ -354,7 +363,7 @@ paths:
       description: >-
         Built only from reviewer decisions and validated AI evidence. It has no hiring decision, recommendation or
         ranking. Roles: admin, recruiter, reviewer. 404 until the report exists or for another tenant.
-      security: [{staffBearer: []}]
+      security: [{staffBearer: []}, {staffSession: []}]
       parameters: [{$ref: '#/components/parameters/InterviewId'}]
       responses:
         '200':
@@ -366,14 +375,105 @@ paths:
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
 
+  /api/v1/reports:
+    get:
+      tags: [review]
+      operationId: listReports
+      summary: The tenant's reports, newest first, without their content. Roles admin, recruiter and reviewer.
+      description: >-
+        Each entry identifies a report and its plan. It holds no scores and no candidate identity, so the list cannot
+        be read as a ranking of candidates (ADR-008).
+      security: [{staffBearer: []}, {staffSession: []}]
+      parameters:
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+      responses:
+        '200':
+          description: Reports.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReportList'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/staff/session:
+    post:
+      tags: [staff]
+      operationId: startStaffSession
+      summary: Exchange a staff token for a review console session cookie (ADR-023).
+      description: |
+        The session lasts `ATI_STAFF_SESSION_TTL` (8 hours by default) or until the staff token expires, whichever
+        is first, and ends at once when the token is revoked. A session the browser still presents is revoked. A
+        malformed, unknown, expired or revoked token gets the same 401. The request carries no bearer token, so the
+        same-origin rule applies (no login CSRF). Like the invitation exchange, responses are never replayed from
+        storage: the Idempotency-Key header is required for uniformity. Rate-limited per client address
+        (`ATI_STAFF_SIGNINS_PER_MINUTE`).
+      security: []
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StaffSignInRequest'}
+      responses:
+        '200':
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              description: '`ati_ss` session cookie (HttpOnly; Secure outside dev; SameSite=Strict; Path=/api; Max-Age = the remaining lifetime).'
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StaffSessionView'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/Problem'}
+    get:
+      tags: [staff]
+      operationId: getStaffSession
+      summary: Who is signed in, with which role, until when.
+      security: [{staffBearer: []}, {staffSession: []}]
+      responses:
+        '200':
+          description: The signed-in staff member.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StaffSessionView'}
+        '401': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/staff/session/end:
+    post:
+      tags: [staff]
+      operationId: endStaffSession
+      summary: Sign out. The session is revoked and the cookie cleared; a bearer token has no session to end.
+      security: [{staffBearer: []}, {staffSession: []}]
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200':
+          description: Signed out (`ended` is false when there was no session to end).
+          headers:
+            Set-Cookie:
+              description: Clears `ati_ss`.
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StaffSessionEnded'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+
   /api/v1/review-tasks:
     get:
       tags: [review]
       operationId: listReviewTasks
-      summary: The tenant's review tasks, oldest first. Roles reviewer and admin.
-      security: [{staffBearer: []}]
+      summary: The tenant's review tasks, oldest first and in answer order within an interview. Roles reviewer and admin.
+      security: [{staffBearer: []}, {staffSession: []}]
       parameters:
         - {name: status, in: query, required: false, schema: {enum: [open, completed], default: open}}
+        - {name: interview_id, in: query, required: false, description: Only this interview's tasks., schema: {type: string, pattern: '^ses_[A-Za-z0-9]{16,}$'}}
         - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
       responses:
         '200':
@@ -390,7 +490,7 @@ paths:
       tags: [review]
       operationId: getReviewTask
       summary: One answer to review — question, rubric, candidate transcript, the AI draft if valid — and nothing about the candidate.
-      security: [{staffBearer: []}]
+      security: [{staffBearer: []}, {staffSession: []}]
       parameters: [{$ref: '#/components/parameters/TaskId'}]
       responses:
         '200':
@@ -408,9 +508,12 @@ paths:
       operationId: submitReviewOutcome
       summary: The reviewer's scores and rationale for one answer; the last outcome of an interview writes its report (T17).
       description: >-
-        Records the reviewer, the prior AI scores, the revised scores, the rationale, the time and the rubric version.
-        409 codes: review_not_open, review_already_completed, no_rubric. Roles reviewer and admin.
-      security: [{staffBearer: []}]
+        Records the reviewer, the prior AI scores, the revised scores, the rationale, the time, the rubric version and
+        whether the reviewer opened the AI draft. 400 invalid_request: scores missing, out of range or not matching the
+        rubric's dimensions, scores on an answer whose question has no rubric, or a rationale outside 10 to 4000
+        characters. 409 codes: review_not_open (the interview is not in HUMAN_REVIEW), review_already_completed,
+        rubric_unavailable (the answer's rubric is not stored). Roles reviewer and admin.
+      security: [{staffBearer: []}, {staffSession: []}]
       parameters: [{$ref: '#/components/parameters/TaskId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
         required: true
@@ -428,6 +531,8 @@ paths:
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
         '409': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
 
   /internal/v1/tier1/claims:
     post:
@@ -720,6 +825,14 @@ components:
       type: apiKey
       in: cookie
       name: ati_cs
+    staffSession:
+      type: apiKey
+      in: cookie
+      name: ati_ss
+      description: >-
+        Review console session (ADR-023): HttpOnly, SameSite=Strict, Path=/api, stored hashed, at most 8 hours by
+        default and never longer than its staff token. Accepted only by the review, report and staff session
+        operations.
     agentService:
       type: http
       scheme: bearer
@@ -1267,6 +1380,7 @@ components:
                   oneOf: [{type: 'null'}, {$ref: '#/components/schemas/DimensionScores'}]
                 weighted_score: {type: [number, 'null']}
                 rationale: {type: string}
+                ai_draft_viewed: {type: boolean, description: Whether the reviewer opened the AI draft before deciding.}
                 decided_at: {type: string, format: date-time}
 
     ReviewDecision:
@@ -1280,6 +1394,12 @@ components:
         scores:
           oneOf: [{type: 'null'}, {$ref: '#/components/schemas/DimensionScores'}]
         rationale: {type: string, minLength: 10, maxLength: 4000}
+        ai_draft_viewed:
+          type: boolean
+          default: false
+          description: >-
+            Whether the reviewer opened the AI draft before deciding, recorded for the study of automation bias.
+            Recorded as false when the answer had no AI draft.
 
     ReviewOutcomeResult:
       type: object
@@ -1327,7 +1447,56 @@ components:
                     oneOf: [{type: 'null'}, {$ref: '#/components/schemas/DimensionScores'}]
                   weighted_score: {type: [number, 'null'], minimum: 0, maximum: 100}
                   rationale: {type: string}
+                  ai_draft_viewed: {type: boolean, description: 'Absent from reports written before ADR-023.'}
                   reviewer_id: {type: string}
                   decided_at: {type: string, format: date-time}
               review_reasons: {type: array, items: {type: string}}
               ai_evaluation: {type: [object, 'null']}
+
+    ReportSummary:
+      type: object
+      additionalProperties: false
+      required: [interview_id, generated_at, plan, language, answer_count]
+      properties:
+        interview_id: {type: string}
+        generated_at: {type: string, format: date-time}
+        plan:
+          type: object
+          additionalProperties: false
+          required: [plan_id, version, synthetic]
+          properties:
+            plan_id: {type: string}
+            version: {type: integer}
+            synthetic: {type: boolean}
+        language: {enum: [en, tr]}
+        answer_count: {type: integer, minimum: 0}
+
+    ReportList:
+      type: object
+      additionalProperties: false
+      required: [reports]
+      properties:
+        reports: {type: array, items: {$ref: '#/components/schemas/ReportSummary'}}
+
+    StaffSignInRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token: {type: string, pattern: '^ati_st_[A-Za-z0-9_-]{20,120}$', description: A staff token from ati-admin; never stored or logged.}
+
+    StaffSessionView:
+      type: object
+      additionalProperties: false
+      required: [role, label, expires_at]
+      properties:
+        role: {enum: [admin, recruiter, reviewer]}
+        label: {type: string}
+        expires_at: {type: string, format: date-time, description: When the credential used stops working.}
+
+    StaffSessionEnded:
+      type: object
+      additionalProperties: false
+      required: [ended]
+      properties:
+        ended: {type: boolean}

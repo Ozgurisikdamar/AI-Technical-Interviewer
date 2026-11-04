@@ -1,12 +1,15 @@
 """Browser E2E: the web UI in Chromium against the real stack (scripted engine, loopback).
 
 Chromium's fake microphone loops a pitch-coded WAV generated here (it is a synthetic test signal,
-never candidate audio, and is deleted afterwards). The flow covers invitation, consent, device
-check, the live room with pause/resume and a page refresh, and completion.
+never candidate audio, and is deleted afterwards). The candidate flows cover invitation, consent,
+device check, the live room with pause/resume and a page refresh, and completion. The review
+console flow covers staff sign-in, independent review of every answer, the report and sign-out.
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -19,7 +22,8 @@ import numpy as np
 import pytest
 
 from candidate import DONE, LONG, PART, POST_INTERVIEW, SR
-from conftest import ROOT, Db, stack_cmd
+from conftest import ROOT, Db, release, stack_cmd
+from review_data import EXPECTED_SCORES, typed_interview, wait_db_state
 
 NODE_PATH = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True).stdout.strip() if shutil.which("npm") else ""
 
@@ -47,7 +51,7 @@ requires_playwright = pytest.mark.skipif(
 BROWSER = ROOT / "tests" / "e2e" / "browser"
 
 
-def run_flow(stack: dict[str, str], staff_token: str, script: str) -> dict[str, Any]:
+def run_flow(stack: dict[str, str], staff_token: str, script: str, extra_env: dict[str, str] | None = None) -> dict[str, Any]:
     stack_cmd("web-up")
     if not (BROWSER / "node_modules" / "axe-core").exists():  # pinned in browser/package-lock.json
         subprocess.run(
@@ -63,6 +67,7 @@ def run_flow(stack: dict[str, str], staff_token: str, script: str) -> dict[str, 
             "ATI_E2E_FAKE_MIC": str(mic),
             "NO_PROXY": "localhost,127.0.0.1",
             "no_proxy": "localhost,127.0.0.1",
+            **(extra_env or {}),
         }
         out = subprocess.run(["node", str(BROWSER / script)], capture_output=True, text=True, env=env, timeout=600)
     finally:
@@ -161,3 +166,71 @@ def test_leaving_the_page_pauses_and_returning_resumes(stack: dict[str, str], st
     ]
     assert closes[0] == "paused" and len(closes) >= 2  # resumed as a new activation of the same question
     assert db.one("SELECT cancel_reason FROM ati.interview_sessions WHERE id = %s", sid) == "withdrawn"
+
+
+@requires_playwright
+async def test_reviewer_decides_every_answer_in_the_browser(stack: dict[str, str], staff_token: str, reviewer_token: str, db: Db) -> None:
+    c = await typed_interview(staff_token, db)
+    sid = c.interview_id
+    await release(c)
+    await wait_db_state(db, sid, "HUMAN_REVIEW")
+    secrets = Path(stack["ATI_E2E_STATE_DIR"]) / "browser_secrets"  # the session cookies, scanned for in the logs
+    secrets.unlink(missing_ok=True)
+    extra = {"ATI_E2E_REVIEWER_TOKEN": reviewer_token, "ATI_E2E_INTERVIEW_ID": sid, "ATI_E2E_SECRETS_FILE": str(secrets)}
+    if os.environ.get("ATI_E2E_SCREENSHOTS"):
+        extra["ATI_E2E_SCREENSHOTS"] = os.environ["ATI_E2E_SCREENSHOTS"]
+    await asyncio.to_thread(run_flow, stack, staff_token, "reviewer_flow.mjs", extra)
+
+    def token_row(token: str) -> str:
+        return str(db.one("SELECT id FROM ati.staff_tokens WHERE token_hash = %s", hashlib.sha256(token.encode()).hexdigest()))
+
+    reviewer, recruiter = token_row(reviewer_token), token_row(staff_token)
+
+    # Every answer was decided in the browser by the reviewer, with the reviewer's own scores; the
+    # AI's scores are kept as the prior, and whether the draft was opened is recorded (the third
+    # answer was decided with the keyboard, without opening it).
+    outcomes = db.rows(
+        """SELECT a.item_id, o.reviewer_id, o.scores, o.weighted_score_centi, o.prior_scores, o.ai_draft_viewed FROM ati.review_outcomes o
+           JOIN ati.candidate_answers a ON a.id = o.answer_id WHERE o.session_id = %s ORDER BY a.finalized_at""",
+        sid,
+    )
+    mine = {"technical_accuracy": 60, "architecture_maturity": 50, "edge_case_awareness": 40, "claim_support": 30}
+    assert [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in outcomes] == [
+        (item, reviewer, mine, 4900, EXPECTED_SCORES[item], item != "q2") for item in EXPECTED_SCORES
+    ]
+    assert db.one("SELECT state FROM ati.interview_sessions WHERE id = %s", sid) == "REPORT_READY"
+    last = db.one("SELECT transition_id FROM ati.session_events WHERE session_id = %s ORDER BY state_version DESC LIMIT 1", sid)
+    assert last == "T17"
+    assert db.one("SELECT count(*) FROM ati.reports WHERE session_id = %s", sid) == 1
+
+    # One browser session each, never longer than 8 hours, stored as the hash of the cookie; the
+    # reviewer's ended at sign-out, the recruiter's is still open. Each start and end is audited.
+    cookies = [line for line in secrets.read_text().splitlines() if line]
+    assert len(cookies) == 2
+    hashes = [hashlib.sha256(v.encode()).hexdigest() for v in cookies]
+    sessions = {
+        r[0]: r[1:]
+        for r in db.rows(
+            """SELECT token_hash, id, staff_token_id, expires_at - created_at <= interval '8 hours', revoked_at IS NOT NULL
+               FROM ati.staff_sessions WHERE token_hash = ANY(%s)""",
+            hashes,
+        )
+    }
+    for cookie_hash, token_id, ended in [(hashes[0], reviewer, True), (hashes[1], recruiter, False)]:
+        session_id, owner, bounded, revoked = sessions[cookie_hash]
+        assert (owner, bounded, revoked) == (token_id, True, ended)
+        actions = sorted(
+            r[0]
+            for r in db.rows(
+                "SELECT action FROM ati.audit_logs WHERE subject_type = 'staff_session' AND subject_id = %s AND actor_id = %s",
+                session_id,
+                token_id,
+            )
+        )
+        assert actions == (["staff.session.end", "staff.session.start"] if ended else ["staff.session.start"]), actions
+
+    # No credential was written anywhere: not in the audit log, not in stored replays.
+    for value in [reviewer_token, staff_token, *cookies]:
+        assert db.one("SELECT count(*) FROM ati.audit_logs WHERE details::text LIKE %s", f"%{value}%") == 0
+        assert db.one("SELECT count(*) FROM ati.idempotency_records WHERE response::text LIKE %s", f"%{value}%") == 0
+    assert db.one("SELECT count(*) FROM ati.audit_logs WHERE details::text LIKE %s", "%ati_st_%") == 0

@@ -85,7 +85,10 @@ type Config struct {
 	RoomDepartureTimeout         time.Duration
 	AgentDispatchTimeout         time.Duration
 	InvitationExchangesPerMinute int
-	TrustedProxies               []netip.Prefix
+	// Staff browser sessions (ADR-023): their lifetime and the per-client sign-in rate.
+	StaffSessionTTL       time.Duration
+	StaffSignInsPerMinute int
+	TrustedProxies        []netip.Prefix
 
 	NoticeID            string
 	NoticeVersion       string
@@ -210,6 +213,7 @@ func Load(get Getenv) (*Config, error) {
 		CandidateTokenTTL:    dur("ATI_CANDIDATE_TOKEN_TTL", "10m"),
 		InvitationTTL:        dur("ATI_INVITATION_TTL", "72h"),
 		CandidateSessionTTL:  dur("ATI_CANDIDATE_SESSION_TTL", "4h"),
+		StaffSessionTTL:      dur("ATI_STAFF_SESSION_TTL", "8h"),
 		RoomDepartureTimeout: dur("ATI_ROOM_DEPARTURE_TIMEOUT", "20s"),
 		AgentDispatchTimeout: dur("ATI_AGENT_DISPATCH_TIMEOUT", "30s"),
 		NoticeID:             opt("ATI_NOTICE_ID", "notice_default"),
@@ -265,6 +269,14 @@ func Load(get Getenv) (*Config, error) {
 		errs = append(errs, errors.New("ATI_INVITATION_EXCHANGES_PER_MINUTE must be between 1 and 1000"))
 	}
 	c.InvitationExchangesPerMinute = rate
+	if c.StaffSessionTTL > 0 && (c.StaffSessionTTL < 15*time.Minute || c.StaffSessionTTL > 24*time.Hour) {
+		errs = append(errs, errors.New("ATI_STAFF_SESSION_TTL must be between 15m and 24h"))
+	}
+	signIns, err := strconv.Atoi(opt("ATI_STAFF_SIGNINS_PER_MINUTE", "10"))
+	if err != nil || signIns < 1 || signIns > 1000 {
+		errs = append(errs, errors.New("ATI_STAFF_SIGNINS_PER_MINUTE must be between 1 and 1000"))
+	}
+	c.StaffSignInsPerMinute = signIns
 	defProxies := ""
 	if c.IsDevLike() {
 		defProxies = "127.0.0.1/32,::1/128"

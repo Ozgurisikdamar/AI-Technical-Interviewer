@@ -1,6 +1,6 @@
 # Implementation status and repository audit
 
-**Last updated:** 2026-11-04 (Milestone C: data and ML lifecycle, offline benchmark harness; Milestone B: Tier-2 evaluation MVP, ADR-022; earlier the same day, Milestone A: Phase 1 audit closure, see [PHASE1_AUDIT.md](../qa/PHASE1_AUDIT.md); 2026-11-03: Phase 0 and Phase 1 milestones M1–M9 and a completion pass)
+**Last updated:** 2026-11-04 (Milestone D: reviewer web UI, ADR-023; Milestone C: data and ML lifecycle, offline benchmark harness; Milestone B: Tier-2 evaluation MVP, ADR-022; earlier the same day, Milestone A: Phase 1 audit closure, see [PHASE1_AUDIT.md](../qa/PHASE1_AUDIT.md); 2026-11-03: Phase 0 and Phase 1 milestones M1–M9 and a completion pass)
 **Rule:** a capability counts as implemented only when its code, tests and integration are verified. Status labels:
 
 | Label | Meaning |
@@ -10,7 +10,7 @@
 | **Implemented — unverified** | Code exists, but the integration cannot be verified in the current environment (blocker given) |
 | **Not started** | No implementation yet (target phase given) |
 
-All contracts and ADR-011 to ADR-022 are **Proposed**. The Phase 0 exit gate ("contracts reviewed") requires human architecture review, which automation cannot provide. Phase 1 work builds on Proposed contracts.
+All contracts and ADR-011 to ADR-023 are **Proposed**. The Phase 0 exit gate ("contracts reviewed") requires human architecture review, which automation cannot provide. Phase 1 work builds on Proposed contracts.
 
 **Summary.** The Phase 1 voice MVP runs end to end in this repository with the deterministic scripted voice engine: a candidate opens an invitation in Chromium, consents per purpose, checks the microphone, and completes a voice or text interview against the real control plane, PostgreSQL, LiveKit OSS and the Tier-1 agent, with pause, refresh, disconnect, agent crash, provider failures (recognition, synthesis, model timeout, dropped stream), barge-in, staff revocation and withdrawal handled by the backend-enforced state machine. The completion pass applied per-question turn profiles, measured `low_energy`, aligned the latency metrics with BLUEPRINT §5, and fixed four defects found by new tests: credentials stored at rest for idempotent replays, a recording start that hung without an egress service, extra agent participants that were not removed, and a refused microphone explained as a generic failure. What is **not** verified: the OpenAI Realtime engine against the live provider (no credentials), real recording egress (no egress service), real networks (no TURN, loss or jitter emulation), container images (no Docker daemon), and every human gate (architecture, legal, benchmarks, production gates). Nothing here is cleared for real candidates (ADR-020).
 
@@ -72,6 +72,32 @@ The offline harness (`make tier2-bench`) runs in three steps:
 The only dataset, `synthetic-v1`, has synthetic labels, so the run proves the mechanics and that the validator
 accepts every reference attempt. It measures no model quality. No human labels exist.
 
+**Milestone D (2026-11-04).** Reviewers now work in a browser: `apps/web` has a review console at `/staff` (ADR-023).
+- **Sign-in.** A staff token, pasted once, is exchanged by the control plane for a session:
+  - an HttpOnly, SameSite=Strict cookie, scoped to `/api` and stored only as a hash;
+  - 8 hours at most, never longer than its token, and ended at once by revoking the token;
+  - rate-limited, and protected against login CSRF by the same-origin guard.
+
+  The cookie is accepted only by the review, report and session operations. Interview management still needs the
+  bearer token.
+- **Independent first** (the owner's choice):
+  - the task page shows the question, the rubric and the transcript;
+  - the passages the AI draft cites are highlighted neutrally, by the validator's own quote rule, with shared test
+    cases;
+  - the draft itself (scores, evidence, AI-derived reasons) is not rendered until the reviewer opens it, and never
+    prefills the form;
+  - each decision records whether the draft was opened (`ai_draft_viewed`).
+- **Screens:** the queue grouped by interview, the decision form with an error summary and a weighted-score preview,
+  the report list (no scores, no candidate identity) and the report, with the AI parts folded.
+- **Gaps fixed on the way:**
+  - reviewers could read the staff view of an interview, which names the candidate;
+  - the OpenAPI document gave the wrong error codes for review decisions;
+  - staff authentication had no rate limit;
+  - a staff token could be revoked only with SQL; `ati-admin revoke-staff-token` and `list-staff-tokens` now exist.
+- **End to end:** a browser flow signs a reviewer in, decides every answer of a typed interview (one by keyboard
+  only), reads the report and signs out. A recruiter then reads the report but cannot review. Every screen is
+  audited with axe-core, and the database is checked afterwards: outcomes, sessions, audits, and no credential stored.
+
 ## 1. Baseline audit (repository state before implementation)
 
 The repository contained architecture documents only: `README.md`, `LICENSE` (Apache-2.0) and six files in `docs/architecture/` (about 1,500 lines). There were no source files, build files, tests, CI or infrastructure definitions.
@@ -93,6 +119,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | A — Phase 1 audit closure (2026-11-04) | Webhook body bound and processing-aware dedupe; dispatch without a second pool connection; bounded media calls and idle-transaction limit; drained shutdown and recording reconciliation; sweepers that continue past a failing session; bounded metric labels; indexes (migration 00006); audited purge of operational records; session-first lock order; idempotency takeover of stale claims; IPv6 /64 rate limiting with a bounded table; loopback listeners by default; model registry, required model IDs and pinned endpoint (ADR-021); no chained tool calls; provider smoke harness; dependency scans; data inventory | **Verified (local)**: the regression test of each finding ([TEST_PLAN.md](../qa/TEST_PLAN.md#phase-1-audit-regressions-phase1_auditmd)), `make test`, `make e2e` and `make audit` (section 9). The live provider run is **Blocked** (no credentials) |
 | B — Tier-2 evaluation MVP (2026-11-04) | ADR-022; state machine v1.2 (T17 in Phase 2); rubric contract and synthetic demo rubrics; migration 00007 (rubrics, raw attempts, canonical evaluations, review tasks and outcomes, reports; evaluator LOGIN with narrow views; `reviewer` role); outbox relay to Redis Streams; deterministic validator; internal Tier-2 API; reviewer queue, task, outcome and report endpoints; `services/tier2-evaluator` (consumer, evidence loader, reference/OpenAI/Anthropic adapters, configuration refusals); stack integration | **Verified (local)**: G (validator, relay with a real redis-server, service, API, store grants, architecture), T2 (`make tier2-test`: config, prompt pin and drift, reference evaluator, adapters against recorded shapes, consumer against a real redis-server, worker flow, redaction), E (`test_tier2.py`; synthetic voice answers abstained in `test_voice_interview.py`). Model evaluators **Implemented — unverified** (no credentials) |
 | C — Data and ML foundations (2026-11-04) | Data and ML lifecycle document; offline benchmark harness (`tier2_evaluator.bench`: dataset manifest and leakage checks, quadratic-weighted kappa, Krippendorff's alpha, MAE, within-10, percentiles); `ati-admin validate-evaluations` (the Go validator offline); synthetic TR/EN dataset `synthetic-v1` | **Verified (local)**: metrics against hand-computed values and Krippendorff's published example, dataset integrity and leakage refusal (T2), the offline validator (G), `make tier2-bench` (every reference attempt accepted). **No benchmark of evaluator quality**: the labels are synthetic |
+| D — Reviewer web UI (2026-11-04) | ADR-023; staff browser sessions (migration 00008: `staff_sessions`, `review_outcomes.ai_draft_viewed`; `ATI_STAFF_SESSION_TTL`, `ATI_STAFF_SIGNINS_PER_MINUTE`); `/api/v1/staff/session` sign-in, who-am-I and sign-out; report list; queue filter by interview, in answer order; reviewers refused the staff interview view; `ati-admin revoke-staff-token`, `list-staff-tokens`, session purge; web route groups `(candidate)` and `staff`; console screens (sign-in, queue, task with the AI draft closed until opened, report list, report); quote highlighter tested with the validator's cases | **Verified (local)**: G (sessions, refusals, rate limit, CSRF, cookie scope, revocation, reviewer 403, queue filter, report list, grants, admin commands, shared quote cases), contracts (security schemes per operation), W (highlighter, weighted score, decision checks, parsers, query allow-list). **Verified (scripted, loopback)** in Chromium: `reviewer_flow.mjs` with the database checks of `test_reviewer_decides_every_answer_in_the_browser` |
 | M9 — Text mode | `POST /text-responses` (text mode only, activation-bound, refused during a pending completion; control-plane-written `candidate_text` segments; audit without text); Tier-1 view of the open question's text answers; agent passes each once as user input; text-mode greeting; UI offers text mode without a microphone | **Verified (local)**: G API tests (binding, mode, length, ordering, contract-valid context, manifest-free confirmation, no text in logs), A tests (user input only, once, other activations ignored). **Verified (scripted, loopback)** in Chromium with the microphone refused (`text_flow.mjs`): captions, no published track, completion |
 
 ## 3. Gap analysis (requirement → status)
@@ -106,7 +133,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | G5 | PostgreSQL canonical; Qdrant projection (ADR-005) | PostgreSQL **Verified (local)** | Qdrant deliberately not introduced (ADR-022): it waits for a benchmark showing retrieval helps |
 | G6 | Durable jobs, DLQ (ADR-006) | **Verified (local)**: transactional outbox; relay in `seq` order with T14 before publishing; Redis Streams consumer group with acknowledgement, reclaim, heartbeat, max deliveries and DLQ (real redis-server); dead-letter fallback to human review (E) | Redis restart and long outages: Phase 6 chaos |
 | G7 | Evidence before score (ADR-007) | **Verified (local)**: the control plane validates every attempt against the stored transcript (identity, arithmetic, verbatim quotes, spans, references, support) and stores invalid output raw only | Validator rules uncalibrated against a model's real failure modes (no live model) |
-| G8 | Human accountability (ADR-008) | **Verified (local)**: every answer is reviewed (T15, `policy_all_reviewed`); only a reviewer's decision (T17) produces a report; T16 is unwired; no decision fields | Candidate report and appeal: Phase 5 |
+| G8 | Human accountability (ADR-008) | **Verified (local)**: every answer is reviewed (T15, `policy_all_reviewed`); only a reviewer's decision (T17) produces a report; T16 is unwired; no decision fields. Reviewers decide in the review console with the AI draft closed until they open it (ADR-023; browser E2E) | Candidate report and appeal: Phase 5 |
 | G9 | Privacy by design (ADR-009) | **Verified (local)**: purpose-level DRAFT notices; recording optional, fail-closed, retention-bound with audited purge; audited purge of operational records; PII-minimal schema; redacted logs; E2E log and audio-file scans. Data inventory and flow map written ([DATA_INVENTORY_AND_FLOWS.md](../architecture/DATA_INVENTORY_AND_FLOWS.md)) | Gaps G1–G7 there: no transcript, timeline or evaluation-record purge, no deletion or export workflow, control-plane database TLS not enforced, provider terms unverified, streams trimmed by length only; legal review open; real egress unverified |
 | G10 | No cheating inference (ADR-010) | Contract **Verified (local)** (no timing in handoff events) | — |
 | G11 | State machine + invariants (BP §4) | **Verified (local)**: contract, pure engine (model-based walk, fuzzing), persisted transitions with per-step events and audit, database-enforced invariants | — |
@@ -117,9 +144,9 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | G16 | Tier-2 prompt (P&E §2) | **Verified (local)**: the worker checks the sha256 pin at startup, appends versioned output rules, and sends the answer as one delimited data block (no synthetic indicators) | Live model behaviour unverified |
 | G17 | Adversarial controls (BP §9) | Backend **Verified (local)**; scripted injection and forbidden tool call over real media change nothing; server-enforced media grants, intruder removal, forged webhooks and deleted rooms over real LiveKit (**Verified (scripted, loopback)**) | Live-model injection suite blocked (no credentials) |
 | G18 | Coding sandbox, whiteboard (BP §10) | Not started | Phase 4 |
-| G19 | HITL routing, override audit (BP §11) | **Verified (local)**: review reasons per answer (low confidence, transcript quality, missing segments, integrity flags, evaluator request, follow-up suggested, output risk, unsupported claims, contradictions, disagreement, invalid or abstained or failed or missing evaluation, pipeline failure, no rubric, synthetic source); override audit (reviewer, prior and revised scores, rationale, rubric version) | Thresholds (0.85, 0.6, 20 points) uncalibrated; reviewer UI not built (API only) |
+| G19 | HITL routing, override audit (BP §11) | **Verified (local)**: review reasons per answer (low confidence, transcript quality, missing segments, integrity flags, evaluator request, follow-up suggested, output risk, unsupported claims, contradictions, disagreement, invalid or abstained or failed or missing evaluation, pipeline failure, no rubric, synthetic source); override audit (reviewer, prior and revised scores, rationale, rubric version) | Thresholds (0.85, 0.6, 20 points) uncalibrated. Reviewer console built (Milestone D); whether the draft was opened is recorded for the study of automation bias |
 | G20 | Data entities, transcript immutability (BP §13) | **Verified (local)** | Append-only grants + triggers tested even for the owner; answers bind exact segment IDs |
-| G21 | API surface (BP §17) | **Verified (local)** for every Phase-1 endpoint, including text responses, and the Phase-2 internal Tier-2 operations, review queue, task, outcome and report | Appeals: Phase 5 |
+| G21 | API surface (BP §17) | **Verified (local)** for every Phase-1 endpoint, including text responses, and the Phase-2 internal Tier-2 operations, review queue (with an interview filter), task, outcome, report, report list and the staff session operations | Appeals: Phase 5 |
 | G22 | Observability (BP §16) | Prometheus metrics (HTTP with bounded method labels, transitions, voice latency, webhooks including `too_large` and `in_flight`, sweepers including recording reconciliation, policy flags); correlation IDs; redacted JSON logs in every process, checked by the E2E log scan | Dashboards and OTel export Phase 6 |
 | G23 | QA/chaos matrix (BP §18) | Plan **Verified (local)** ([TEST_PLAN.md](../qa/TEST_PLAN.md)) | Per test plan |
 | G24 | Text/non-audio fallback (TM §4–5) | **Verified (local; browser: scripted, loopback)**: text response mode end to end | A fully text interviewer (no audio output) and a broader accommodations process are Phase 5–6 |
@@ -174,7 +201,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | 2 Evaluation | Outbox relay to Redis Streams (ack/retry/DLQ/reclaim); evaluator deployable with its own DB role and provider key; deterministic validator covering every P&E §8 test; transcript-version binding; review routing; Qdrant with canonical fallback; human-labelled benchmark; resolve C3/C4. **Status (Milestone B):** everything but the benchmark, a live evaluator run and Qdrant is verified locally; Qdrant is deferred by ADR-022; C3/C4 have proposed resolutions |
 | 3 Interview intelligence | Isolated CV/JD parsing; versioned role/seniority plans; follow-up policy decided (C5) |
 | 4 Coding and design | Sandbox passes the TM §5 sandbox matrix; Monaco; collaborative canvas |
-| 5 Reports and review | Reviewer RBAC, override audit, candidate report and appeal, recording access with audit, access/export/deletion |
+| 5 Reports and review | Reviewer RBAC, override audit, candidate report and appeal, recording access with audit, access/export/deletion. **Status (Milestone D):** reviewer RBAC, override audit and the staff-only report with a review console are verified locally; the candidate report, appeals, recording access and access/export/deletion are not started |
 | 6 Hardening | All five production gates and the go-live checklist; latency by region, device and network; chaos; cost model |
 
 ## 7. Risks and unresolved conflicts
@@ -212,22 +239,33 @@ The repository does not use GitHub Actions (repository convention, enforced by `
 | Command | What it runs | Result at this revision |
 |---|---|---|
 | `make checks` | repository hygiene (secrets, media files, PII patterns), Python import boundaries, generated state diagram | pass |
-| `make contracts-test` | schema meta-validation and fixtures, state-machine structure, doc drift, isolation, OpenAPI, model registry, rubrics | 144 passed |
-| `make go-lint` / `make go-test` | gofmt, vet, staticcheck; Go tests with the race detector against PostgreSQL 16 | pass (17 packages with tests, 0 skipped, including the Phase 1 audit regressions and the Tier-2 validator, relay, service, API and grant tests) |
-| `make agent-test` | ruff, mypy (strict), pytest for the Tier-1 agent | 197 passed |
+| `make contracts-test` | schema meta-validation and fixtures, state-machine structure, doc drift, isolation, OpenAPI (including the security scheme of every operation), model registry, rubrics | 145 passed |
+| `make go-lint` / `make go-test` | gofmt, vet, staticcheck; Go tests with the race detector against PostgreSQL 16 | pass (17 packages with tests, 0 skipped, including the Phase 1 audit regressions, the Tier-2 validator, relay, service, API and grant tests, and the staff session, review console API, admin and shared quote-rule tests) |
+| `make agent-test` | ruff, mypy (strict), pytest for the Tier-1 agent | 198 passed |
 | `make tier2-test` | ruff, mypy (strict), pytest for the Tier-2 worker (consumer tests against a throwaway redis-server) and the benchmark harness | 114 passed |
-| `make web-test` | eslint, tsc, vitest, production build, bundle secret scan | 229 passed; build and scan pass |
-| `make e2e` | local stack (with Redis and the Tier-2 worker); synthetic WebRTC candidate (voice interview, failure injection and signals, recording, media security) and typed interviews through Tier-2; Chromium flows (each screen audited with axe-core); log and audio-file scans | 30 passed from a fresh stack in 13 min 44 s (scripted engine, reference evaluator, loopback), 2026-11-04 |
-| `make audit` | govulncheck v1.9.0 (control plane), pip-audit 2.9.0 (every uv lockfile, including the Tier-2 worker's), pnpm audit (web, production) | ok: no vulnerable symbol reached (one advisory in a required module is not called by the code); no known vulnerabilities in the Python or web lockfiles |
+| `make web-test` | eslint, tsc, vitest, production build, bundle secret scan (including staff tokens) | 289 passed; build and scan pass (10 rules) |
+| `make e2e` | local stack (with Redis and the Tier-2 worker); synthetic WebRTC candidate (voice interview, failure injection and signals, recording, media security) and typed interviews through Tier-2; Chromium flows, including the review console (each screen audited with axe-core); log scans for credentials (including session cookies), JWTs and transcript text; audio-file scan | 31 passed from a fresh stack in 13 min 53 s (scripted engine, reference evaluator, loopback), 2026-11-04, including the review console flow |
+| `make audit` | govulncheck v1.9.0 (control plane), pip-audit 2.9.0 (every uv lockfile, including the Tier-2 worker's), pnpm audit (web, production) | ok in 14 s: no vulnerable symbol reached in the control plane (one advisory in a required module is not called by the code); no known vulnerabilities in any Python lockfile or in the web production dependencies |
 | `make provider-smoke` | opt-in live OpenAI check (ADR-021) | BLOCKED: no `OPENAI_API_KEY` in this environment |
 | `make tier2-bench` | offline benchmark on `synthetic-v1` with the reference evaluator and the Go validator (DATA_AND_ML_LIFECYCLE.md) | pass: 14/14 reference attempts accepted by the Go validator, 1 abstention (no candidate speech); agreement figures are on synthetic labels and say nothing about quality |
 
 ## 10. Known gaps and follow-ups
 
+Milestone D (review console):
+- Staff sign in by pasting a token. Single sign-on is not built; a production deployment needs it. Browsers may offer to
+  save the pasted token, so tokens for the console should be short-lived (`create-staff-token --ttl`).
+- The console has no screens for creating interviews or invitations, administering rubrics and plans, or appeals.
+  Those remain API or command-line tasks, and appeals belong to Phase 5.
+- The sign-in rate limit is per client address: behind a reverse proxy it needs `ATI_TRUSTED_PROXY_CIDRS` (ADR-023).
+- Cookie-authenticated changes rely on SameSite=Strict and the `Origin`/`Sec-Fetch-Site` check; there is no separate
+  CSRF token.
+- Lists load at most 200 entries (no paging yet).
+- No screen-reader run of the console; keyboard use, focus management and automated WCAG 2.1 A/AA checks are
+  browser-tested.
+
 Phase 2 (Milestone B):
 - The OpenAI and Anthropic evaluators are verified only against recorded-shape responses. Model behaviour, structured-output compatibility of the full provider schema, latency and cost are unknown until a live run with credentials. Both registry entries are `candidate`.
 - No benchmark: agreement with human labels, confidence calibration and the routing thresholds (0.85 confidence, 0.6 transcript quality, 20-point disagreement) are uncalibrated policy values. Every answer is reviewed for this reason.
-- No reviewer web UI: review and reports are API-only.
 - The reference evaluator matches indicator phrases; it says nothing about correctness and exists only to exercise the pipeline.
 - Raw attempts, evaluations, review outcomes and reports have no purge job yet (data inventory gap G1). The Redis streams are trimmed by length only (G7).
 - One worker handles one entry at a time; there is no metrics exporter or health endpoint for the worker.

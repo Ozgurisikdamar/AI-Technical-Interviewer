@@ -18,6 +18,7 @@ The gaps it identifies are listed at the end and tracked in the
 
 ```text
  staff (staff token) ──HTTPS──► control plane (public API) ──► PostgreSQL
+ staff browser (session cookie, ADR-023) ──HTTPS──┤
                                      ▲    │
  candidate browser ──HTTPS (cookie)──┘    │ room, tokens, dispatch (server API)
         │                                 ▼
@@ -44,13 +45,15 @@ The gaps it identifies are listed at the end and tracked in the
 | F7 | Recording (opt-in, ADR-017) | Candidate microphone audio, written as a file | Tenant opt-in, candidate consent, attested storage encryption, explicit retention and voice mode are all required; only the candidate's microphone is recorded, and only while a question is open |
 | F8 | Logs and metrics | None by design | Redacting log filter (tokens, keys, transcripts, extras); metric labels are routes, bounded methods and event names |
 | F9 | Tier-2 evaluation (ADR-022) | Answer transcripts, questions and rubrics (text) to the evaluator, and with a model evaluator to an LLM provider; evaluator output (quotes of candidate speech) back to the control plane | Queue entries carry identifiers only; the evaluator role reads evidence and two narrow views, sees no candidate identity and writes nothing; attempts go through the internal API with a service token; synthetic test speech is never sent; every answer is reviewed by a person. Only the deterministic reference evaluator runs in this build: no provider is called. Model evaluators send `store: false` (OpenAI) and use pinned endpoints; provider terms are unverified (G4) |
-| F10 | Review and report (ADR-022) | Reviewer scores and rationale; the report snapshot (scores, rationales, AI evidence quotes) | Staff-only, tenant-scoped, roles `reviewer`/`admin` decide and `admin`/`recruiter`/`reviewer` read reports; audit entries carry no rationale; candidates see no score |
+| F10 | Review and report (ADR-022) | Reviewer scores and rationale, and whether the reviewer opened the AI draft; the report snapshot (scores, rationales, AI evidence quotes) | Staff-only, tenant-scoped, roles `reviewer`/`admin` decide and `admin`/`recruiter`/`reviewer` read reports; reviewers never see candidate identity, including the staff view of an interview (ADR-023); the report list holds no scores; audit entries carry no rationale; candidates see no score |
+| F11 | Staff sign-in to the review console (ADR-023) | The staff token, sent once to the control plane; the session cookie afterwards | The token goes only in a same-origin POST body: never in an address, storage or a log, and it is cleared from the page. The session is an opaque cookie (HttpOnly, SameSite=Strict, `Path=/api`, Secure outside dev), stored as a hash, at most 8 hours and never longer than its token; it is accepted only by review, report and session operations. Sign-ins are rate-limited; audits hold the token id, never the token, its hash or its label |
 
 ## Inventory (PostgreSQL schema `ati`)
 
 | Table | Content | Personal data | Written by | Read by | Retention | Deletion |
 |---|---|---|---|---|---|---|
-| `tenants`, `staff_tokens` | Tenant settings; staff token hashes, roles, labels | Staff token label (free text) | `ati-admin` | Control plane | Until revoked or expired | `ati-admin` (manual) |
+| `tenants`, `staff_tokens` | Tenant settings; staff token hashes, roles, labels | Staff token label (free text, shown to its holder in the console) | `ati-admin` | Control plane | Until revoked or expired | `ati-admin revoke-staff-token` (audited; rows are kept, because outcomes reference them) |
+| `staff_sessions` | Review console sessions: the token they came from, the session hash, creation, expiry, revocation | None (hashes only) | Control plane | Control plane | Until expiry or revocation (8 hours at most by default) | `ati-admin purge-operational` deletes ended sessions (audited) |
 | `candidates` | `external_ref` per tenant | Pseudonymous reference | Control plane | Control plane | Not defined | **None (G1)** |
 | `interview_sessions` | State, plan, language, retention and recording policy snapshots | Linked to the candidate | Control plane | Control plane, Tier-1 views (limited columns) | Not defined | **None (G1)** |
 | `invitations`, `candidate_sessions` | Token hashes, expiry, revocation | None (hashes only) | Control plane | Control plane | Until expiry | **None (G1)** |
@@ -63,7 +66,7 @@ The gaps it identifies are listed at the end and tracked in the
 | `rubrics` | Versioned rubrics: criteria, references, weights; synthetic demo rubrics carry indicator phrases | None | `ati-admin seed-plans` | Control plane, Tier-2 role | Immutable versions | None (immutable) |
 | `evaluation_attempts` | Every evaluator response as received, its outcome and problems, provider, model, request id, tokens | **Quotes of candidate speech** in `raw_output` | Control plane (from the Tier-2 API) | Control plane | `retention_until` from the session's `assessment_output_days` | Append-only, **no purge job (G1)** |
 | `evaluations` | Validated evaluations: scores, recomputed weighted score, cited evidence, routing reasons | **Quotes of candidate speech** in `evidence` | Control plane | Control plane, reviewers through the API | `retention_until` as above | Append-only, **no purge job (G1)** |
-| `review_tasks`, `review_outcomes` | One task per answer; the reviewer's scores, rationale and the prior AI scores | Reviewer judgements about the answer; reviewer token id | Control plane | Reviewers and admins through the API | Not defined | Outcomes append-only, **none (G1)** |
+| `review_tasks`, `review_outcomes` | One task per answer; the reviewer's scores, rationale, the prior AI scores and whether the reviewer opened the AI draft | Reviewer judgements about the answer; reviewer token id | Control plane | Reviewers and admins through the API and the review console | Not defined | Outcomes append-only, **none (G1)** |
 | `reports` | The report snapshot written when the last review completes | Scores, rationales and AI evidence quotes | Control plane | Admins, recruiters and reviewers through the API | Not defined | Append-only, **none (G1)** |
 | Redis `ati:tier2:events`, `ati:tier2:dlq` | Stream entries: event and session identifiers, the identifier-only payload | None (identifiers) | Outbox relay; Tier-2 worker (DLQ) | Tier-2 worker | Trimmed to about 100,000 (stream) and 10,000 (DLQ) entries | Trimming only (G7) |
 | `idempotency_records` | Request hashes and stored responses for replays (credentials are never stored) | Response bodies (e.g. interview ids, `candidate_ref`) | Control plane | Control plane | 24 h by default | `ati-admin purge-operational` (audited) |
@@ -91,6 +94,7 @@ Roles (least privilege; ADR-016, ADR-020):
 ## Verification
 
 - Recording, purge and redaction behaviour: control-plane and agent tests (`internal/recording`, `cmd/ati-admin`, `tests/test_monitor_worker_logging.py`).
-- Least-privilege grants: `internal/store` tests (including `TestTier2EvaluatorRoleReadsOnlyEvidenceAndNarrowViews`).
+- Least-privilege grants: `internal/store` tests (including `TestTier2EvaluatorRoleReadsOnlyEvidenceAndNarrowViews` and `TestControlPlaneOnlyCreatesAndRevokesStaffSessions`).
+- Staff sessions: `internal/api` tests (`TestStaffSign…`, `TestStaffSession…`) and `tests/e2e/test_browser.py` (`test_reviewer_decides_every_answer_in_the_browser`: no credential in the page, the database or the logs).
 - Tier-2 flows: `internal/interview` and `internal/api` tests, the worker's tests, and `tests/e2e/test_tier2.py` (the log scan includes the worker).
 - The gaps above are open: nothing in this repository closes them yet.

@@ -34,6 +34,8 @@ const (
 	ReviewTask        = "rvt"
 	ReviewOutcome     = "rvo"
 	Report            = "rep"
+	// Staff browser sessions (ADR-023).
+	StaffSession = "sss"
 )
 
 // New returns prefix_<22 base62 characters> (about 131 bits of randomness).

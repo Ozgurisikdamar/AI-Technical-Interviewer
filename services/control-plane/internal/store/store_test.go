@@ -172,6 +172,7 @@ func TestTier2EvaluatorRoleReadsOnlyEvidenceAndNarrowViews(t *testing.T) {
 		`SELECT * FROM ati.review_tasks`,
 		`SELECT * FROM ati.review_outcomes`,
 		`SELECT * FROM ati.reports`,
+		`SELECT * FROM ati.staff_sessions`,
 		`SELECT * FROM ati.consent_records`,
 		`SELECT * FROM ati.audio_recordings`,
 		`INSERT INTO ati.evaluations (id) VALUES ('evl_x')`,
@@ -211,6 +212,34 @@ func TestControlPlaneWritesEvaluationRecordsOnce(t *testing.T) {
 	}
 	mustExec(t, db.CP, `UPDATE ati.review_tasks SET status = 'open' WHERE false`)
 	mustExec(t, db.CP, `UPDATE ati.outbox_events SET published_at = now() WHERE false`)
+}
+
+// The control plane creates staff browser sessions and marks them revoked (ADR-023). It cannot
+// extend, rebind or delete one, and it cannot change the staff tokens they come from.
+func TestControlPlaneOnlyCreatesAndRevokesStaffSessions(t *testing.T) {
+	db := testdb.New(t)
+	f := seed(t, db.Owner)
+	staff, session := ids.New(ids.Staff), ids.New(ids.StaffSession)
+	mustExec(t, db.Owner, `INSERT INTO ati.staff_tokens (id, tenant_id, token_hash, role, label, expires_at) VALUES ($1,$2,$3,'reviewer','r',now() + interval '1 day')`,
+		staff, f.tenant, ids.Hash(ids.Token()))
+	mustExec(t, db.CP, `INSERT INTO ati.staff_sessions (id, staff_token_id, token_hash, expires_at) VALUES ($1,$2,$3,now() + interval '1 hour')`,
+		session, staff, ids.Hash(ids.Token()))
+	mustExec(t, db.CP, `UPDATE ati.staff_sessions SET revoked_at = now() WHERE id = $1`, session)
+	for _, c := range []struct{ label, sql string }{
+		{"extend a session", `UPDATE ati.staff_sessions SET expires_at = now() + interval '1 year'`},
+		{"rebind a session", `UPDATE ati.staff_sessions SET staff_token_id = staff_token_id`},
+		{"replace a session hash", `UPDATE ati.staff_sessions SET token_hash = token_hash`},
+		{"delete a session", `DELETE FROM ati.staff_sessions`},
+		{"revoke a staff token", `UPDATE ati.staff_tokens SET revoked_at = now()`},
+		{"extend a staff token", `UPDATE ati.staff_tokens SET expires_at = now() + interval '1 year'`},
+		{"create a staff token", `INSERT INTO ati.staff_tokens (id, tenant_id, token_hash, role, label, expires_at) VALUES ('stf_evil000000000000000', '` + f.tenant + `', '` + strings.Repeat("a", 64) + `', 'admin', 'e', now() + interval '1 day')`},
+	} {
+		expectDenied(t, db.CP, c.label, c.sql)
+	}
+	if _, err := db.Owner.Exec(context.Background(), `INSERT INTO ati.staff_sessions (id, staff_token_id, token_hash, created_at, expires_at) VALUES ($1,$2,$3,now(),now() - interval '1 second')`,
+		ids.New(ids.StaffSession), staff, ids.Hash(ids.Token())); err == nil {
+		t.Fatal("a session must expire after it was created")
+	}
 }
 
 func TestTier1ContextRoleHasNoTableAccess(t *testing.T) {

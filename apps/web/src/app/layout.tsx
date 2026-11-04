@@ -1,10 +1,8 @@
 import type { Metadata, Viewport } from 'next';
 import { connection } from 'next/server';
 import type { ReactNode } from 'react';
-import { PreProductionBanner } from '@/components/PreProductionBanner';
 import { DEFAULT_LOCALE, getMessages } from '@/i18n';
 import { MessagesProvider } from '@/i18n/client';
-import styles from './layout.module.css';
 import './globals.css';
 
 const t = getMessages();
@@ -23,12 +21,13 @@ export const viewport: Viewport = {
   colorScheme: 'light',
 };
 
+/**
+ * The document shell shared by the candidate pages and the review console. Each route group adds
+ * its own header, main landmark and footer: `(candidate)/layout.tsx` and `staff/layout.tsx`.
+ */
 export default async function RootLayout({ children }: { children: ReactNode }) {
   // Every page is rendered per request so it can carry this request's CSP nonce (src/proxy.ts).
   await connection();
-  // Server-side only; the value (not the variable) reaches the page to pick the banner state.
-  const webEnvironment = process.env.APP_ENV;
-
   return (
     <html lang={DEFAULT_LOCALE}>
       <body>
@@ -36,21 +35,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
           <a className="skip-link" href="#main">
             {t.layout.skipToContent}
           </a>
-          <header className={styles.header}>
-            <PreProductionBanner webEnvironment={webEnvironment} />
-            <div className={styles.brandBar}>
-              <p className={styles.brand}>{t.layout.brand}</p>
-            </div>
-          </header>
-          <main id="main" tabIndex={-1} className={styles.main}>
-            <noscript>
-              <p className={styles.noscript}>{t.layout.noscript}</p>
-            </noscript>
-            {children}
-          </main>
-          <footer className={styles.footer}>
-            <p>{t.layout.footer}</p>
-          </footer>
+          {children}
         </MessagesProvider>
       </body>
     </html>

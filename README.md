@@ -32,6 +32,7 @@ Machine-readable contracts (state machine, JSON Schemas, prompts) live in [contr
 - Phase 0 contracts are implemented and covered by automated tests. They are **Proposed** until human architecture review.
 - The Phase 1 voice MVP (control plane, Tier-1 voice agent, candidate web UI, optional fail-closed recording, text response mode) runs end to end locally with a deterministic **scripted** voice engine over loopback WebRTC. The OpenAI Realtime engine, real recording egress and real networks are not verified here.
 - The Tier-2 evaluation MVP (ADR-022) runs end to end locally: an outbox relay to Redis Streams, an evaluator worker with retries and a dead-letter fallback, deterministic validation of every evaluator claim against the stored transcript, mandatory human review of every answer, and a staff-only report. Only a deterministic **reference** evaluator on synthetic rubrics runs here; the OpenAI and Anthropic evaluators are not verified against the live providers, and evaluator quality is unmeasured.
+- Reviewers work in a review console in the web app (ADR-023). They sign in with a short-lived session cookie, and see the question, the transcript and the rubric before they choose to open the AI draft, which never prefills their decision.
 - Latency targets, rubric weights and confidence thresholds remain hypotheses that require benchmarks and human validation.
 - No component makes or recommends hiring decisions: reports are decision support built from human review.
 

@@ -1,8 +1,93 @@
 # HANDOVER — Latest Review & Implementation Instructions for Claude
 
-> **LATEST UPDATE — 2026-11-04 (UTC): Milestones B (Tier-2 evaluation MVP, ADR-022) and C (data and ML foundations) implemented on `main`**
+> **LATEST UPDATE — 2026-11-04 (UTC): Milestone D (reviewer web UI, ADR-023) implemented on `main`**
 >
-> Read this update first, then the Milestone A update below it. The owner's review further down (based on `545983f`) remains the instruction baseline.
+> Read this update first, then the Milestone B/C and Milestone A updates below it. The owner's review further down (based on `545983f`) remains the instruction baseline.
+
+### Done in Milestone D
+
+- **The owner's two choices (ADR-023):**
+  - **Sign-in.** A staff token, pasted once, is exchanged for a session cookie: HttpOnly, SameSite=Strict, `/api`
+    only, stored as a hash. It lasts at most 8 hours, never outlives its token, and ends at once when the token is
+    revoked.
+  - **Independent first.** The AI draft stays closed and unrendered until the reviewer opens it, and never prefills
+    the decision. Whether it was opened is recorded (`review_outcomes.ai_draft_viewed`).
+- **Control plane:**
+  - migration 00008 (`staff_sessions`; the control plane may only create them and mark them revoked);
+  - `POST/GET /api/v1/staff/session` and `POST /api/v1/staff/session/end`, with a sign-in rate limit;
+  - `GET /api/v1/reports`, with no scores and no candidate identity;
+  - `interview_id` filter on the queue, which now keeps answer order;
+  - `ati-admin revoke-staff-token`, `list-staff-tokens`, and session purge in `purge-operational`.
+
+  The cookie counts only for review, reports and the session itself; interview management still needs the bearer
+  token. The OpenAPI document has a `staffSession` scheme, and a contract test keeps it to those operations.
+- **Gaps found and fixed:**
+  - reviewers could read the staff view of an interview, which names the candidate (now 403);
+  - the OpenAPI document gave the wrong error codes for review decisions;
+  - staff authentication had no rate limit;
+  - revoking a staff token needed SQL.
+- **Web (`apps/web`):**
+  - candidate pages moved into the `(candidate)` route group, with no URL change;
+  - the review console at `/staff`: sign-in, queue, answer (question, transcript with the AI's cited passages
+    underlined neutrally, rubric, decision form, AI draft behind a disclosure button), report list and report;
+  - the highlighter applies the validator's quote rule, and both sides are tested against
+    `contracts/fixtures/quote-matching`;
+  - console pages send `noindex` and a Permissions-Policy without the microphone;
+  - the bundle scan now looks for staff tokens.
+- **End to end.** `test_reviewer_decides_every_answer_in_the_browser` drives `browser/reviewer_flow.mjs`:
+  - sign-in refusals, the cookie's attributes, and the token gone from the page;
+  - four answers decided with the draft closed first, one by keyboard only;
+  - the report, sign-out, and a recruiter who reads reports but cannot review;
+  - axe-core on every screen;
+  - afterwards, database checks: outcomes, sessions, audits, and no credential stored. The log scan also covers the
+    session cookies.
+
+### Verification at this revision
+
+Each command below ran on 2026-11-04 in this environment:
+
+| Command | Result |
+|---|---|
+| `make test` | pass in 78 s: repository checks and import boundaries; 145 contract tests; Go lint and 17 Go packages (race detector, 0 skipped); 198 agent tests; 114 Tier-2 tests; web lint, typecheck, 289 unit tests, build and bundle scan |
+| `make e2e` | 31 passed from a fresh stack in 13 min 53 s (scripted engine, reference evaluator, loopback), 2026-11-04, including the review console flow |
+| `make audit` | ok in 14 s: no vulnerable symbol reached in the control plane (one advisory in a required module is not called by the code); no known vulnerabilities in any Python lockfile or in the web production dependencies |
+| `make provider-smoke` | BLOCKED (no key) |
+
+The live voice path, the live evaluator models, real networks and container images remain unverified.
+
+### Still open or blocked
+
+- **Blocked:**
+  - live evaluator runs (`ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` as environment secrets);
+  - the live voice path (`OPENAI_API_KEY`, `make provider-smoke`);
+  - Docker, egress, TURN and netem;
+  - human reviewers and labels;
+  - every human gate.
+- **Not built:**
+  - single sign-on (staff paste tokens; browsers may offer to save them, so console tokens should be short-lived);
+  - console screens for creating interviews, administering rubrics, and appeals (Phase 5);
+  - paging beyond 200 entries;
+  - a screen-reader run;
+  - purge jobs for evaluation records (data inventory G1);
+  - a transcript-revision workflow;
+  - worker metrics and health.
+
+### Next
+
+1. **Live evaluator runs** with provider keys as environment secrets, then `make tier2-bench` behind a model
+   evaluator.
+2. **A labelled dataset** under the lifecycle's protocol, collected with the console (`ai_draft_viewed` makes the
+   independent and draft-assisted decisions separable).
+3. **Single sign-on** for staff before any production use.
+4. **Purge jobs** for evaluation records (data inventory G1).
+
+Qdrant, embeddings and fine-tuning stay out until a benchmark justifies them and an ADR records the decision.
+
+---
+
+> **UPDATE — 2026-11-04 (UTC): Milestones B (Tier-2 evaluation MVP, ADR-022) and C (data and ML foundations) implemented on `main` (kept as written)**
+>
+> At that point it was read first, then the Milestone A update below it. The owner's review further down (based on `545983f`) remains the instruction baseline.
 
 ### Done in Milestone C
 

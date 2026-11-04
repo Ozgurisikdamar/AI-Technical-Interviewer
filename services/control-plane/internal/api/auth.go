@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -17,6 +18,20 @@ const CandidateCookie = "ati_cs"
 
 // StaffTokenPrefix distinguishes staff bearer tokens from the agent service credential.
 const StaffTokenPrefix = "ati_st_"
+
+// StaffCookie carries the opaque staff browser session token (HttpOnly, SameSite=Strict, ADR-023).
+const StaffCookie = "ati_ss"
+
+// staffCredential is the set of staff credentials an endpoint accepts.
+type staffCredential bool
+
+const (
+	// bearerOnly: interview management, and every endpoint a candidate's browser could reach.
+	// A staff member's browser may also hold a candidate cookie (ADR-023).
+	bearerOnly staffCredential = false
+	// bearerOrSession: review, reports and the staff session itself.
+	bearerOrSession staffCredential = true
+)
 
 type principalKind int
 
@@ -52,14 +67,49 @@ func bearer(r *http.Request) string {
 	return ""
 }
 
-// authStaff authenticates a staff bearer token.
-func (s *Server) authStaff(r *http.Request) (*interview.StaffPrincipal, bool) {
-	tok := bearer(r)
-	if !strings.HasPrefix(tok, StaffTokenPrefix) {
+// authStaff authenticates a staff member. An Authorization header alone decides when one is
+// present; otherwise the browser session cookie counts where the endpoint accepts it.
+func (s *Server) authStaff(r *http.Request, accepts staffCredential) (*interview.StaffPrincipal, bool) {
+	if r.Header.Get("Authorization") != "" {
+		tok := bearer(r)
+		if !strings.HasPrefix(tok, StaffTokenPrefix) {
+			return nil, false
+		}
+		p, err := s.svc.AuthenticateStaff(r.Context(), ids.Hash(tok))
+		return p, err == nil
+	}
+	if accepts != bearerOrSession {
 		return nil, false
 	}
-	p, err := s.svc.AuthenticateStaff(r.Context(), ids.Hash(tok))
+	tok, ok := staffSessionCookie(r)
+	if !ok {
+		return nil, false
+	}
+	p, err := s.svc.AuthenticateStaffSession(r.Context(), ids.Hash(tok))
 	return p, err == nil
+}
+
+// staffSessionCookie returns the staff session cookie when it is well formed.
+func staffSessionCookie(r *http.Request) (string, bool) {
+	c, err := r.Cookie(StaffCookie)
+	if err != nil || len(c.Value) < 32 || len(c.Value) > 128 {
+		return "", false
+	}
+	return c.Value, true
+}
+
+// staffWith authenticates a staff member holding one of the roles.
+func (s *Server) staffWith(w http.ResponseWriter, r *http.Request, accepts staffCredential, roles ...string) (principal, bool) {
+	staff, ok := s.authStaff(r, accepts)
+	if !ok {
+		unauthorized(w, r)
+		return principal{}, false
+	}
+	if !slices.Contains(roles, staff.Role) {
+		httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeForbidden, "role not permitted")
+		return principal{}, false
+	}
+	return principal{kind: kindStaff, staff: staff}, true
 }
 
 // authCandidate authenticates the candidate cookie.

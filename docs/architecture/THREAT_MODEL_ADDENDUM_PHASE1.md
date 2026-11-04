@@ -1,7 +1,7 @@
 # Threat model addendum — Phase 1 trust boundaries
 
 **Version:** 1.0 (proposed)
-**Extends:** [THREAT_MODEL_AND_QA.md](./THREAT_MODEL_AND_QA.md) §2–3. That document is unchanged; this addendum covers boundaries introduced by the Phase 1 design (ADR-011 to ADR-020).
+**Extends:** [THREAT_MODEL_AND_QA.md](./THREAT_MODEL_AND_QA.md) §2–3. That document is unchanged; this addendum covers boundaries introduced by the Phase 1 design (ADR-011 to ADR-020) and, since Milestone D, the review console (ADR-023).
 
 ## 1. Additional trust boundaries
 
@@ -14,6 +14,7 @@
 | B14 | Candidate text input → control plane → Tier-1 model | Untrusted; delivered as user input, never as instructions |
 | B15 | Egress service → object storage (audio recordings) | Optional, fail-closed, consented, retention-bound |
 | B16 | Control plane → Tier-1 context view (restricted DB role) | Allowlisted columns only; no rubric or evaluation access |
+| B17 | Staff browser → public API (review console, ADR-023) | A pasted staff token is exchanged once for a session cookie; the cookie counts only for review, reports and the session itself |
 
 ## 2. Threats, controls and verification
 
@@ -31,6 +32,14 @@
 | Framework-level recording or log export | Unconsented audio retention | `AgentSession(record=False)`; no audio files written (E2E check); egress only through the fail-closed policy | Agent unit test; E2E filesystem check |
 | Tier-1 learning evaluation outcomes | Score-aware behaviour | Post-interview states collapsed in Tier-1 context; context built through a restricted DB role | Context schema and isolation tests |
 | Recording without lawful setup | Privacy breach | Every precondition required (flag, policy, consent, explicit retention, encryption attestation, voice mode); candidate track only | Recording policy matrix tests |
+| Staff token pasted into the console leaks (URL, page, storage, logs, a native form submission before hydration) | A month-long credential exposed | The field has no `name`, is disabled until the page hydrates, is a password field and is cleared after use; the token is sent only in a same-origin POST body; nothing is stored in the browser; the server stores hashes; bundle scan rule for staff tokens; log scans | E2E `reviewer_flow.mjs` (token absent from the address, markup, inputs, storage and `document.cookie`), post-run log scan, database checks |
+| Stolen review console session | Reviews or reports read or forged | HttpOnly, SameSite=Strict, `Path=/api` cookie stored as a hash; 8 hours at most and never longer than the token; revoked by sign-out, a new sign-in and token revocation; accepted only by review, report and session operations, never by interview management or candidate operations | G `TestStaffSession…`; E: old cookie refused after sign-out |
+| Login CSRF (a victim's browser signed in to an attacker's account) | Reviews attributed to the wrong staff member | The sign-in carries no bearer token, so the same-origin guard applies (Origin, Sec-Fetch-Site) | G `TestStaffSignInRefusesBadTokensAlikeAndIsRateLimited` |
+| CSRF on review decisions and sign-out | Forged decisions | SameSite=Strict cookie; Origin and Sec-Fetch-Site checks on every cookie-authenticated change; an `Authorization` header alone decides when present | G `TestReviewInTheBrowserSessionAndTheReportList`, `TestStaffSessionsEndWithSignOutReplacementAndTheirToken` |
+| Guessing staff tokens through the sign-in | Account takeover | 256-bit tokens; per-client rate limit (`ATI_STAFF_SIGNINS_PER_MINUTE`); identical refusals for every failure | G rate-limit test |
+| A staff cookie confused with a candidate's in one browser | Wrong view or action | Candidate operations read only `ati_cs`; the staff view of an interview requires the bearer token | G: both cookies give the candidate view |
+| Reviewer learns who the candidate is | Biased review | Reviewers are refused the staff view of an interview (it names the candidate); tasks, reports and the report list carry no candidate identity | G `TestStaffSessionIsAcceptedOnlyForReviewReportsAndItself`, `TestTier2AndReviewEndpoints` |
+| Automation bias: the reviewer copies the AI draft | AI judgement presented as human review | The draft is not rendered until opened and never prefills the decision; AI-derived reasons stay with it; opening it is recorded for study | E `reviewer_flow.mjs`; G `ai_draft_viewed` |
 | Running the pre-production build with real candidates | Unlawful processing, unaccountable decisions | APP_ENV gating; production refuses draft notice, missing gate sign-offs, dev secrets, owner DB role | Config refusal tests |
 
 ## 3. Residual risks (accepted for the MVP, revisit before production)
@@ -39,3 +48,8 @@
 - Evidence transcription is produced inside the Tier-1 provider session and is `quality = unverified` (ADR-014).
 - Speech-to-speech output cannot be validated before it is spoken. Deviation is detected post hoc (ADR-011).
 - Self-hosted LiveKit does not revoke a connected participant's token on removal; room deletion is the mitigation.
+- Review console (ADR-023):
+  - Staff paste a long-lived token into the browser once, and a browser may offer to save it. Console tokens should be short-lived, and single sign-on should replace pasted tokens before production.
+  - Script injection in the console could act within a session, as with any cookie session; it cannot read the cookie or the token. The CSP with nonces is the defence.
+  - The sign-in rate limit is per client address. Behind an unconfigured reverse proxy, every client shares the proxy's budget (`ATI_TRUSTED_PROXY_CIDRS`).
+  - Independent first is a nudge, not a control: a reviewer can open the AI draft at any time.

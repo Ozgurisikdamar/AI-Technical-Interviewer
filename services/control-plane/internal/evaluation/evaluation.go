@@ -230,7 +230,7 @@ func Validate(raw []byte, a Answer, r *Rubric) *Result {
 		if e.StartMs > e.EndMs || e.StartMs < lo || e.EndMs > hi {
 			fail("%s has a time span outside the cited segments", label)
 		}
-		if e.Assessment != "not_addressed" && !strings.Contains(normalize(strings.Join(texts, " ")), normalize(e.Quote)) {
+		if e.Assessment != "not_addressed" && !quoteFound(texts, e.Quote) {
 			fail("%s quotes words that do not appear in the cited segments", label)
 		}
 		for _, ref := range e.ReferenceIDs {
@@ -309,6 +309,13 @@ func WeightedCenti(scores map[string]int, r *Rubric) (int, error) {
 // normalize applies Unicode NFC and collapses whitespace: the only differences a verbatim quote may
 // have from the transcript (case and punctuation must match).
 func normalize(s string) string { return strings.Join(strings.Fields(norm.NFC.String(s)), " ") }
+
+// quoteFound reports whether a quote appears verbatim in the cited segments' texts, given in
+// transcript order and joined by one space. The review console highlights quotes by the same rule
+// (apps/web/src/lib/staff/highlight.ts); contracts/fixtures/quote-matching holds the cases both test.
+func quoteFound(texts []string, quote string) bool {
+	return strings.Contains(normalize(strings.Join(texts, " ")), normalize(quote))
+}
 
 // schemaProblems reports where the output breaks the contract, without echoing its values.
 func schemaProblems(err error) []string {

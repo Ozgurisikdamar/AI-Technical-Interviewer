@@ -3,8 +3,9 @@
 The Go service that owns interview state (ADR-002, ADR-012, ADR-016): the backend-enforced state machine, consent,
 invitations, LiveKit rooms and agent dispatch, the Tier-1 agent's claim and lease, transcript ingestion and
 attribution, the completion protocol, the transactional outbox, optional recording, staff invitation revocation, and
-audit. Credentials (invitation, session cookie, media token, agent grant) are returned once and never kept at rest,
-not even for idempotent replays.
+audit. From Phase 2 it also validates Tier-2 evaluations and serves human review and reports (ADR-022), including the
+review console's staff sessions (ADR-023). Credentials (invitation, session cookies, media token, agent grant) are
+returned once and never kept at rest, not even for idempotent replays.
 
 ## Layout
 
@@ -18,7 +19,12 @@ not even for idempotent replays.
 | `internal/api` | Public listener (`/api/v1`, same-origin) and internal listener (`/internal/v1`, webhooks, health, metrics) |
 | `internal/store` | Migrations (goose), least-privilege roles, plan seeding |
 | `internal/config`, `internal/logging`, `internal/httpx`, `internal/ids` | Configuration with ADR-020 refusals, redacting logs, HTTP plumbing, identifiers |
-| `cmd/control-plane`, `cmd/ati-admin` | The server and the administration CLI (roles, migrations, tenants, staff tokens, recording policy and purge) |
+| `cmd/control-plane`, `cmd/ati-admin` | The server and the administration CLI (roles, migrations, tenants, staff tokens and their revocation, recording policy and purge, operational purge, offline evaluation validation) |
+
+Staff authenticate with a bearer token (`ati-admin create-staff-token`), or in the review console with the session
+cookie it is exchanged for (`/api/v1/staff/session`). The cookie counts only for review, reports and the session
+itself; interview management keeps requiring the bearer token. `ati-admin list-staff-tokens` shows ids, roles and
+expiry without secrets, and `ati-admin revoke-staff-token --token-id` ends a token and its browser sessions at once.
 
 ## Run and test
 

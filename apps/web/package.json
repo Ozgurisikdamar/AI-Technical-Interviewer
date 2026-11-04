@@ -2,7 +2,7 @@
   "name": "@ati/web",
   "version": "0.1.0",
   "private": true,
-  "description": "Candidate-facing web UI for the AI technical interviewer (pre-production).",
+  "description": "Candidate web UI and review console for the AI technical interviewer (pre-production).",
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.28.0",
   "engines": {

@@ -107,6 +107,12 @@ export async function launch({ microphone = 'granted', device = true } = {}) {
   const page = await context.newPage();
   const seen = { violations: [], internalCalls: [], postsWithoutKey: [], pageErrors: [], a11y: [], audited: [] };
   current = seen;
+  watch(page, seen);
+  return { browser, context, page, seen };
+}
+
+/** Records the policy violations of a page; launch() watches its own page, flows call it for others. */
+export function watch(page, seen) {
   page.on('console', (m) => {
     if (/Content Security Policy|Refused to/i.test(m.text())) seen.violations.push(m.text());
   });
@@ -116,7 +122,6 @@ export async function launch({ microphone = 'granted', device = true } = {}) {
     if (u.pathname.startsWith('/internal')) seen.internalCalls.push(u.pathname);
     if (r.method() === 'POST' && u.pathname.startsWith('/api/') && !r.headers()['idempotency-key']) seen.postsWithoutKey.push(u.pathname);
   });
-  return { browser, context, page, seen };
 }
 
 let current = null;
@@ -148,8 +153,11 @@ export async function audit(page, label) {
   }
 }
 
-/** The document response must carry the security headers (ADR-016, THREAT_MODEL addendum). */
-export function checkDocumentHeaders(response, label) {
+/**
+ * The document response must carry the security headers (ADR-016, THREAT_MODEL addendum).
+ * microphone: 'self' for candidate pages, 'none' for the review console (ADR-023).
+ */
+export function checkDocumentHeaders(response, label, { microphone = 'self' } = {}) {
   const h = response.headers();
   const csp = h['content-security-policy'] ?? '';
   step(`${label}: CSP with a per-request nonce`, /script-src 'self' 'nonce-[A-Za-z0-9+/_-]{16,}={0,2}' 'strict-dynamic'/.test(csp), csp);
@@ -160,7 +168,12 @@ export function checkDocumentHeaders(response, label) {
   step(`${label}: Referrer-Policy no-referrer`, h['referrer-policy'] === 'no-referrer', h['referrer-policy']);
   step(`${label}: X-Frame-Options DENY`, h['x-frame-options'] === 'DENY', h['x-frame-options']);
   step(`${label}: nosniff`, h['x-content-type-options'] === 'nosniff', h['x-content-type-options']);
-  step(`${label}: microphone only for this origin`, (h['permissions-policy'] ?? '').includes('microphone=(self)') && (h['permissions-policy'] ?? '').includes('camera=()'), h['permissions-policy']);
+  const policy = h['permissions-policy'] ?? '';
+  if (microphone === 'self') {
+    step(`${label}: microphone only for this origin`, policy.includes('microphone=(self)') && policy.includes('camera=()'), policy);
+  } else {
+    step(`${label}: no microphone, camera or location`, policy.includes('microphone=()') && policy.includes('camera=()') && policy.includes('geolocation=()'), policy);
+  }
 }
 
 /** Exchanges the invitation (user click) and answers every purpose of the notice. */
@@ -202,6 +215,24 @@ export function checkPolicies(seen) {
   step('no serious or critical accessibility violations', blocking.length === 0, JSON.stringify(blocking));
 }
 
+/** Credentials a flow may handle; they are masked in everything it prints (the output reaches test logs). */
+const SECRET_ENV = ['ATI_E2E_STAFF_TOKEN', 'ATI_E2E_REVIEWER_TOKEN', 'ATI_E2E_LIVEKIT_API_SECRET'];
+const extraSecrets = [];
+
+/** Masks a value the flow learned at run time (a session cookie) in its output. */
+export function secret(value) {
+  if (value && value.length >= 16) extraSecrets.push(value);
+  return value;
+}
+
+function redact(text) {
+  let out = text;
+  for (const value of [...SECRET_ENV.map((name) => process.env[name]), ...extraSecrets]) {
+    if (value && value.length >= 16) out = out.split(value).join('[redacted]');
+  }
+  return out;
+}
+
 /** Runs a flow, prints one JSON result line and exits with its status. */
 export async function run(flow, options = {}) {
   let browser;
@@ -211,11 +242,11 @@ export async function run(flow, options = {}) {
     browser = launched.browser;
     await flow({ ...launched, result });
     checkPolicies(launched.seen);
-    console.log(JSON.stringify({ ok: true, ...result, steps, a11y: launched.seen.a11y }));
+    console.log(redact(JSON.stringify({ ok: true, ...result, steps, a11y: launched.seen.a11y })));
     await browser.close();
     process.exit(0);
   } catch (e) {
-    console.log(JSON.stringify({ ok: false, ...result, error: String(e), steps }));
+    console.log(redact(JSON.stringify({ ok: false, ...result, error: String(e), steps })));
     if (browser) await browser.close();
     process.exit(1);
   }

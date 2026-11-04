@@ -178,21 +178,3 @@ func (s *Service) StaffView(ctx context.Context, sessionID, tenantID string) (*S
 	}
 	return v, nil
 }
-
-// StaffPrincipal is an authenticated staff token.
-type StaffPrincipal struct {
-	TokenID  string
-	TenantID string
-	Role     string
-}
-
-// AuthenticateStaff resolves a staff bearer token (stored hashed, expiring, revocable).
-func (s *Service) AuthenticateStaff(ctx context.Context, tokenHash string) (*StaffPrincipal, error) {
-	var p StaffPrincipal
-	err := s.pool.QueryRow(ctx, `SELECT id, tenant_id, role FROM ati.staff_tokens WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2`,
-		tokenHash, s.now().UTC()).Scan(&p.TokenID, &p.TenantID, &p.Role)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	return &p, err
-}

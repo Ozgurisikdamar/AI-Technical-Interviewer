@@ -32,11 +32,37 @@ def test_spec_is_valid_openapi_3_1_with_resolvable_external_refs() -> None:
     validate(spec_dict, base_uri=base_uri)
 
 
+UNAUTHENTICATED = {
+    ("post", "/api/v1/invitations/exchange"),
+    ("post", "/api/v1/staff/session"),  # sign-in: the body carries the staff token (ADR-023)
+    ("get", "/healthz"),
+    ("get", "/readyz"),
+    ("get", "/metrics"),
+}
+
+
 def test_every_operation_declares_security_explicitly(spec: dict[str, Any]) -> None:
     for path, method, op in _ops(spec):
         assert "security" in op, f"{method.upper()} {path} must declare security (use [] for public)"
         if op["security"] == []:
-            assert path in {"/api/v1/invitations/exchange", "/healthz", "/readyz", "/metrics"}, f"{path} is unauthenticated"
+            assert (method, path) in UNAUTHENTICATED, f"{method.upper()} {path} is unauthenticated"
+
+
+def test_the_staff_browser_session_opens_only_review_reports_and_itself(spec: dict[str, Any]) -> None:
+    """The review console's cookie (ADR-023) never reaches interview management or candidate operations, and is
+    always an alternative to the bearer token, never a requirement."""
+    allowed = []
+    for path, method, op in _ops(spec):
+        schemes = [set(req) for req in op["security"]]
+        if not any("staffSession" in req for req in schemes):
+            continue
+        assert "review" in op["tags"] or path.startswith("/api/v1/staff/session"), f"{method.upper()} {path}"
+        assert {"staffSession"} in schemes and {"staffBearer"} in schemes, f"{method.upper()} {path}"
+        allowed.append((method, path))
+    assert ("post", "/api/v1/review-tasks/{task_id}/outcome") in allowed
+    assert ("get", "/api/v1/staff/session") in allowed
+    for method, path in [("post", "/api/v1/interviews"), ("get", "/api/v1/interviews/{interview_id}")]:
+        assert (method, path) not in allowed, f"{method.upper()} {path}"
 
 
 def test_public_mutations_require_idempotency_keys(spec: dict[str, Any]) -> None:

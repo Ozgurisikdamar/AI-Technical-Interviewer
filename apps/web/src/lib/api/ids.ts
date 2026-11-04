@@ -2,6 +2,7 @@
 
 const INTERVIEW_ID = /^ses_[A-Za-z0-9]{16,64}$/;
 const ACTIVATION_ID = /^act_[A-Za-z0-9]{16,64}$/;
+const REVIEW_TASK_ID = /^rvt_[A-Za-z0-9]{16,64}$/;
 
 export function isInterviewId(value: unknown): value is string {
   return typeof value === 'string' && INTERVIEW_ID.test(value);
@@ -9,4 +10,8 @@ export function isInterviewId(value: unknown): value is string {
 
 export function isActivationId(value: unknown): value is string {
   return typeof value === 'string' && ACTIVATION_ID.test(value);
+}
+
+export function isReviewTaskId(value: unknown): value is string {
+  return typeof value === 'string' && REVIEW_TASK_ID.test(value);
 }

@@ -216,3 +216,132 @@ func TestTier2AndReviewEndpoints(t *testing.T) {
 		t.Fatalf("the candidate's view never shows scores: %d %s", view.status, view.raw)
 	}
 }
+
+// inReview brings a completed interview to HUMAN_REVIEW: the first answer has a valid AI
+// evaluation, the evaluator abstained on the others.
+func (e *env) inReview() (id string, answers []storedAnswer) {
+	e.t.Helper()
+	id, _ = e.completeInterview()
+	base := e.internal.URL + "/internal/v1/tier2/sessions/" + id
+	tier2 := map[string]string{"Authorization": "Bearer " + tier2Token}
+	if err := e.svc.EnqueueEvaluation(context.Background(), id); err != nil {
+		e.t.Fatal(err)
+	}
+	answers = e.answers(id)
+	for i, a := range answers {
+		body := map[string]any{"answer_id": a.ID, "transcript_version": 1, "evaluator_version": "reference@1", "provider": "reference", "outcome": "abstained", "reason": "transcript_quality"}
+		if i == 0 {
+			body = map[string]any{"answer_id": a.ID, "transcript_version": 1, "evaluator_version": "reference@1", "provider": "reference", "outcome": "evaluated", "output": evaluationOutput(id, a)}
+		}
+		if r := e.do(req{method: "POST", url: base + "/evaluations", headers: tier2, body: body}); r.status != 201 {
+			e.t.Fatalf("evaluation %d: %d %s", i, r.status, r.raw)
+		}
+	}
+	if r := e.do(req{method: "POST", url: base + "/complete", headers: tier2, body: map[string]any{}}); r.status != 200 || r.str("state") != "HUMAN_REVIEW" {
+		e.t.Fatalf("complete: %d %s", r.status, r.raw)
+	}
+	return id, answers
+}
+
+func TestReviewInTheBrowserSessionAndTheReportList(t *testing.T) {
+	e := newEnv(t)
+	first, answers := e.inReview()
+	second, _ := e.inReview()
+	reviewer := staffCookie(t, e.signIn(e.staffToken("reviewer"), nil)).Value
+	recruiter := staffCookie(t, e.signIn(e.staff, nil)).Value
+	queue := func(query string) []map[string]any {
+		r := e.do(req{method: "GET", url: e.public.URL + "/api/v1/review-tasks" + query, headers: asSession(reviewer)})
+		if r.status != 200 {
+			t.Fatalf("queue %s: %d %s", query, r.status, r.raw)
+		}
+		var out []map[string]any
+		for _, raw := range r.body["review_tasks"].([]any) {
+			out = append(out, raw.(map[string]any))
+		}
+		return out
+	}
+	if all := queue(""); len(all) != 8 {
+		t.Fatalf("both interviews are queued: %d", len(all))
+	}
+	tasks := queue("?interview_id=" + first)
+	if len(tasks) != 4 {
+		t.Fatalf("one interview's tasks: %d", len(tasks))
+	}
+	for i, task := range tasks {
+		// Tasks created together keep the answers' order.
+		if task["interview_id"] != first || task["answer_id"] != answers[i].ID {
+			t.Fatalf("task %d: %v", i, task)
+		}
+	}
+	for _, bad := range []string{"?interview_id=ses_short", "?interview_id=x%27%20OR%201=1", "?limit=0", "?status=all"} {
+		if r := e.do(req{method: "GET", url: e.public.URL + "/api/v1/review-tasks" + bad, headers: asSession(reviewer)}); r.status != 400 {
+			t.Errorf("%s: %d", bad, r.status)
+		}
+	}
+	decide := func(task string, headers map[string]string, viewed bool) response {
+		return e.do(req{method: "POST", url: e.public.URL + "/api/v1/review-tasks/" + task + "/outcome", headers: headers, body: map[string]any{
+			"scores":    map[string]int{"technical_accuracy": 60, "architecture_maturity": 50, "edge_case_awareness": 40, "claim_support": 30},
+			"rationale": "Accurate but brief; no example.", "ai_draft_viewed": viewed}})
+	}
+	// A cookie-authenticated decision needs the console's origin (CSRF).
+	noOrigin := map[string]string{"Cookie": api.StaffCookie + "=" + reviewer}
+	if r := decide(tasks[0]["task_id"].(string), noOrigin, true); r.status != 403 || r.str("code") != "origin_mismatch" {
+		t.Fatalf("decision without an Origin: %d %s", r.status, r.raw)
+	}
+	for i, task := range tasks {
+		if r := decide(task["task_id"].(string), asSession(reviewer), true); r.status != 201 {
+			t.Fatalf("decision %d: %d %s", i, r.status, r.raw)
+		}
+		if i == 0 {
+			if r := decide(task["task_id"].(string), asSession(reviewer), true); r.status != 409 || r.str("code") != "review_already_completed" {
+				t.Fatalf("a second decision on one answer: %d %s", r.status, r.raw)
+			}
+		}
+	}
+	if r := decide(tasks[0]["task_id"].(string), asSession(reviewer), true); r.status != 409 || r.str("code") != "review_not_open" {
+		t.Fatalf("a decision once the report exists: %d %s", r.status, r.raw)
+	}
+	// Only the first answer had an AI draft to view; the claim is not recorded for the others.
+	if n := e.count(`SELECT count(*) FROM ati.review_outcomes WHERE session_id = $1 AND ai_draft_viewed = (answer_id = $2)`, first, answers[0].ID); n != 4 {
+		t.Fatalf("ai_draft_viewed is recorded only where a draft existed: %d of 4", n)
+	}
+	detail := e.do(req{method: "GET", url: e.public.URL + "/api/v1/review-tasks/" + tasks[0]["task_id"].(string), headers: asSession(reviewer)})
+	if detail.status != 200 || detail.body["outcome"].(map[string]any)["ai_draft_viewed"] != true {
+		t.Fatalf("the recorded outcome: %d %s", detail.status, detail.raw)
+	}
+	list := e.do(req{method: "GET", url: e.public.URL + "/api/v1/reports", headers: asSession(recruiter)})
+	reports, _ := list.body["reports"].([]any)
+	if list.status != 200 || len(reports) != 1 {
+		t.Fatalf("reports: %d %s", list.status, list.raw)
+	}
+	entry := reports[0].(map[string]any)
+	if entry["interview_id"] != first || entry["answer_count"] != float64(4) || entry["language"] != "en" || entry["plan"].(map[string]any)["plan_id"] != "plan_demo_backend_en" {
+		t.Fatalf("report entry: %v", entry)
+	}
+	for _, leak := range []string{"score", "candidate", "ref_", "rationale", "Each update"} {
+		if strings.Contains(string(list.raw), leak) {
+			t.Fatalf("the report list holds %q: %s", leak, list.raw)
+		}
+	}
+	report := e.do(req{method: "GET", url: e.public.URL + "/api/v1/interviews/" + first + "/report", headers: asSession(recruiter)})
+	var parsed struct {
+		Answers []struct {
+			Reviewed struct {
+				AIDraftViewed bool `json:"ai_draft_viewed"`
+			} `json:"reviewed"`
+		} `json:"answers"`
+	}
+	if err := json.Unmarshal(report.raw, &parsed); report.status != 200 || err != nil || len(parsed.Answers) != 4 || !parsed.Answers[0].Reviewed.AIDraftViewed || parsed.Answers[1].Reviewed.AIDraftViewed {
+		t.Fatalf("report through the session: %d %s", report.status, report.raw)
+	}
+	other := e.otherTenantStaff()
+	if r := e.do(req{method: "GET", url: e.public.URL + "/api/v1/reports", headers: map[string]string{"Authorization": "Bearer " + other}}); r.status != 200 || strings.Contains(string(r.raw), first) {
+		t.Fatalf("another tenant's report list: %d %s", r.status, r.raw)
+	}
+	if r := e.do(req{method: "GET", url: e.public.URL + "/api/v1/reports?limit=201", headers: asSession(recruiter)}); r.status != 400 {
+		t.Fatalf("limit above 200: %d", r.status)
+	}
+	if left := queue("?interview_id=" + second); len(left) != 4 {
+		t.Fatalf("the other interview is still queued: %d", len(left))
+	}
+}

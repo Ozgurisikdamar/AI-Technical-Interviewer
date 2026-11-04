@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func devEnv() map[string]string {
@@ -323,5 +324,25 @@ func TestTier2SettingsAreValidated(t *testing.T) {
 	_, err = Load(getter(with(prodEnv(t), "ATI_REDIS_URL", "redis://redis.internal:6379/0")))
 	if err == nil || !strings.Contains(err.Error(), "rediss://") {
 		t.Fatalf("production requires TLS to Redis: %v", err)
+	}
+}
+
+// Staff browser sessions (ADR-023) are short-lived by default and bounded either way.
+func TestStaffSessionSettingsAreBounded(t *testing.T) {
+	c, err := Load(getter(devEnv()))
+	if err != nil || c.StaffSessionTTL != 8*time.Hour || c.StaffSignInsPerMinute != 10 {
+		t.Fatalf("defaults: %+v %v", c, err)
+	}
+	for _, bad := range [][]string{
+		{"ATI_STAFF_SESSION_TTL", "10m"}, {"ATI_STAFF_SESSION_TTL", "25h"}, {"ATI_STAFF_SESSION_TTL", "soon"},
+		{"ATI_STAFF_SIGNINS_PER_MINUTE", "0"}, {"ATI_STAFF_SIGNINS_PER_MINUTE", "1001"}, {"ATI_STAFF_SIGNINS_PER_MINUTE", "many"},
+	} {
+		if _, err := Load(getter(with(devEnv(), bad...))); err == nil || !strings.Contains(err.Error(), bad[0]) {
+			t.Errorf("%s=%s must be refused: %v", bad[0], bad[1], err)
+		}
+	}
+	c, err = Load(getter(with(devEnv(), "ATI_STAFF_SESSION_TTL", "15m", "ATI_STAFF_SIGNINS_PER_MINUTE", "3")))
+	if err != nil || c.StaffSessionTTL != 15*time.Minute || c.StaffSignInsPerMinute != 3 {
+		t.Fatalf("explicit settings: %+v %v", c, err)
 	}
 }

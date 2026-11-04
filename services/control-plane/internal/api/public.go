@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
@@ -106,18 +107,10 @@ func (s *Server) createInterview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// staffWriter authenticates a staff member allowed to manage interviews.
+// staffWriter authenticates a staff member allowed to manage interviews. Only a bearer token is
+// accepted: the browser session serves review and reports alone (ADR-023).
 func (s *Server) staffWriter(w http.ResponseWriter, r *http.Request) (principal, bool) {
-	staff, ok := s.authStaff(r)
-	if !ok {
-		unauthorized(w, r)
-		return principal{}, false
-	}
-	if staff.Role != "admin" && staff.Role != "recruiter" {
-		httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeForbidden, "role not permitted")
-		return principal{}, false
-	}
-	return principal{kind: kindStaff, staff: staff}, true
+	return s.staffWith(w, r, bearerOnly, interviewRoles...)
 }
 
 // revokeInvitation ends every way into an interview: the invitation and all candidate sessions
@@ -143,10 +136,21 @@ func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// interviewRoles may read the staff view of an interview. It names the candidate (candidate_ref),
+// and reviewers judge answers without knowing whose they are (ADR-022), so they are refused.
+var interviewRoles = []string{"admin", "recruiter"}
+
+// getInterview serves the staff view to a staff bearer token and the candidate view to the
+// candidate's cookie. A staff token never falls back to the candidate cookie, and the staff
+// browser session is not accepted here (ADR-023): a browser can hold both cookies.
 func (s *Server) getInterview(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("interview_id")
-	if staff, ok := s.authStaff(r); ok {
-		v, err := s.svc.StaffView(r.Context(), id, staff.TenantID)
+	if strings.HasPrefix(bearer(r), StaffTokenPrefix) {
+		p, ok := s.staffWith(w, r, bearerOnly, interviewRoles...)
+		if !ok {
+			return
+		}
+		v, err := s.svc.StaffView(r.Context(), id, p.staff.TenantID)
 		if err != nil {
 			s.writeError(w, r, err)
 			return

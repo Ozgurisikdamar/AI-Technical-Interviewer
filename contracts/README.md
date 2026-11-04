@@ -16,7 +16,7 @@ Machine-readable contracts shared by every service, with their tests (ADR-019). 
 | `schemas/rubric/v1/`, `content/rubrics/` | Versioned question rubrics (criteria per dimension, weights, approved references); the shipped ones are synthetic demo rubrics | P&E §3–5 + ADR-022 |
 | `prompts/` | Tier-1 and Tier-2 templates, verbatim, sha256-pinned in `manifest.json` | P&E §1–2 |
 | `content/` | Synthetic demo plans, rubrics and DRAFT notices (en, tr), not for real candidates | — |
-| `fixtures/` | Valid and invalid instances for every schema | P&E §8 |
+| `fixtures/` | Valid and invalid instances for every schema; `quote-matching/` holds the verbatim-quote cases shared by the control plane's validator and the review console's highlighter (ADR-023) | P&E §8 |
 
 All contracts are **Proposed** until reviewed. Run the tests with:
 

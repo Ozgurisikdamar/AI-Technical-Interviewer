@@ -1,7 +1,7 @@
 // Command ati-admin performs administrative tasks with an owner/administrator database URL:
-// role bootstrap, migrations, plan seeding, tenants, staff tokens, tenant recording policy, the
-// recording purge and the purge of operational records. Tokens are printed once and stored only
-// as hashes.
+// role bootstrap, migrations, plan seeding, tenants, staff tokens and their revocation, tenant
+// recording policy, the recording purge and the purge of operational records. Tokens are printed
+// once and stored only as hashes.
 package main
 
 import (
@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -29,12 +30,15 @@ commands:
   create-tenant       --url URL --name NAME           print a new tenant id
   create-staff-token  --url URL --tenant ID --role recruiter|reviewer|admin --label L [--ttl 720h]
                                                       print a new staff token (shown once)
+  list-staff-tokens   --url URL --tenant ID           list the tenant's staff tokens (never the tokens)
+  revoke-staff-token  --url URL --token-id ID         revoke a staff token and its browser sessions (audited)
   tenant-recording    --url URL --tenant ID --allowed=true|false
                                                       set whether a tenant allows consented recordings
   recordings          --url URL purge-expired        delete expired recordings (storage: ATI_RECORDING_S3_*),
                                                       leaving audited tombstones
-  purge-operational   --url URL [--older-than 24h]    delete webhook dedupe and idempotency records older
-                                                      than the window (audited; replays hold response bodies)
+  purge-operational   --url URL [--older-than 24h]    delete webhook dedupe and idempotency records, and staff
+                                                      sessions that ended, older than the window (audited;
+                                                      replays hold response bodies)
   validate-evaluations --input FILE                   apply the evaluation validator to JSON lines of
                                                       {answer, rubric, output} (offline: no database)
 `
@@ -69,6 +73,7 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer, getenv f
 	allowed := fs.Bool("allowed", false, "tenant-recording: whether the tenant allows consented recordings")
 	olderThan := fs.Duration("older-than", 24*time.Hour, "purge-operational: keep records younger than this")
 	input := fs.String("input", "", "validate-evaluations: JSON lines of {answer, rubric, output}")
+	tokenID := fs.String("token-id", "", "revoke-staff-token: the staff token's id (stf_...)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -123,6 +128,31 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer, getenv f
 		}
 		_, err = fmt.Fprintln(out, token)
 		return err
+	case "list-staff-tokens":
+		if *tenant == "" {
+			return fmt.Errorf("--tenant is required")
+		}
+		pool, err := store.Open(ctx, *url, 2)
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
+		return listStaffTokens(ctx, pool, *tenant, out)
+	case "revoke-staff-token":
+		if !regexp.MustCompile(`^stf_[A-Za-z0-9]{16,}$`).MatchString(*tokenID) {
+			return fmt.Errorf("--token-id must be a staff token id (stf_...)")
+		}
+		pool, err := store.Open(ctx, *url, 2)
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
+		sessions, err := revokeStaffToken(ctx, pool, *tokenID)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(out, "revoked %s and %d browser session(s)\n", *tokenID, sessions)
+		return err
 	case "tenant-recording":
 		// Owner connection: the control plane itself cannot change tenant policy.
 		if *tenant == "" {
@@ -176,7 +206,7 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer, getenv f
 		}
 		defer pool.Close()
 		cutoff := time.Now().Add(-*olderThan).UTC()
-		var webhooks, replays int64
+		var webhooks, replays, sessions int64
 		err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 			t, err := tx.Exec(ctx, `DELETE FROM ati.webhook_events WHERE received_at < $1`, cutoff)
 			if err != nil {
@@ -187,15 +217,21 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer, getenv f
 				return err
 			}
 			replays = t.RowsAffected()
+			// A staff session ends when it expires or is revoked, whichever is first (ADR-023).
+			if t, err = tx.Exec(ctx, `DELETE FROM ati.staff_sessions WHERE LEAST(expires_at, revoked_at) < $1`, cutoff); err != nil {
+				return err
+			}
+			sessions = t.RowsAffected()
 			_, err = tx.Exec(ctx, `INSERT INTO ati.audit_logs (actor_type, actor_id, action, subject_type, outcome, details)
 				VALUES ('system', 'ati-admin', 'retention.purge_operational', 'database', 'allowed',
-				jsonb_build_object('webhook_events', $1::bigint, 'idempotency_records', $2::bigint, 'older_than', $3::text))`, webhooks, replays, olderThan.String())
+				jsonb_build_object('webhook_events', $1::bigint, 'idempotency_records', $2::bigint, 'staff_sessions', $3::bigint, 'older_than', $4::text))`,
+				webhooks, replays, sessions, olderThan.String())
 			return err
 		})
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(out, "purged %d webhook event(s) and %d idempotency record(s)\n", webhooks, replays)
+		_, err = fmt.Fprintf(out, "purged %d webhook event(s), %d idempotency record(s) and %d staff session(s)\n", webhooks, replays, sessions)
 		return err
 	}
 	return fmt.Errorf("%w %q", errUnknownCommand, cmd)

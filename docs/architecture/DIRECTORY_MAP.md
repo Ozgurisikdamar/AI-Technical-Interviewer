@@ -12,7 +12,7 @@ Recorded by [ADR-019](./adr/ADR-019-repository-layout-and-contract-locations.md)
 │   ├── models/                      provider model registry (ADR-021): allowed model IDs, status, shutdown dates
 │   ├── prompts/<name>/v<N>/         verbatim prompt templates + manifest.json (sha256 pins)
 │   ├── content/                     synthetic demo plans and rubrics, DRAFT candidate notices (en, tr)
-│   ├── fixtures/<schema>/{valid,invalid}/
+│   ├── fixtures/<schema>/{valid,invalid}/   (+ quote-matching/: cases shared by the Go validator and the web highlighter)
 │   ├── tests/                       pytest: schemas, state machine, doc drift, isolation, OpenAPI
 │   └── tools/                       generators (state diagram)
 ├── docs/
@@ -29,8 +29,10 @@ Recorded by [ADR-019](./adr/ADR-019-repository-layout-and-contract-locations.md)
 │   └── tier2-evaluator/             Python: Tier-2 evaluation worker (Redis Streams consumer, read-only evidence loader,
 │                                    reference / OpenAI / Anthropic evaluators; ADR-022); bench/ holds versioned
 │                                    benchmark datasets for the offline harness (DATA_AND_ML_LIFECYCLE.md)
-├── apps/web/                        Next.js candidate UI
-├── tests/e2e/                       cross-service E2E (media over real WebRTC, browser flows, Tier-2 pipeline)
+├── apps/web/                        Next.js web app: candidate UI (src/app/(candidate)) and review console (src/app/staff,
+│                                    src/features/staff; ADR-023)
+├── tests/e2e/                       cross-service E2E (media over real WebRTC, browser flows including the review
+│                                    console, Tier-2 pipeline)
 ├── tools/
 │   ├── checks/                      dependency-free repository checks (hygiene, import boundaries); audit.sh (dependency scans)
 │   └── dev/                         local stack scripts (PostgreSQL, Redis, LiveKit OSS); contract sync scripts

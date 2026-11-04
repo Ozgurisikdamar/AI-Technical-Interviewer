@@ -56,9 +56,12 @@ type Server struct {
 	log       *slog.Logger
 	metrics   *Metrics
 	now       func() time.Time
-	limiter   *ipLimiter
-	rec       Recorder
-	relay     Relay
+	limiter   *ipLimiter // invitation exchanges
+	// staffLimiter bounds staff sign-ins per client. Behind a proxy, ATI_TRUSTED_PROXY_CIDRS
+	// must name it, or every client shares the proxy's budget (ADR-023).
+	staffLimiter *ipLimiter
+	rec          Recorder
+	relay        Relay
 }
 
 // New builds the server.
@@ -70,7 +73,8 @@ func New(d Deps) *Server {
 		d.Metrics = NewMetrics()
 	}
 	return &Server{cfg: d.Config, svc: d.Service, tier1: d.Tier1, media: d.Media, pool: d.Pool, tier1Pool: d.Tier1Pool,
-		log: d.Log, metrics: d.Metrics, now: d.Now, limiter: newIPLimiter(d.Config.InvitationExchangesPerMinute), rec: d.Recorder, relay: d.Relay}
+		log: d.Log, metrics: d.Metrics, now: d.Now, limiter: newIPLimiter(d.Config.InvitationExchangesPerMinute),
+		staffLimiter: newIPLimiter(d.Config.StaffSignInsPerMinute), rec: d.Recorder, relay: d.Relay}
 }
 
 // Route is one registered endpoint.
@@ -97,6 +101,10 @@ var publicRoutes = []Route{
 	{"POST", "/api/v1/interviews/{interview_id}/realtime-session", (*Server).realtimeSession},
 	{"POST", "/api/v1/interviews/{interview_id}/text-responses", (*Server).textResponse},
 	{"GET", "/api/v1/interviews/{interview_id}/report", (*Server).getReport},
+	{"GET", "/api/v1/reports", (*Server).listReports},
+	{"POST", "/api/v1/staff/session", (*Server).startStaffSession},
+	{"GET", "/api/v1/staff/session", (*Server).getStaffSession},
+	{"POST", "/api/v1/staff/session/end", (*Server).endStaffSession},
 	{"GET", "/api/v1/review-tasks", (*Server).listReviewTasks},
 	{"GET", "/api/v1/review-tasks/{task_id}", (*Server).getReviewTask},
 	{"POST", "/api/v1/review-tasks/{task_id}/outcome", (*Server).submitReviewOutcome},

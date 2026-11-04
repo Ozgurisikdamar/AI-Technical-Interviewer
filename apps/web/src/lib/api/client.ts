@@ -1,7 +1,8 @@
 /**
  * Same-origin API client. This module is the only place in the app allowed to call fetch
  * (enforced by ESLint). Guarantees:
- * - only relative `/api/v1/...` paths are requested (never absolute URLs, never `/internal/`);
+ * - only relative `/api/v1/...` paths are requested (never absolute URLs, never `/internal/`), with
+ *   query parameters only from an allow-list;
  * - `credentials: 'same-origin'` and `mode: 'same-origin'`, so the HttpOnly session cookie is sent
  *   only to this origin and a cross-origin URL is refused by the browser as well;
  * - every POST carries a fresh `Idempotency-Key` and `Content-Type: application/json`;
@@ -55,14 +56,39 @@ export interface RequestOptions {
   timeoutMs?: number;
 }
 
+export interface GetOptions extends RequestOptions {
+  /** Query parameters: only the list filters of the contract, with plain identifier-like values. */
+  query?: Readonly<Record<string, string | number | undefined>>;
+}
+
+/** The query parameters any GET may carry (review-task and report lists). */
+const QUERY_KEYS: ReadonlySet<string> = new Set(['status', 'limit', 'interview_id']);
+const QUERY_VALUE = /^[A-Za-z0-9_]{1,64}$/;
+
+/** Builds `?key=value…` from allow-listed keys and values, or throws; undefined values are left out. */
+export function buildQuery(query: GetOptions['query']): string {
+  if (query === undefined) return '';
+  const params = new URLSearchParams();
+  for (const [key, raw] of Object.entries(query)) {
+    if (raw === undefined) continue;
+    const value = String(raw);
+    if (!QUERY_KEYS.has(key) || !QUERY_VALUE.test(value)) {
+      throw new Error('Refusing an unexpected query parameter');
+    }
+    params.append(key, value);
+  }
+  const text = params.toString();
+  return text === '' ? '' : `?${text}`;
+}
+
 type Parser<T> = (body: unknown) => T;
 
-export function getJson<T>(path: string, parse: Parser<T>, options: RequestOptions = {}): Promise<T> {
-  return request('GET', path, undefined, parse, options);
+export function getJson<T>(path: string, parse: Parser<T>, options: GetOptions = {}): Promise<T> {
+  return request('GET', path, undefined, parse, options, buildQuery(options.query));
 }
 
 export function postJson<T>(path: string, body: unknown, parse: Parser<T>, options: RequestOptions = {}): Promise<T> {
-  return request('POST', path, body ?? {}, parse, options);
+  return request('POST', path, body ?? {}, parse, options, '');
 }
 
 async function request<T>(
@@ -71,6 +97,7 @@ async function request<T>(
   body: unknown,
   parse: Parser<T>,
   options: RequestOptions,
+  query: string,
 ): Promise<T> {
   assertApiPath(path);
 
@@ -95,7 +122,7 @@ async function request<T>(
   try {
     let response: Response;
     try {
-      response = await fetch(path, {
+      response = await fetch(path + query, {
         method,
         headers,
         body: payload,

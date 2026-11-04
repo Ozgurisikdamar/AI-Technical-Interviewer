@@ -22,6 +22,7 @@ export const RULES = [
   { id: 'openai-env', description: 'OPENAI_API_KEY reference', pattern: /OPENAI_API_KEY/ },
   { id: 'aws-access-key', description: 'AWS access key ID', pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
   { id: 'jwt', description: 'JSON Web Token', pattern: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/ },
+  { id: 'staff-token', description: 'staff bearer token (ati_st_…)', pattern: /\bati_st_[A-Za-z0-9_-]{40,}/ },
 ];
 
 /** Server-side configuration names that must never be inlined into browser assets. */

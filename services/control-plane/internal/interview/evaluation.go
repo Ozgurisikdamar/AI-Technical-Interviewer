@@ -445,14 +445,21 @@ type ReviewTaskSummary struct {
 	CompletedAt *time.Time `json:"completed_at"`
 }
 
-// ReviewQueue lists the tenant's review tasks with the given status, oldest first.
-func (s *Service) ReviewQueue(ctx context.Context, tenantID, status string, limit int) ([]ReviewTaskSummary, error) {
+var sessionIDPattern = regexp.MustCompile(`^ses_[A-Za-z0-9]{16,}$`)
+
+// ReviewQueue lists the tenant's review tasks with the given status, oldest first and in answer
+// order within an interview. A non-empty interviewID keeps only that interview's tasks.
+func (s *Service) ReviewQueue(ctx context.Context, tenantID, status, interviewID string, limit int) ([]ReviewTaskSummary, error) {
 	if status != "open" && status != "completed" {
 		return nil, &ValidationError{"status must be open or completed"}
 	}
+	if interviewID != "" && !sessionIDPattern.MatchString(interviewID) {
+		return nil, &ValidationError{"interview_id is malformed"}
+	}
 	rows, err := s.pool.Query(ctx, `SELECT t.id, t.session_id, t.answer_id, a.item_id, t.status, t.reasons, t.evaluation_id IS NOT NULL, t.created_at, t.completed_at
 		FROM ati.review_tasks t JOIN ati.candidate_answers a ON a.id = t.answer_id
-		WHERE t.tenant_id = $1 AND t.status = $2 ORDER BY t.created_at, t.id LIMIT $3`, tenantID, status, limit)
+		WHERE t.tenant_id = $1 AND t.status = $2 AND ($3 = '' OR t.session_id = $3)
+		ORDER BY t.created_at, a.finalized_at, t.id LIMIT $4`, tenantID, status, interviewID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -497,6 +504,7 @@ type ReviewOutcomeView struct {
 	Scores        map[string]int `json:"scores"`
 	WeightedScore *float64       `json:"weighted_score"`
 	Rationale     string         `json:"rationale"`
+	AIDraftViewed bool           `json:"ai_draft_viewed"`
 	DecidedAt     time.Time      `json:"decided_at"`
 }
 
@@ -573,8 +581,8 @@ func (s *Service) reviewTask(ctx context.Context, tx pgx.Tx, tenantID, taskID st
 	}
 	o := &ReviewOutcomeView{}
 	var centi *int
-	err = tx.QueryRow(ctx, `SELECT id, reviewer_id, scores, weighted_score_centi, rationale, decided_at FROM ati.review_outcomes WHERE task_id = $1`, d.TaskID).
-		Scan(&o.OutcomeID, &o.ReviewerID, &o.Scores, &centi, &o.Rationale, &o.DecidedAt)
+	err = tx.QueryRow(ctx, `SELECT id, reviewer_id, scores, weighted_score_centi, rationale, ai_draft_viewed, decided_at FROM ati.review_outcomes WHERE task_id = $1`, d.TaskID).
+		Scan(&o.OutcomeID, &o.ReviewerID, &o.Scores, &centi, &o.Rationale, &o.AIDraftViewed, &o.DecidedAt)
 	switch {
 	case err == nil:
 		o.WeightedScore = centiPoints(centi)
@@ -604,10 +612,12 @@ func reviewerRubric(body json.RawMessage) json.RawMessage {
 }
 
 // ReviewDecision is a reviewer's scores and rationale for one answer. An answer whose question has no
-// rubric is reviewed with a rationale only: it cannot be scored.
+// rubric is reviewed with a rationale only: it cannot be scored. AIDraftViewed says whether the
+// reviewer opened the AI draft before deciding (ADR-023); it is false when there was no draft.
 type ReviewDecision struct {
-	Scores    map[string]int `json:"scores"`
-	Rationale string         `json:"rationale"`
+	Scores        map[string]int `json:"scores"`
+	Rationale     string         `json:"rationale"`
+	AIDraftViewed bool           `json:"ai_draft_viewed"`
 }
 
 // ReviewOutcomeResult is the outcome of a review decision.
@@ -685,16 +695,17 @@ func (s *Service) SubmitReviewOutcome(ctx context.Context, actor Actor, tenantID
 		if scores != nil {
 			scoresArg = scores
 		}
+		viewed := dec.AIDraftViewed && evalID != nil // without a draft there was nothing to view
 		if _, err := tx.Exec(ctx, `INSERT INTO ati.review_outcomes (id, task_id, tenant_id, session_id, answer_id, reviewer_id, rubric_id, rubric_version,
-			scores, weighted_score_centi, prior_evaluation_id, prior_scores, prior_weighted_score_centi, rationale, decided_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, out.OutcomeID, taskID, sess.TenantID, sess.ID, answerID, reviewerID,
-			a.RubricID, a.RubricVersion, scoresArg, centi, evalID, priorScores, priorCenti, dec.Rationale, now); err != nil {
+			scores, weighted_score_centi, prior_evaluation_id, prior_scores, prior_weighted_score_centi, rationale, ai_draft_viewed, decided_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, out.OutcomeID, taskID, sess.TenantID, sess.ID, answerID, reviewerID,
+			a.RubricID, a.RubricVersion, scoresArg, centi, evalID, priorScores, priorCenti, dec.Rationale, viewed, now); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE ati.review_tasks SET status = 'completed', completed_at = $2 WHERE id = $1`, taskID, now); err != nil {
 			return err
 		}
-		details := map[string]any{"task_id": taskID, "answer_id": answerID, "rubric": nil, "weighted_score_centi": centi}
+		details := map[string]any{"task_id": taskID, "answer_id": answerID, "rubric": nil, "weighted_score_centi": centi, "ai_draft_viewed": viewed}
 		if rubric != nil {
 			details["rubric"] = rubric.Ref()
 		}
@@ -741,7 +752,7 @@ func (s *Service) writeReport(ctx context.Context, tx pgx.Tx, sess *sessionRow, 
 		return err
 	}
 	rows, err := tx.Query(ctx, `SELECT t.answer_id, a.item_id, q.text, o.rubric_id || '@' || o.rubric_version, r.synthetic, o.scores, o.weighted_score_centi,
-			o.rationale, o.reviewer_id, o.decided_at, t.reasons, e.id, e.evaluator_version, e.scores, e.weighted_score_centi, e.confidence, e.routing_reasons, e.evidence
+			o.rationale, o.ai_draft_viewed, o.reviewer_id, o.decided_at, t.reasons, e.id, e.evaluator_version, e.scores, e.weighted_score_centi, e.confidence, e.routing_reasons, e.evidence
 		FROM ati.review_tasks t
 		JOIN ati.review_outcomes o ON o.task_id = t.id
 		JOIN ati.candidate_answers a ON a.id = t.answer_id
@@ -766,6 +777,7 @@ func (s *Service) writeReport(ctx context.Context, tx pgx.Tx, sess *sessionRow, 
 		Scores        map[string]int `json:"scores"` // null: the question has no rubric
 		WeightedScore *float64       `json:"weighted_score"`
 		Rationale     string         `json:"rationale"`
+		AIDraftViewed bool           `json:"ai_draft_viewed"`
 		ReviewerID    string         `json:"reviewer_id"`
 		DecidedAt     time.Time      `json:"decided_at"`
 	}
@@ -788,7 +800,7 @@ func (s *Service) writeReport(ctx context.Context, tx pgx.Tx, sess *sessionRow, 
 		var aiCenti *int
 		var aiConfidence *float64
 		var aiReasons []string
-		if err := rows.Scan(&p.AnswerID, &p.ItemID, &p.Question, &p.Rubric, &p.RubricSynthetic, &p.Reviewed.Scores, &centi, &p.Reviewed.Rationale,
+		if err := rows.Scan(&p.AnswerID, &p.ItemID, &p.Question, &p.Rubric, &p.RubricSynthetic, &p.Reviewed.Scores, &centi, &p.Reviewed.Rationale, &p.Reviewed.AIDraftViewed,
 			&p.Reviewed.ReviewerID, &p.Reviewed.DecidedAt, &p.ReviewReasons, &evalID, &evaluator, &aiScores, &aiCenti, &aiConfidence, &aiReasons, &aiEvidence); err != nil {
 			rows.Close()
 			return err
@@ -828,6 +840,40 @@ func centiPoints(centi *int) *float64 {
 	}
 	v := float64(*centi) / 100
 	return &v
+}
+
+// ReportSummary is one entry of the report list. It carries no scores and no candidate identity,
+// so the list cannot be read as a ranking of candidates.
+type ReportSummary struct {
+	InterviewID string    `json:"interview_id"`
+	GeneratedAt time.Time `json:"generated_at"`
+	Plan        struct {
+		PlanID    string `json:"plan_id"`
+		Version   int    `json:"version"`
+		Synthetic bool   `json:"synthetic"`
+	} `json:"plan"`
+	Language    string `json:"language"`
+	AnswerCount int    `json:"answer_count"`
+}
+
+// ListReports lists the tenant's reports, newest first.
+func (s *Service) ListReports(ctx context.Context, tenantID string, limit int) ([]ReportSummary, error) {
+	rows, err := s.pool.Query(ctx, `SELECT session_id, created_at, body->'plan'->>'plan_id', (body->'plan'->>'version')::int, (body->'plan'->>'synthetic')::boolean,
+			body->>'language', jsonb_array_length(body->'answers')
+		FROM ati.reports WHERE tenant_id = $1 ORDER BY created_at DESC, id LIMIT $2`, tenantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ReportSummary{}
+	for rows.Next() {
+		var r ReportSummary
+		if err := rows.Scan(&r.InterviewID, &r.GeneratedAt, &r.Plan.PlanID, &r.Plan.Version, &r.Plan.Synthetic, &r.Language, &r.AnswerCount); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // Report returns the report of one of the tenant's interviews, once it exists (REPORT_READY).

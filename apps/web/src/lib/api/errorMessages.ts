@@ -5,8 +5,11 @@
 import type { Messages } from '@/i18n';
 import type { ApiError } from './errors';
 
-export function errorMessage(messages: Messages, error: Pick<ApiError, 'code' | 'status'>): string {
-  const { byCode, byStatus, serverError, generic } = messages.errors;
+/** A catalog of error messages: the candidate's (`errors`) or the review console's (`staff.errors`). */
+export type ErrorCatalog = Messages['errors'];
+
+export function errorMessage(catalog: ErrorCatalog, error: Pick<ApiError, 'code' | 'status'>): string {
+  const { byCode, byStatus, serverError, generic } = catalog;
   const byCodeMessage = Object.prototype.hasOwnProperty.call(byCode, error.code) ? byCode[error.code] : undefined;
   if (byCodeMessage !== undefined) return byCodeMessage;
   const byStatusMessage = Object.prototype.hasOwnProperty.call(byStatus, error.status) ? byStatus[error.status] : undefined;

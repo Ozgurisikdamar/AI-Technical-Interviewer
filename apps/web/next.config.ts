@@ -41,6 +41,15 @@ const securityHeaders = [
   { key: 'X-DNS-Prefetch-Control', value: 'off' },
 ];
 
+/**
+ * The review console (ADR-023) never uses the microphone and must never be indexed. Listed after
+ * the global rule: when two rules set the same header, the later one wins.
+ */
+const staffHeaders = [
+  { key: 'Permissions-Policy', value: 'microphone=(), camera=(), geolocation=()' },
+  { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+];
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
@@ -58,6 +67,10 @@ const nextConfig: NextConfig = {
       {
         source: '/:path*',
         headers: securityHeaders,
+      },
+      {
+        source: '/staff/:path*',
+        headers: staffHeaders,
       },
     ];
   },

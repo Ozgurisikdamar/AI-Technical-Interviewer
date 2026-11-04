@@ -80,8 +80,12 @@ def _scan_logs(logs: Path) -> None:
     for name in ("ATI_E2E_LIVEKIT_API_SECRET",):
         secrets.append(os.environ[name])
     secrets += ["ati-dev-agent-service-token", "ati-dev-livekit-webhook-secret", "ati-dev-tier2-service-token"]
+    state = Path(os.environ["ATI_E2E_STATE_DIR"])
     for name in ("staff_token", "reviewer_token"):
-        secrets.append((Path(os.environ["ATI_E2E_STATE_DIR"]) / name).read_text().strip())
+        secrets.append((state / name).read_text().strip())
+    # Review console session cookies the browser flow received (ADR-023).
+    if (state / "browser_secrets").exists():
+        secrets += [line for line in (state / "browser_secrets").read_text().splitlines() if line]
     problems = []
     for log in sorted(logs.glob("*.log")):
         text = log.read_text(errors="replace")

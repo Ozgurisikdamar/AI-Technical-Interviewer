@@ -6,7 +6,6 @@ package api
 
 import (
 	"net/http"
-	"slices"
 	"strconv"
 
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
@@ -79,20 +78,6 @@ func (s *Server) tier2Complete(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// staffWith authenticates a staff token holding one of the roles.
-func (s *Server) staffWith(w http.ResponseWriter, r *http.Request, roles ...string) (principal, bool) {
-	staff, ok := s.authStaff(r)
-	if !ok {
-		unauthorized(w, r)
-		return principal{}, false
-	}
-	if !slices.Contains(roles, staff.Role) {
-		httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeForbidden, "role not permitted")
-		return principal{}, false
-	}
-	return principal{kind: kindStaff, staff: staff}, true
-}
-
 // Reviewers and administrators decide reviews; recruiters, reviewers and administrators read reports.
 var (
 	reviewRoles = []string{"reviewer", "admin"}
@@ -100,7 +85,7 @@ var (
 )
 
 func (s *Server) listReviewTasks(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.staffWith(w, r, reviewRoles...)
+	p, ok := s.staffWith(w, r, bearerOrSession, reviewRoles...)
 	if !ok {
 		return
 	}
@@ -108,16 +93,11 @@ func (s *Server) listReviewTasks(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = "open"
 	}
-	limit := 50
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 || n > 200 {
-			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "limit must be between 1 and 200")
-			return
-		}
-		limit = n
+	limit, ok := queryLimit(w, r)
+	if !ok {
+		return
 	}
-	tasks, err := s.svc.ReviewQueue(r.Context(), p.staff.TenantID, status, limit)
+	tasks, err := s.svc.ReviewQueue(r.Context(), p.staff.TenantID, status, r.URL.Query().Get("interview_id"), limit)
 	if err != nil {
 		s.writeError(w, r, err)
 		return
@@ -125,8 +105,40 @@ func (s *Server) listReviewTasks(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"review_tasks": tasks})
 }
 
+// queryLimit reads the optional limit parameter of a list (1 to 200, default 50).
+func queryLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return 50, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 200 {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "limit must be between 1 and 200")
+		return 0, false
+	}
+	return n, true
+}
+
+// listReports lists the tenant's reports without their content: no scores, no candidate identity.
+func (s *Server) listReports(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.staffWith(w, r, bearerOrSession, reportRoles...)
+	if !ok {
+		return
+	}
+	limit, ok := queryLimit(w, r)
+	if !ok {
+		return
+	}
+	reports, err := s.svc.ListReports(r.Context(), p.staff.TenantID, limit)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"reports": reports})
+}
+
 func (s *Server) getReviewTask(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.staffWith(w, r, reviewRoles...)
+	p, ok := s.staffWith(w, r, bearerOrSession, reviewRoles...)
 	if !ok {
 		return
 	}
@@ -139,7 +151,7 @@ func (s *Server) getReviewTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) submitReviewOutcome(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.staffWith(w, r, reviewRoles...)
+	p, ok := s.staffWith(w, r, bearerOrSession, reviewRoles...)
 	if !ok {
 		return
 	}
@@ -161,7 +173,7 @@ func (s *Server) submitReviewOutcome(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.staffWith(w, r, reportRoles...)
+	p, ok := s.staffWith(w, r, bearerOrSession, reportRoles...)
 	if !ok {
 		return
 	}

@@ -197,18 +197,35 @@ func TestPurgeExpiredUsesTheConfiguredStorage(t *testing.T) {
 	}
 }
 
-// Webhook dedupe rows and idempotency records (whose replays hold response bodies) are purged once
-// they are older than the window; the purge is audited and keeps recent rows.
+// Webhook dedupe rows, idempotency records (whose replays hold response bodies) and staff sessions
+// that ended are purged once they are older than the window; the purge is audited and keeps
+// recent rows and live sessions.
 func TestPurgeOperationalRecordsIsBoundedAndAudited(t *testing.T) {
 	db := testdb.New(t)
 	owner := db.URLFor("postgres")
+	tenant := admin(t, "create-tenant", noEnv, "--url", owner, "--name", "Acme")
+	staff := ids.New(ids.Staff)
 	for _, q := range []string{
 		`INSERT INTO ati.webhook_events (event_id, event_type, created_unix, received_at) VALUES ('EV_old', 'participant_left', 1, now() - interval '3 days'), ('EV_new', 'participant_left', 1, now())`,
 		`INSERT INTO ati.idempotency_records (principal, idem_key, route, request_sha256, status, response, created_at) VALUES
 			('p', 'old-key-0001', 'POST /x', 'h', 201, '{"body": {"candidate_ref": "ref"}}', now() - interval '3 days'),
 			('p', 'new-key-0001', 'POST /x', 'h', 201, '{}', now())`,
+		`INSERT INTO ati.staff_tokens (id, tenant_id, token_hash, role, label, expires_at) VALUES ('` + staff + `', '` + tenant + `', '` + ids.Hash(ids.Token()) + `', 'reviewer', 'r', now() + interval '30 days')`,
 	} {
 		if _, err := db.Owner.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Expired long ago, revoked long ago, revoked just now, and live: only the first two go.
+	for _, c := range []struct{ created, expires, revoked string }{
+		{"4 days", "3 days", ""}, {"4 days", "-1 day", "3 days"}, {"1 hour", "-7 hours", "1 minute"}, {"1 hour", "-7 hours", ""},
+	} {
+		revoked := "NULL"
+		if c.revoked != "" {
+			revoked = "now() - interval '" + c.revoked + "'"
+		}
+		if _, err := db.Owner.Exec(ctx, `INSERT INTO ati.staff_sessions (id, staff_token_id, token_hash, created_at, expires_at, revoked_at)
+			VALUES ($1, $2, $3, now() - $4::interval, now() - $5::interval, `+revoked+`)`, ids.New(ids.StaffSession), staff, ids.Hash(ids.Token()), c.created, c.expires); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -216,15 +233,62 @@ func TestPurgeOperationalRecordsIsBoundedAndAudited(t *testing.T) {
 		t.Fatal("a window shorter than an hour must be refused")
 	}
 	out := admin(t, "purge-operational", noEnv, "--url", owner)
-	if out != "purged 1 webhook event(s) and 1 idempotency record(s)" {
+	if out != "purged 1 webhook event(s), 1 idempotency record(s) and 2 staff session(s)" {
 		t.Fatalf("output: %q", out)
 	}
-	var webhooks, replays, audits int
-	if err := db.Owner.QueryRow(ctx, `SELECT (SELECT count(*) FROM ati.webhook_events), (SELECT count(*) FROM ati.idempotency_records),
-		(SELECT count(*) FROM ati.audit_logs WHERE action = 'retention.purge_operational' AND details->>'webhook_events' = '1')`).Scan(&webhooks, &replays, &audits); err != nil {
+	var webhooks, replays, sessions, audits int
+	if err := db.Owner.QueryRow(ctx, `SELECT (SELECT count(*) FROM ati.webhook_events), (SELECT count(*) FROM ati.idempotency_records), (SELECT count(*) FROM ati.staff_sessions),
+		(SELECT count(*) FROM ati.audit_logs WHERE action = 'retention.purge_operational' AND details->>'webhook_events' = '1' AND details->>'staff_sessions' = '2')`).
+		Scan(&webhooks, &replays, &sessions, &audits); err != nil {
 		t.Fatal(err)
 	}
-	if webhooks != 1 || replays != 1 || audits != 1 {
-		t.Fatalf("webhooks=%d replays=%d audits=%d", webhooks, replays, audits)
+	if webhooks != 1 || replays != 1 || sessions != 2 || audits != 1 {
+		t.Fatalf("webhooks=%d replays=%d sessions=%d audits=%d", webhooks, replays, sessions, audits)
+	}
+}
+
+// Revoking a staff token takes effect at once for the token and every browser session made from
+// it; it is audited, repeatable, and the token list shows the result without any secret.
+func TestRevokingAStaffTokenEndsItsBrowserSessions(t *testing.T) {
+	db := testdb.New(t)
+	owner := db.URLFor("postgres")
+	tenant := admin(t, "create-tenant", noEnv, "--url", owner, "--name", "Acme")
+	token := admin(t, "create-staff-token", noEnv, "--url", owner, "--tenant", tenant, "--role", "reviewer", "--label", "reviewer-a", "--ttl", "1h")
+	svc := service(t, db)
+	sess, err := svc.StartStaffSession(ctx, interview.Actor{}, ids.Hash(token), "", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := admin(t, "list-staff-tokens", noEnv, "--url", owner, "--tenant", tenant)
+	id := sess.Principal.TokenID
+	if !strings.Contains(list, id) || !strings.Contains(list, "reviewer-a") || strings.Contains(list, token) || strings.Contains(list, ids.Hash(token)) {
+		t.Fatalf("token list: %q", list)
+	}
+	for name, args := range map[string][]string{"no id": {"--url", owner}, "not an id": {"--url", owner, "--token-id", "ati_st_x"}} {
+		if err := run(ctx, "revoke-staff-token", args, io.Discard, noEnv); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if err := run(ctx, "revoke-staff-token", []string{"--url", owner, "--token-id", "stf_unknown0000000000000"}, io.Discard, noEnv); err == nil {
+		t.Error("an unknown token was revoked")
+	}
+	if out := admin(t, "revoke-staff-token", noEnv, "--url", owner, "--token-id", id); out != "revoked "+id+" and 1 browser session(s)" {
+		t.Fatalf("output: %q", out)
+	}
+	if _, err := svc.AuthenticateStaff(ctx, ids.Hash(token)); !errors.Is(err, interview.ErrNotFound) {
+		t.Fatalf("the revoked token still authenticates: %v", err)
+	}
+	if _, err := svc.AuthenticateStaffSession(ctx, ids.Hash(sess.Token)); !errors.Is(err, interview.ErrNotFound) {
+		t.Fatalf("its browser session still authenticates: %v", err)
+	}
+	if out := admin(t, "revoke-staff-token", noEnv, "--url", owner, "--token-id", id); out != "revoked "+id+" and 0 browser session(s)" {
+		t.Fatalf("repeated revocation: %q", out)
+	}
+	var audits int
+	if err := db.Owner.QueryRow(ctx, `SELECT count(*) FROM ati.audit_logs WHERE action = 'staff_token.revoke' AND subject_id = $1 AND tenant_id = $2`, id, tenant).Scan(&audits); err != nil || audits != 2 {
+		t.Fatalf("audits=%d %v", audits, err)
+	}
+	if list := admin(t, "list-staff-tokens", noEnv, "--url", owner, "--tenant", tenant); strings.Count(list, "\n") != 1 || strings.HasSuffix(strings.TrimSpace(list), "-") {
+		t.Fatalf("the list must show the revocation: %q", list)
 	}
 }
