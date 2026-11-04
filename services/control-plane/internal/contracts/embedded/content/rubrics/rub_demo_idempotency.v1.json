@@ -1,0 +1,53 @@
+{
+  "rubric_id": "rub_demo_idempotency",
+  "version": 1,
+  "status": "draft",
+  "synthetic": true,
+  "title": "Idempotent payment API under client retries (synthetic demo rubric, not validated)",
+  "languages": ["en", "tr"],
+  "weights": {"technical_accuracy": 0.40, "architecture_maturity": 0.25, "edge_case_awareness": 0.20, "claim_support": 0.15},
+  "criteria": [
+    {
+      "criterion_id": "c_idempotency_key",
+      "dimension": "technical_accuracy",
+      "description": "Uses a client-supplied idempotency key stored with the request and its outcome, and returns the stored outcome when the request is retried.",
+      "reference_ids": ["ref_idempotency_key_header"],
+      "indicators": {"en": ["idempotency key", "idempotent", "request id"], "tr": ["idempotency", "anahtar", "istek kimliği"]}
+    },
+    {
+      "criterion_id": "c_atomic_record",
+      "dimension": "technical_accuracy",
+      "description": "Records the key and the payment effect atomically, in one transaction or behind a unique constraint, so concurrent retries cannot both succeed.",
+      "reference_ids": ["ref_idempotency_key_header"],
+      "indicators": {"en": ["unique constraint", "transaction", "atomic"], "tr": ["benzersiz", "transaction", "atomik"]}
+    },
+    {
+      "criterion_id": "c_provider_boundary",
+      "dimension": "architecture_maturity",
+      "description": "Handles the boundary with the external payment provider: the provider's own idempotency, an outbox, or reconciliation of unknown outcomes.",
+      "reference_ids": ["ref_transactional_outbox"],
+      "indicators": {"en": ["outbox", "reconcil", "payment provider"], "tr": ["outbox", "mutabakat", "ödeme sağlayıcı"]}
+    },
+    {
+      "criterion_id": "c_failure_cases",
+      "dimension": "edge_case_awareness",
+      "description": "Covers duplicates in flight, timeouts with an unknown outcome, key expiry, and reuse of a key with a different request body.",
+      "reference_ids": ["ref_idempotency_key_header"],
+      "indicators": {"en": ["in progress", "timeout", "expire", "different body", "conflict"], "tr": ["devam eden", "zaman aşımı", "süresi", "çakışma"]}
+    },
+    {
+      "criterion_id": "c_scenarios",
+      "dimension": "claim_support",
+      "description": "Justifies the design with concrete failure scenarios rather than bare assertion.",
+      "reference_ids": [],
+      "indicators": {"en": ["for example", "if the client", "because"], "tr": ["örneğin", "çünkü", "eğer istemci"]}
+    }
+  ],
+  "references": [
+    {"reference_id": "ref_idempotency_key_header", "title": "IETF HTTPAPI draft: The Idempotency-Key HTTP Header Field",
+     "url": "https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/",
+     "summary": "A client sends a unique key with a non-idempotent request; the server stores the outcome and returns it for retries with the same key, and rejects reuse with a different payload."},
+    {"reference_id": "ref_transactional_outbox", "title": "Pattern: Transactional outbox", "url": "https://microservices.io/patterns/data/transactional-outbox.html",
+     "summary": "A service writes the message it must send in the same database transaction as its state change, and a relay publishes it afterwards."}
+  ]
+}

@@ -21,6 +21,7 @@ from candidate import (
     LLM_DROP,
     LLM_TIMEOUT,
     LONG,
+    POST_INTERVIEW,
     QUIET,
     Burst,
     Candidate,
@@ -130,9 +131,9 @@ async def test_turkish_interview_uses_each_questions_turn_profile(stack: dict[st
         await listen_to_prompt(c)
         for _ in range(6):
             view = await answer(c)
-            if view["state"] == "INTERVIEW_COMPLETED":
+            if view["state"] in POST_INTERVIEW:
                 break
-        assert view["state"] == "INTERVIEW_COMPLETED", view
+        assert view["state"] in POST_INTERVIEW, view
         await c.wait_agent_speaks(timeout=10)  # the Turkish closing remark
         await asyncio.wait_for(c.disconnected.wait(), 30)
     finally:

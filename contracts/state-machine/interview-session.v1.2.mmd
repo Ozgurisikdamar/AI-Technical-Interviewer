@@ -1,4 +1,4 @@
-%% Generated from interview-session.v1.1.json by contracts/tools/generate_state_diagram.py.
+%% Generated from interview-session.v1.2.json by contracts/tools/generate_state_diagram.py.
 %% Do not edit by hand.
 stateDiagram-v2
   [*] --> CREATED
@@ -18,7 +18,7 @@ stateDiagram-v2
   INTERVIEW_COMPLETED --> EVALUATION_PENDING: evaluation_enqueued [phase 2]
   EVALUATION_PENDING --> HUMAN_REVIEW: review_required [phase 2]
   EVALUATION_PENDING --> REPORT_READY: report_ready [phase 2]
-  HUMAN_REVIEW --> REPORT_READY: review_completed [phase 5]
+  HUMAN_REVIEW --> REPORT_READY: review_completed [phase 2]
   CALIBRATION --> PAUSED: pause (ADR-012)
   CANDIDATE_SPEAKING --> PAUSED: pause (ADR-012)
   PAUSED --> CALIBRATION: resume (ADR-012)

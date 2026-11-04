@@ -17,5 +17,6 @@ The records below are **Proposed**. They capture decisions needed to implement P
 | [ADR-019](./ADR-019-repository-layout-and-contract-locations.md) | Repository layout and contract locations | Proposed |
 | [ADR-020](./ADR-020-environment-gating-and-non-production-safeguards.md) | Environment gating and non-production safeguards | Proposed |
 | [ADR-021](./ADR-021-model-registry-endpoint-pinning-and-duplex-assessment.md) | Provider model registry, endpoint pinning and the full-duplex assessment | Proposed |
+| [ADR-022](./ADR-022-tier2-evaluation-pipeline-mvp.md) | Tier-2 evaluation pipeline MVP: outbox relay, Redis Streams, deterministic validation, mandatory human review (amends ADR-012: contract v1.2) | Proposed |
 
 "Owner-approved direction" means the project owner chose the option when it was raised as a conflict between documents; the full record still needs architecture review.

@@ -1,12 +1,13 @@
 {
   "$schema": "./state-machine.schema.json",
   "id": "interview-session",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "status": "proposed",
-  "description": "Interview session lifecycle. Extends the BLUEPRINT section 4 diagram (v1) with the pause, resume, withdrawal and expiry transitions recorded in ADR-012. The control plane is the only component that executes transitions.",
+  "description": "Interview session lifecycle. Extends the BLUEPRINT section 4 diagram (v1) with the pause, resume, withdrawal and expiry transitions recorded in ADR-012. The control plane is the only component that executes transitions. Version 1.2 moves T17 (human review completed) from phase 5 to phase 2, because every evaluation is human-reviewed in the Phase 2 MVP (ADR-022); states, transitions, guards and invariants are unchanged.",
   "source_documents": [
     "docs/architecture/BLUEPRINT.md#4-interview-state-machine",
-    "docs/architecture/adr/ADR-012-interview-state-machine-v1-1.md"
+    "docs/architecture/adr/ADR-012-interview-state-machine-v1-1.md",
+    "docs/architecture/adr/ADR-022-tier2-evaluation-pipeline-mvp.md"
   ],
   "initial_state": "CREATED",
   "actors": {
@@ -14,7 +15,7 @@
     "tier1_agent": "Tier-1 voice agent holding a valid session lease. Deterministic agent code issues these calls; the language model can only reach request R01.",
     "system": "Control-plane internal logic: the deterministic flow engine, signed LiveKit webhooks, lease and deadline sweepers.",
     "tier2_pipeline": "Tier-2 evaluation pipeline acting only through the control-plane API (wired in Phase 2).",
-    "reviewer": "Authenticated human reviewer (wired in Phase 5)."
+    "reviewer": "Authenticated human reviewer (wired in Phase 2 for review outcomes, ADR-022)."
   },
   "states": [
     {"name": "CREATED", "kind": "pre_interview", "terminal": false, "transient": false, "requires_open_activation": false, "description": "Interview created by staff; invitation issued, not yet exchanged."},
@@ -29,7 +30,7 @@
     {"name": "INTERVIEW_COMPLETED", "kind": "post_interview", "terminal": false, "transient": false, "requires_open_activation": false, "description": "All plan items answered; closing remarks only."},
     {"name": "EVALUATION_PENDING", "kind": "post_interview", "terminal": false, "transient": false, "requires_open_activation": false, "description": "Evaluation job accepted (Phase 2)."},
     {"name": "HUMAN_REVIEW", "kind": "post_interview", "terminal": false, "transient": false, "requires_open_activation": false, "description": "Routed to accountable human review (Phase 2/5)."},
-    {"name": "REPORT_READY", "kind": "post_interview", "terminal": true, "transient": false, "requires_open_activation": false, "description": "Approved report available (Phase 5)."},
+    {"name": "REPORT_READY", "kind": "post_interview", "terminal": true, "transient": false, "requires_open_activation": false, "description": "Report available after human review (Phase 2, ADR-022)."},
     {"name": "CANCELLED", "kind": "terminal", "terminal": true, "transient": false, "requires_open_activation": false, "description": "Consent declined, candidate withdrew, or the pause expired. No completion event is emitted."}
   ],
   "guards": {
@@ -75,7 +76,7 @@
     {"id": "T14", "from": "INTERVIEW_COMPLETED", "to": "EVALUATION_PENDING", "event": "evaluation_enqueued", "actors": ["system"], "guards": [], "effects": [], "source": "diagram", "phase": 2},
     {"id": "T15", "from": "EVALUATION_PENDING", "to": "HUMAN_REVIEW", "event": "review_required", "actors": ["tier2_pipeline"], "guards": [], "effects": [], "source": "diagram", "phase": 2},
     {"id": "T16", "from": "EVALUATION_PENDING", "to": "REPORT_READY", "event": "report_ready", "actors": ["tier2_pipeline"], "guards": [], "effects": [], "source": "diagram", "phase": 2},
-    {"id": "T17", "from": "HUMAN_REVIEW", "to": "REPORT_READY", "event": "review_completed", "actors": ["reviewer"], "guards": [], "effects": [], "source": "diagram", "phase": 5},
+    {"id": "T17", "from": "HUMAN_REVIEW", "to": "REPORT_READY", "event": "review_completed", "actors": ["reviewer"], "guards": [], "effects": [], "source": "diagram", "phase": 2},
     {"id": "T18", "from": "CALIBRATION", "to": "PAUSED", "event": "pause", "actors": ["candidate", "system", "tier1_agent"], "guards": [], "effects": ["record_paused_from"], "source": "ADR-012", "phase": 1},
     {"id": "T19", "from": "CANDIDATE_SPEAKING", "to": "PAUSED", "event": "pause", "actors": ["candidate", "system", "tier1_agent"], "guards": [], "effects": ["record_paused_from", "close_activation", "cancel_completion_request", "stop_recording"], "source": "ADR-012", "phase": 1},
     {"id": "T20", "from": "PAUSED", "to": "CALIBRATION", "event": "resume", "actors": ["candidate"], "guards": ["paused_from_calibration"], "effects": ["end_pause"], "source": "ADR-012", "phase": 1},

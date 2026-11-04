@@ -1,8 +1,8 @@
 # Media end-to-end tests
 
-A synthetic candidate (livekit rtc participant plus the public API) runs complete voice interviews over real
-WebRTC against the local stack from `tools/dev/stack.sh`: PostgreSQL 16, LiveKit OSS, the control plane and the
-Tier-1 agent with the **scripted engine**.
+A synthetic candidate (livekit rtc participant plus the public API) runs complete voice and text interviews over
+real WebRTC against the local stack from `tools/dev/stack.sh`: PostgreSQL 16, Redis, LiveKit OSS, the control plane,
+the Tier-1 agent with the **scripted engine**, and the Tier-2 worker with the deterministic **reference evaluator**.
 
 ```bash
 make e2e
@@ -16,7 +16,9 @@ Set `ATI_E2E_REUSE_STACK=1` to run against a stack that is already up (`make sta
 
 | Test | Covers |
 |---|---|
-| `test_full_interview_follows_the_plan_and_hands_off_ids_only` | calibration, every plan item including the unconditional follow-up, completion, closing remark, room deletion; answers, outbox (identifiers only), session events, audit, usage |
+| `test_full_interview_follows_the_plan_and_hands_off_ids_only` | calibration, every plan item including the unconditional follow-up, completion, closing remark, room deletion; answers, outbox (identifiers only), session events, audit, usage; Tier-2 abstains on every scripted (synthetic) answer and every answer still reaches review |
+| `test_typed_interview_is_evaluated_reviewed_and_reported` (`test_tier2.py`) | a typed interview through the outbox relay, Redis and the worker: T11 → T14 → T15, every attempt accepted by the control plane's validator with the expected reference scores (an injected instruction changes none), the reviewer's task view (no rubric indicators, no candidate identity), RBAC (a recruiter cannot decide, the candidate can read nothing), outcomes → T17 and the staff-only report, a candidate view without scores, and a redelivered completion that changes nothing |
+| `test_dead_lettered_interview_falls_back_to_human_review` (`test_tier2.py`) | with the worker stopped, the relay's entry is replaced by a malformed one; after restart it is dead-lettered and the interview goes to review with `pipeline_failed` on every task |
 | `test_barge_in_stops_the_interviewer_and_keeps_the_answer_open` | barge-in stop latency measured at the candidate (audio level); interrupted interviewer segments; no answer closed by a barge-in |
 | `test_disconnect_pauses_and_resume_reasks_as_a_new_activation` | LiveKit webhook to PAUSED, rejoin, resume as a new activation of the same item, one answer spanning both activations |
 | `test_pause_stops_audio_intake` | no candidate segment is created while paused; the interviewer stays silent |
@@ -42,7 +44,7 @@ Set `ATI_E2E_REUSE_STACK=1` to run against a stack that is already up (`make sta
 | `test_no_microphone_device_falls_back_to_text` (`browser/no_device_flow.mjs`) | no capture device at all: "no microphone was found", text mode offered |
 | `test_leaving_the_page_pauses_and_returning_resumes` (`browser/reconnect_flow.mjs`) | leaving the room page pauses as `network`; returning rejoins the media room while paused (no microphone published) and resumes as a new activation of the same question |
 | accessibility (every browser flow) | axe-core 4.14.0 (pinned in `browser/package-lock.json`) audits each screen against WCAG 2.1 A/AA after transitions settle; serious or critical violations fail the flow |
-| post-run scans | no credential, JWT or transcript text in any process log; no audio file written anywhere |
+| post-run scans | no credential, JWT or transcript text in any process log (including the Tier-2 worker's); no audio file written anywhere |
 
 ## Limits and preconditions
 
@@ -55,6 +57,8 @@ Set `ATI_E2E_REUSE_STACK=1` to run against a stack that is already up (`make sta
 - **Autoplay.** Automated Chromium grants a user activation on every scripted evaluation, so blocked autoplay (the
   enable-audio control) cannot be reproduced end to end; the web unit tests cover it. Automated accessibility checks
   are not a screen-reader test.
+- **No evaluator model.** The Tier-2 worker runs the reference evaluator, which matches the synthetic rubrics'
+  indicator phrases; the OpenAI and Anthropic evaluators are not exercised here.
 - **No recording service.** Recording is off by default, and this environment has no egress service: the
   recording test can only show that recording fails closed. A real recording (egress, encrypted storage) is
   unverified.

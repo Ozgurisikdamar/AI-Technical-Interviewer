@@ -7,7 +7,9 @@
       "purpose": "tier1_realtime",
       "status": "deprecated",
       "shutdown_on": "2027-01-20",
-      "replacements": ["gpt-realtime-2.1"],
+      "replacements": [
+        "gpt-realtime-2.1"
+      ],
       "evidence": null,
       "source": "https://developers.openai.com/api/docs/deprecations",
       "notes": "Deprecation announced 2026-07-20. Was the Phase 1 default; never verified against the live provider here."
@@ -29,7 +31,10 @@
       "purpose": "tier1_transcription",
       "status": "deprecated",
       "shutdown_on": "2027-02-26",
-      "replacements": ["gpt-transcribe", "gpt-live-transcribe"],
+      "replacements": [
+        "gpt-transcribe",
+        "gpt-live-transcribe"
+      ],
       "evidence": null,
       "source": "https://developers.openai.com/api/docs/deprecations",
       "notes": "Deprecation announced 2026-08-26. Was the Phase 1 default input-audio transcription model."
@@ -55,6 +60,28 @@
       "evidence": null,
       "source": "https://developers.openai.com/api/docs/deprecations",
       "notes": "Named replacement aimed at streaming transcription while audio arrives. Unverified as an input-audio transcription model of a conversation session."
+    },
+    {
+      "id": "claude-opus-5-5",
+      "provider": "anthropic",
+      "purpose": "tier2_evaluator",
+      "status": "candidate",
+      "shutdown_on": null,
+      "replacements": [],
+      "evidence": null,
+      "source": "https://platform.claude.com/docs/en/about-claude/models/overview",
+      "notes": "Messages API with structured outputs (output_config.format); adaptive thinking cannot be disabled, effort set explicitly; forced tool choice is rejected. Text input only. Unverified: no provider key in this repository."
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "provider": "openai",
+      "purpose": "tier2_evaluator",
+      "status": "candidate",
+      "shutdown_on": null,
+      "replacements": [],
+      "evidence": null,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+      "notes": "Responses API with Structured Outputs; reasoning effort low to max (default medium). Text input only. Unverified: no provider key in this repository."
     }
   ]
 }

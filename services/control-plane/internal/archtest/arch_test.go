@@ -56,12 +56,30 @@ func TestFlowEngineIsPure(t *testing.T) {
 	}
 }
 
-// No control-plane package may contain or import evaluation code: Tier-2 is a separate deployable
-// (ADR-001) and its output must never reach the live flow (ADR-015).
-func TestNoEvaluationCodeInControlPlane(t *testing.T) {
+// Tier-2 evaluation is a separate deployable (ADR-001): no control-plane package runs an evaluator
+// (nothing named tier2). The control plane only validates evaluator output (ADR-007, ADR-022), in
+// internal/evaluation, which must stay a pure function of its inputs: no network, database, media,
+// Tier-1 or HTTP code, so evaluator output can never reach the live flow through it (ADR-015).
+func TestEvaluationCodeIsOnlyAPureValidator(t *testing.T) {
 	for _, p := range allPackages(t) {
-		if strings.Contains(strings.ToLower(p), "evaluat") || strings.Contains(strings.ToLower(p), "tier2") {
-			t.Errorf("evaluation package inside the control plane: %s", p)
+		lower := strings.ToLower(p)
+		if strings.Contains(lower, "tier2") {
+			t.Errorf("Tier-2 package inside the control plane: %s", p)
+		}
+		if strings.Contains(lower, "evaluat") && p != module+"/internal/evaluation" {
+			t.Errorf("evaluation code outside internal/evaluation: %s", p)
+		}
+	}
+	allowedInternal := map[string]bool{module + "/internal/evaluation": true, module + "/internal/contracts": true, module + "/internal/contracts/schema": true}
+	for _, d := range deps(t, "internal/evaluation") {
+		if strings.HasPrefix(d, module) && !allowedInternal[d] {
+			t.Errorf("internal/evaluation depends on %s", d)
+		}
+	}
+	forbidden := map[string]bool{"net": true, "net/http": true, "database/sql": true, "os": true, "os/exec": true, "time": true}
+	for _, d := range directImports(t, "internal/evaluation") {
+		if forbidden[d] || strings.HasPrefix(d, "github.com/jackc/") || strings.HasPrefix(d, "github.com/livekit/") {
+			t.Errorf("internal/evaluation imports %s directly", d)
 		}
 	}
 }

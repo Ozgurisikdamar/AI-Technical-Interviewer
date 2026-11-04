@@ -3,10 +3,11 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 CP := services/control-plane
 AGENT := services/tier1-voice-agent
+TIER2 := services/tier2-evaluator
 WEB := apps/web
 STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.2
 
-.PHONY: help checks contracts-test sync-contracts go-lint go-test agent-test web-test e2e stack-up stack-down pg-start pg-stop test provider-smoke audit
+.PHONY: help checks contracts-test sync-contracts go-lint go-test agent-test tier2-test web-test e2e stack-up stack-down pg-start pg-stop test provider-smoke audit
 
 help:
 	@echo "make checks          repository hygiene, Python import boundaries, generated diagram"
@@ -15,6 +16,7 @@ help:
 	@echo "make go-lint         go vet + staticcheck for the control plane"
 	@echo "make go-test         control-plane tests (race detector; starts a local PostgreSQL)"
 	@echo "make agent-test      Tier-1 agent: ruff, mypy (strict), pytest"
+	@echo "make tier2-test      Tier-2 evaluator: ruff, mypy (strict), pytest (uses a local redis-server)"
 	@echo "make web-test        web UI: lint, typecheck, unit tests, production build, bundle scan"
 	@echo "make e2e             media E2E over real WebRTC (starts the local stack; scripted engine, loopback)"
 	@echo "make stack-up|stack-down  local stack: PostgreSQL, LiveKit, control plane, scripted agent"
@@ -34,6 +36,7 @@ contracts-test:
 sync-contracts:
 	tools/dev/sync-go-contracts.sh
 	tools/dev/sync-agent-contracts.sh
+	tools/dev/sync-tier2-contracts.sh
 
 go-lint:
 	cd $(CP) && test -z "$$(gofmt -l .)" || (gofmt -l . && echo "gofmt needed" && exit 1)
@@ -53,6 +56,11 @@ agent-test:
 	cd $(AGENT) && uv run --frozen ruff check src tests && uv run --frozen ruff format --check src tests
 	cd $(AGENT) && uv run --frozen mypy
 	cd $(AGENT) && uv run --frozen pytest -q
+
+tier2-test:
+	cd $(TIER2) && uv run --frozen ruff check src tests && uv run --frozen ruff format --check src tests
+	cd $(TIER2) && uv run --frozen mypy
+	cd $(TIER2) && uv run --frozen pytest -q
 
 web-test:
 	cd $(WEB) && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm scan-bundle
@@ -74,4 +82,4 @@ audit:
 provider-smoke:
 	cd $(AGENT) && uv run --frozen python -m tier1_voice_agent.provider_smoke --out ../../docs/status/evidence
 
-test: checks contracts-test go-lint go-test agent-test web-test
+test: checks contracts-test go-lint go-test agent-test tier2-test web-test

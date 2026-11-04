@@ -9,7 +9,9 @@ Status values:
 - **Blocked**: cannot run in the current environment (reason given).
 - **Phase N**: belongs to a later phase.
 
-Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `services/tier1-voice-agent/tests` (A), `apps/web` unit and Playwright tests (W), `tests/e2e` media tests (E).
+Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `services/tier1-voice-agent/tests` (A), `services/tier2-evaluator/tests` (T2), `apps/web` unit and Playwright tests (W), `tests/e2e` media, browser and pipeline tests (E).
+
+Tier-2 rows are verified with the deterministic **reference** evaluator and with model adapters against recorded-shape provider responses. No live evaluator model has been called (no provider credentials), and evaluator quality against human labels is unmeasured (Milestone C).
 
 ## Audio and network (TM §5)
 
@@ -46,16 +48,16 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | ID | Scenario | Phase | Test | Status |
 |---|---|---|---|---|
 | QA-SD-01 | Duplicate answer event | 1 | G: `TestConcurrentCompletionFinalizesExactlyOnce`; E: one answer per item | Verified |
-| QA-SD-02 | Duplicate evaluation job | 2 | — | Phase 2 |
+| QA-SD-02 | Duplicate evaluation job | 2 | G: `TestTier2HandoffReviewAndReport` (a redelivered attempt returns the first evaluation and adds no attempt), `TestControlPlaneWritesEvaluationRecordsOnce`; T2: `test_redelivery_skips_answers_this_evaluator_already_evaluated`; E: `test_typed_interview_is_evaluated_reviewed_and_reported` (a redelivered completion changes nothing) | Verified |
 | QA-SD-03 | Out-of-order transcript segments | 1 | G: `TestAttributionUsesSpeechTimeNotArrivalTime`, `TestConcurrentIngestionAssignsGaplessSequences` | Verified |
 | QA-SD-04 | Missing transcript segment | 1 | G: `TestCandidateButtonPathWaitsForFlushOrDeadline`; A: undelivered segments keep the manifest incomplete | Verified |
-| QA-SD-05 | Transcript revision after evaluation | 2 | — | Phase 2 (append-only versions in place from M3) |
+| QA-SD-05 | Transcript revision after evaluation | 2 | G: an attempt for another transcript version is refused (`TestTier2HandoffReviewAndReport`); the canonical key includes the transcript version; T2: `test_transcript_revision_between_read_and_report_retries_the_delivery` | Binding Verified; no transcript-revision workflow exists yet |
 | QA-SD-06 | Concurrent state transition requests | 1 | G: `TestConcurrentPauseResumeStorm`, `TestStaleVersionsAreRejected` (race detector) | Verified |
 | QA-SD-07 | Session pause/resume race | 1 | G: `TestConcurrentPauseResumeStorm` | Verified |
 | QA-SD-08 | Worker restart during processing | 1 | E: `test_agent_crash_is_replaced_without_duplicate_agents`; G: `TestLeaseExpiryPausesTheInterview`, `TestMissingAgentPausesAfterTheDispatchTimeout` | Verified (G); E: Verified (scripted, loopback) |
 | QA-SD-09 | Database timeout and recovery | 6 | — | Phase 6 |
-| QA-SD-10 | Queue consumer crash and reclaim | 2 | — | Phase 2 |
-| QA-SD-11 | Qdrant unavailability, canonical fallback | 2 | — | Phase 2 |
+| QA-SD-10 | Queue consumer crash and reclaim | 2 | T2 (real redis-server): `test_crashed_consumer_entries_are_reclaimed_by_another`, `test_retry_later_leaves_the_entry_pending_until_reclaimed`, `test_slow_handling_keeps_its_claim`, `test_poison_entry_is_dead_lettered_after_max_deliveries`, `test_failed_dead_letter_report_keeps_the_entry_pending`; G: `TestRelayStopsAtAFailureAndResumesInOrder`; E: `test_dead_lettered_interview_falls_back_to_human_review` | Verified |
+| QA-SD-11 | Qdrant unavailability, canonical fallback | 2 | — | Not built: ADR-022 defers Qdrant until a benchmark shows retrieval helps; PostgreSQL is the only store |
 
 ## AI and prompt security (TM §5, P&E §7)
 
@@ -63,16 +65,16 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 |---|---|---|---|---|
 | QA-AI-01 | Spoken "ignore all previous instructions" | 1 | A: candidate text never in instructions; E: `test_prompt_injection_changes_nothing` | Verified (A); E: Verified (scripted, loopback); live model Blocked: no provider credentials |
 | QA-AI-02 | Ask for system prompt or hidden rubric | 1 | C/G: rubric never in the Tier-1 context; A: `test_monitor_flags_disclosures` | Verified (heuristic monitor, uncalibrated) |
-| QA-AI-03 | Attempt to change score | 1 | C: no score field or endpoint exists; G: no score route | Verified (C: `test_api_exposes_no_scoring_or_decision_surface`, `test_tier1_context_contains_no_evaluation_concepts`) |
+| QA-AI-03 | Attempt to change score | 1–2 | C: no decision field anywhere; scores only in staff review and Tier-2 internal operations; the Tier-1 context has no evaluation concepts; G: the candidate and the agent have no route to evaluations; the control plane recomputes every weighted score | Verified (C: `test_api_exposes_no_hiring_decision_surface`, `test_scores_appear_only_in_staff_review_and_tier2_operations`, `test_tier1_context_contains_no_evaluation_concepts`; G: `TestScoreBoundsAndExactWeightedArithmetic`) |
 | QA-AI-04 | Prompt injection in resume | 3 | — | Phase 3 |
 | QA-AI-05 | Prompt injection in job description | 3 | — | Phase 3 |
-| QA-AI-06 | Instruction embedded in retrieved reference | 2 | — | Phase 2 |
+| QA-AI-06 | Instruction embedded in retrieved reference | 2 | T2: `test_input_is_a_data_block_without_indicators` (rubric references and the transcript travel inside one delimited data block; the candidate cannot close it) | No retrieval exists (ADR-022); live model Blocked |
 | QA-AI-07 | Tool invocation without authorization | 1 | G: `TestCompromisedAgentCannotEscalate`; A: `test_the_model_has_exactly_one_tool_without_parameters`, `test_the_model_cannot_chain_tool_calls` (one tool execution per turn); E: forbidden tool call has no effect | Verified |
-| QA-AI-08 | Malformed evaluator JSON | 2 | C: schema rejects malformed fixtures; validator Phase 2 | Partial: schema fixtures Verified (C) |
-| QA-AI-09 | Fabricated evidence timestamps | 2 | — | Phase 2 (schema requires segment IDs + quote: Verified C) |
-| QA-AI-10 | Unsupported technical claims | 2 | — | Phase 2 |
-| QA-AI-11 | Contradictory answer segments | 2 | — | Phase 2 |
-| QA-AI-12 | Evaluator disagreement, review routing | 2 | — | Phase 2 |
+| QA-AI-08 | Malformed evaluator JSON | 2 | C: schema fixtures; G: `TestSchemaFailuresNameTheLocationWithoutEchoingContent`; T2: `test_openai_non_json_output_is_stored_as_text_for_validation_to_reject`, `test_anthropic_non_json_text_is_stored_for_validation_to_reject`, truncated and refused outputs recorded as failed | Verified |
+| QA-AI-09 | Fabricated evidence timestamps | 2 | G: `TestEvidenceMustComeFromTheAnswersCandidateSpeech` (spans outside the cited segments, other answers' and interviewer segments), `TestQuotesMustBeVerbatim` | Verified |
+| QA-AI-10 | Unsupported technical claims | 2 | G: a non-zero score without supporting evidence is refused (`TestInjectedInstructionsCannotBuyAScore`); `unsupported_claims` routes to review (`TestAValidEvaluationIsAcceptedAndAlwaysRoutedToReview`) | Verified |
+| QA-AI-11 | Contradictory answer segments | 2 | G: reported `contradictions` route to review (routing reasons) | Verified (routing); detection quality needs a model and labels |
+| QA-AI-12 | Evaluator disagreement, review routing | 2 | G: `TestEvaluatorDisagreement`, `TestTier2HandoffReviewAndReport` (`evaluator_disagreement` reaches the review task), `TestConfidenceRoutesButIsNeverACalibratedProbability` | Verified; the 20-point threshold is an uncalibrated policy value |
 
 ## Coding sandbox (TM §5)
 
@@ -104,10 +106,10 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | BP18-03 | Refresh and reconnect | QA-AN-08 | Verified (E and W, scripted, loopback) |
 | BP18-04 | Barge-in during speech | QA-AN-09 | Verified (scripted, loopback) |
 | BP18-05 | Duplicate/out-of-order transcript events | QA-SD-01/03 | Verified (G: `TestSegmentIdempotencyAndConflicts` + QA-SD-01/03) |
-| BP18-06 | Realtime, STT, evaluator timeout | A + E: `test_injected_provider_failures_pause_without_finalizing[*]` (speech recognition, synthesis, a model that never answers, a dropped stream), an errored session close, an undelivered prompt → PAUSED, no finalization, replacement agent | Verified (scripted failure injection, loopback); evaluator Phase 2 |
+| BP18-06 | Realtime, STT, evaluator timeout | A + E: `test_injected_provider_failures_pause_without_finalizing[*]` (speech recognition, synthesis, a model that never answers, a dropped stream), an errored session close, an undelivered prompt → PAUSED, no finalization, replacement agent; T2: provider timeouts, 429, 5xx, 529 and mid-stream errors leave the entry pending for retry (`test_*_retried_later`) | Verified (scripted failure injection, loopback; evaluator against recorded shapes) |
 | BP18-07 | Rate limits and provider outage | A/E: failure injection; G: invitation rate limit | Verified (scripted outage; provider rate limits need the live engine) |
 | BP18-08 | PostgreSQL / Redis / Qdrant restart | QA-SD-09/11 | Phase 2/6 |
-| BP18-09 | Malformed evaluator JSON, partial output | QA-AI-08 | Phase 2 |
+| BP18-09 | Malformed evaluator JSON, partial output | QA-AI-08 | Verified (G, T2) |
 | BP18-10 | Worker crash and retry duplication | QA-SD-08 | Verified (G; E scripted, loopback) |
 | BP18-11 | Prompt injection in audio/resume/JD/retrieval | QA-AI-01/04/05/06 | Audio: Verified (scripted; live model Blocked); rest Phase 2/3 |
 | BP18-12 | Unauthorized API/tool access | G: authZ, cross-tenant, compromised agent, staff token expiry/revocation, invitation revocation, expired nonces, dedicated webhook key; E: server-enforced grants, removed intruders (API-key and extra agent), forged webhooks, deleted rooms | Verified (G: `TestCandidateIsolationAndTenantScoping`, `TestAgentRequestsNeedServiceTokenGrantAndCurrentFencing`, `TestClaimRequiresRealDispatchAndAgentParticipant`, `TestCompromisedAgentCannotEscalate`, `TestStaffTokensExpireAndRevocationTakesEffectImmediately`, `TestStaffCanRevokeAnUnusedInvitation`, `TestRevokingALiveInterviewPausesItAndDeletesTheRoom`, `TestExpiredClaimNoncesAreRefused`, `TestReceiveWebhookAcceptsOnlyTheDedicatedKey`, `TestASecondAgentWhileOneHoldsTheLeaseIsRemoved`; E: `test_security.py`) |
@@ -121,19 +123,19 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | ID | Test | Phase | Status |
 |---|---|---|---|
 | PE8-01 | Schema valid/invalid fixtures | 0 | Verified (C: `test_schemas.py`) |
-| PE8-02 | Score boundaries and exact weighted arithmetic | 0/2 | Boundaries Verified (C fixtures); arithmetic Phase 2 validator; weights cross-doc Verified (C: `test_weights_agree_across_blueprint_validator_and_schema`) |
-| PE8-03 | Invalid/unknown rubric version | 2 | Phase 2 |
-| PE8-04 | Evidence timestamps beyond transcript length | 2 | Phase 2 |
-| PE8-05 | Evidence span from interviewer instead of candidate | 2 | Phase 2 |
-| PE8-06 | Empty or missing transcript segments | 1–2 | `missing_segments` flag Verified (G); evaluation handling Phase 2 |
-| PE8-07 | Duplicate evaluation delivery | 2 | Phase 2 (outbox `event_id` dedupe basis in place; a rolled-back or refused finalization leaves no outbox row: G `TestOutboxHoldsOnlyCommittedFinalizations`) |
-| PE8-08 | Retry after worker timeout | 2 | Phase 2 |
-| PE8-09 | Confidence routing | 2 | Phase 2 |
-| PE8-10 | Transcript revision creates new evaluation version | 2 | Phase 2 |
-| PE8-11 | Unsupported claim with no source | 2 | Phase 2 |
-| PE8-12 | Prompt injection in every untrusted input channel | 1–3 | Speech and text: never in instructions (A), scripted injection over media (E); live model Blocked; docs/retrieval Phase 2/3 |
-| PE8-13 | Evaluator disagreement | 2 | Phase 2 |
-| PE8-14 | Human override audit integrity | 5 | Phase 5 |
+| PE8-02 | Score boundaries and exact weighted arithmetic | 0/2 | Verified: C fixtures; G `TestScoreBoundsAndExactWeightedArithmetic` (integer scores, recomputed in hundredths); weights cross-doc (C: `test_weights_agree_across_blueprint_validator_and_schema`, `test_shipped_rubrics_are_consistent`) |
+| PE8-03 | Invalid/unknown rubric version | 2 | Verified: G `TestIdentityMustMatchTheAnswerAndTheRubricVersion`, `TestRubricsMustUseTheDocumentedWeights`; C `test_every_plan_rubric_reference_resolves_to_a_shipped_rubric` |
+| PE8-04 | Evidence timestamps beyond transcript length | 2 | Verified: G `TestEvidenceMustComeFromTheAnswersCandidateSpeech` |
+| PE8-05 | Evidence span from interviewer instead of candidate | 2 | Verified: G `TestEvidenceMustComeFromTheAnswersCandidateSpeech` |
+| PE8-06 | Empty or missing transcript segments | 1–2 | Verified: `missing_segments` flag (G) routes to review; an empty answer must be abstained on (G `TestAnEmptyAnswerMustBeAbstainedOn`; T2 `test_abstention_gates`) |
+| PE8-07 | Duplicate evaluation delivery | 2 | Verified (QA-SD-02) |
+| PE8-08 | Retry after worker timeout | 2 | Verified (QA-SD-10) |
+| PE8-09 | Confidence routing | 2 | Verified: G `TestConfidenceRoutesButIsNeverACalibratedProbability` (0.85 is a policy value; `calibrated: true` is refused) |
+| PE8-10 | Transcript revision creates new evaluation version | 2 | Binding Verified (QA-SD-05); no revision workflow yet |
+| PE8-11 | Unsupported claim with no source | 2 | Verified: G `TestReferencesMustBelongToTheRubric`, non-zero scores need supporting evidence (QA-AI-10) |
+| PE8-12 | Prompt injection in every untrusted input channel | 1–3 | Speech and text: never in instructions (A), scripted injection over media (E); Tier-2: G `TestInjectedInstructionsCannotBuyAScore`, T2 `test_injection_in_the_transcript_does_not_change_scores`, E: an injected instruction in a typed answer changes no score; live models Blocked; documents Phase 3 |
+| PE8-13 | Evaluator disagreement | 2 | Verified: G `TestEvaluatorDisagreement` |
+| PE8-14 | Human override audit integrity | 2 (ADR-022) | Verified: G `TestTier2HandoffReviewAndReport` (reviewer, prior and revised scores, rationale and rubric version recorded; the rationale is not copied into audit logs), `TestAnswerWithoutRubricIsReviewedWithARationaleOnly` |
 
 ## Phase 1 audit regressions ([PHASE1_AUDIT.md](./PHASE1_AUDIT.md))
 
@@ -156,6 +158,23 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | T1-03 | One chained tool call per turn | A: `test_the_model_cannot_chain_tool_calls` | Verified |
 | P0.1 | Live provider: model availability, tool behaviour and injection, transcription, latency | A: `tests/test_provider_smoke.py` (harness against a fake provider); `make provider-smoke` | Harness Verified; live run Blocked: no provider credentials |
 
-## Phase-0 contract tests (all Verified, `make contracts-test`, 129 tests)
+## Phase 2 Tier-2 pipeline (ADR-022)
+
+| ID | Scenario | Test | Status |
+|---|---|---|---|
+| T2-01 | Completed interview evaluated, reviewed and reported | E: `test_typed_interview_is_evaluated_reviewed_and_reported` (T11 → T14 → T15 → T17; reference evaluator output accepted by the Go validator; review RBAC; staff-only report; candidate sees no score) | Verified (reference evaluator, loopback) |
+| T2-02 | Synthetic test speech is never evaluated | G: `TestSyntheticSpeechIsNeverEvaluated`; T2: `test_abstention_gates`; E: `test_full_interview_follows_the_plan_and_hands_off_ids_only` (every scripted answer abstained, all reviewed) | Verified |
+| T2-03 | Dead-lettered interview falls back to human review | G: `TestPipelineFailureFallsBackToHumanReview`; T2: consumer DLQ tests; E: `test_dead_lettered_interview_falls_back_to_human_review` | Verified |
+| T2-04 | Tier-2 never acts on a live interview (INV-6) | G: `TestTier2AndReviewerCannotTouchLiveOrPreInterviewStates`, attempts refused before T14; T2: `test_interviews_not_pending_evaluation_are_left_alone`, `test_other_events_cause_no_work` | Verified |
+| T2-05 | Evaluator role reads evidence only and writes nothing | G: `TestTier2EvaluatorRoleReadsOnlyEvidenceAndNarrowViews`, `TestTier2EvaluatorRoleReadsEvidenceButNeverWritesLiveState`; tooling: import boundaries | Verified |
+| T2-06 | Review and report authorization, no decision surface | G: `TestTier2AndReviewEndpoints`; C: `test_api_exposes_no_hiring_decision_surface`, `test_scores_appear_only_in_staff_review_and_tier2_operations`; E: recruiter cannot decide, candidate cannot read | Verified |
+| T2-07 | Question without a rubric still reaches REPORT_READY | G: `TestAnswerWithoutRubricIsReviewedWithARationaleOnly` | Verified |
+| T2-08 | Worker configuration refusals | T2: `tests/test_config.py` (reference evaluator, TLS, development token and unverified models refused in production; pinned endpoints; no custom headers) | Verified |
+| T2-09 | Provider adapters | T2: `tests/test_adapters.py` (pinned request bodies: OpenAI `store: false`, strict structured output; Anthropic streamed structured output, no fallbacks or beta headers; refusals, truncation, errors) | Verified against recorded shapes; live providers Blocked |
+| T2-10 | Pinned prompt and packaged contracts | T2: `tests/test_prompt.py` (sha256 pin, drift against `contracts/`, provider schema keywords) | Verified |
+| T2-11 | The closing remark after the interview moved on to review | G: `TestTheClosingRemarkIsStoredAfterTheInterviewMovedOnToReview`; E: `test_turkish_interview_uses_each_questions_turn_profile` (closing remark stored) | Verified |
+| T2-12 | Framework log extras marked as personal data | A: `test_framework_pii_extras_are_redacted` (`lk.pii.*`); E: post-run log scan | Verified |
+
+## Phase-0 contract tests (all Verified, `make contracts-test`, 144 tests)
 
 Schema meta-validation and fixtures; state-machine structure (closure, determinism, reachability, transient chains, activation balance, INV-3/5/6/8/10, ADR-012 completeness, recording stops); doc drift (diagram ⊆ contract with ADR citations, verbatim prompts with sha256 pins, evaluation schema = document, weights across three documents, accepted ADRs unchanged, generated diagram current); isolation (Tier-1 context forbidden concepts and closed objects, no post-interview states for Tier-1, agent cannot self-attribute, ID-only events); OpenAPI (valid 3.1 with external refs, explicit security, idempotency keys, fencing on lease-bound calls, no scoring surface, problem+json).

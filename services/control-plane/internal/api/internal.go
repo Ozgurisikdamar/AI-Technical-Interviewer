@@ -422,8 +422,9 @@ func (s *Server) processWebhook(ctx context.Context, ev *realtime.Webhook) strin
 	return "processed"
 }
 
-// RunSweepers runs the deadline, lease, missing-agent, pause-expiry and recording sweepers until
-// ctx ends. A pass that fails for some sessions still counts the ones it processed.
+// RunSweepers runs the outbox relay and the deadline, lease, missing-agent, pause-expiry and
+// recording sweepers until ctx ends. A pass that fails for some sessions still counts the ones it
+// processed.
 func (s *Server) RunSweepers(ctx context.Context) {
 	fast := time.NewTicker(time.Second)
 	slow := time.NewTicker(30 * time.Second)
@@ -444,6 +445,9 @@ func (s *Server) RunSweepers(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-fast.C:
+			if s.relay != nil {
+				sweep("outbox_published", s.relay.RunOnce)
+			}
 			sweep("completion_deadline", s.svc.SweepCompletionDeadlines)
 			sweep("lease_expired_pause", s.svc.ExpireLeases)
 			sweep("agent_missing_pause", s.svc.SweepMissingAgents)

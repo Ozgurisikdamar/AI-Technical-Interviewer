@@ -32,6 +32,10 @@ TRANSCRIPT_SENTINELS = [
     "would score 9 out of 10",
     "eşzamanlılık denetiminin",
     "aynı ödemeyi asla iki kez",
+    # Typed answers of the Tier-2 tests: neither the worker nor the control plane may log them.
+    "instead of overwriting the old one",
+    "stored with a unique constraint",
+    "flame graph of the slow endpoint",
 ]
 # Settings every control-plane start in this run uses (up and later restarts).
 DEV_ENV = {"ATI_DEV_AGENT_DISPATCH_TIMEOUT": "20s"}
@@ -75,9 +79,9 @@ def _scan_logs(logs: Path) -> None:
     secrets = [s for s in SECRETS_SEEN if len(s) >= 16]
     for name in ("ATI_E2E_LIVEKIT_API_SECRET",):
         secrets.append(os.environ[name])
-    secrets += ["ati-dev-agent-service-token", "ati-dev-livekit-webhook-secret"]
-    staff = (Path(os.environ["ATI_E2E_STATE_DIR"]) / "staff_token").read_text().strip()
-    secrets.append(staff)
+    secrets += ["ati-dev-agent-service-token", "ati-dev-livekit-webhook-secret", "ati-dev-tier2-service-token"]
+    for name in ("staff_token", "reviewer_token"):
+        secrets.append((Path(os.environ["ATI_E2E_STATE_DIR"]) / name).read_text().strip())
     problems = []
     for log in sorted(logs.glob("*.log")):
         text = log.read_text(errors="replace")
@@ -95,6 +99,11 @@ def _scan_logs(logs: Path) -> None:
 @pytest.fixture(scope="session")
 def staff_token(stack: dict[str, str]) -> str:
     return (Path(stack["ATI_E2E_STATE_DIR"]) / "staff_token").read_text().strip()
+
+
+@pytest.fixture(scope="session")
+def reviewer_token(stack: dict[str, str]) -> str:
+    return (Path(stack["ATI_E2E_STATE_DIR"]) / "reviewer_token").read_text().strip()
 
 
 class Db:

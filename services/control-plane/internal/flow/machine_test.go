@@ -28,7 +28,7 @@ func guardsFrom(values map[string]bool) GuardFunc {
 
 func TestDefaultContractLoads(t *testing.T) {
 	m := mustDefault(t)
-	if m.Version != "1.1.0" || m.Initial != Created || m.MaxPhase != 1 {
+	if m.Version != "1.2.0" || m.Initial != Created || m.MaxPhase != ImplementedPhase || ImplementedPhase != 2 {
 		t.Fatalf("unexpected machine: version=%s initial=%s maxPhase=%d", m.Version, m.Initial, m.MaxPhase)
 	}
 	if got := len(m.States()); got != 14 {
@@ -39,18 +39,34 @@ func TestDefaultContractLoads(t *testing.T) {
 	}
 }
 
-func TestLaterPhaseTransitionsAreRefusedInPhase1(t *testing.T) {
-	m := mustDefault(t)
-	_, err := m.Resolve(InterviewCompleted, EvEvaluationEnqueued, ActorSystem, always(true))
-	if !errors.Is(err, ErrPhaseNotWired) {
-		t.Fatalf("want ErrPhaseNotWired, got %v", err)
-	}
-	m6, err := Load(contracts.MustRead(contracts.StateMachinePath), 6)
+// Transitions belong to the phase that implements them: a Phase 1 machine refuses the evaluation
+// transitions, the Phase 2 machine (contract v1.2, ADR-022) runs T14, T15 and T17. T16 resolves in
+// the engine, but no control-plane operation fires it (every evaluation is human-reviewed).
+func TestTransitionsBeyondTheImplementedPhaseAreRefused(t *testing.T) {
+	m1, err := Load(contracts.MustRead(contracts.StateMachinePath), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tr, err := m6.Resolve(InterviewCompleted, EvEvaluationEnqueued, ActorSystem, always(true)); err != nil || tr.ID != "T14" {
-		t.Fatalf("phase 6 machine should resolve T14: %v %v", tr.ID, err)
+	if _, err := m1.Resolve(InterviewCompleted, EvEvaluationEnqueued, ActorSystem, always(true)); !errors.Is(err, ErrPhaseNotWired) {
+		t.Fatalf("a Phase 1 machine must refuse T14, got %v", err)
+	}
+	m := mustDefault(t)
+	for _, c := range []struct {
+		from  State
+		event Event
+		actor Actor
+		want  string
+	}{
+		{InterviewCompleted, EvEvaluationEnqueued, ActorSystem, "T14"},
+		{EvaluationPending, EvReviewRequired, ActorTier2, "T15"},
+		{HumanReview, EvReviewCompleted, ActorReviewer, "T17"},
+	} {
+		if tr, err := m.Resolve(c.from, c.event, c.actor, always(true)); err != nil || tr.ID != c.want {
+			t.Fatalf("%s from %s: %v %v", c.event, c.from, tr.ID, err)
+		}
+	}
+	if _, err := m.Resolve(HumanReview, EvReviewCompleted, ActorTier2, always(true)); err == nil {
+		t.Fatal("only a reviewer completes a review")
 	}
 }
 
@@ -431,13 +447,15 @@ func TestModelBasedRandomWalk(t *testing.T) {
 				break
 			}
 		}
-		switch w.state {
-		case InterviewCompleted:
+		// From Phase 2 a completed interview continues into evaluation and review, so completion
+		// is counted when it happened, not by the state the walk ends in.
+		switch {
+		case w.emittedCompleted:
 			reachedCompleted++
 			if len(w.finalized) != total(w.followUps) {
 				t.Fatalf("seed %d: completed with %d/%d answers", seed, len(w.finalized), total(w.followUps))
 			}
-		case Cancelled:
+		case w.state == Cancelled:
 			reachedCancelled++
 		}
 	}

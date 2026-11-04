@@ -87,8 +87,14 @@ func (sub *Submission) contentHash() string {
 	return hex.EncodeToString(h[:])
 }
 
+// liveForIngest are the states in which the agent's segments are stored. After the last answer the agent
+// still delivers its closing remark; by the time that segment arrives the outbox relay may already have
+// enqueued the evaluation (T14) and the worker routed the interview to review (T15), so every
+// post-interview state accepts it (ADR-022). Answers are fixed at finalization: later segments never
+// become evidence of an answer.
 var liveForIngest = map[flow.State]bool{
-	flow.Calibration: true, flow.QuestionActive: true, flow.CandidateSpeaking: true, flow.Paused: true, flow.InterviewCompleted: true,
+	flow.Calibration: true, flow.QuestionActive: true, flow.CandidateSpeaking: true, flow.Paused: true,
+	flow.InterviewCompleted: true, flow.EvaluationPending: true, flow.HumanReview: true, flow.ReportReady: true,
 }
 
 // IngestSegment stores an append-only segment with server-side attribution (ADR-014).

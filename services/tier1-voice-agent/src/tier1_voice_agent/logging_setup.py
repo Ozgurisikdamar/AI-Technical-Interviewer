@@ -15,8 +15,10 @@ import time
 from typing import Any
 
 REDACTED = "[REDACTED]"
+# "pii" covers livekit-agents' own marker for personal data in log extras ("lk.pii.user_input" carries the
+# candidate's words in warnings such as "skipping reply to user input").
 _SENSITIVE_KEY = re.compile(
-    r"(authorization|cookie|token|secret|password|grant|nonce|api[_-]?key|credential|transcript|text|quote|instructions|audio|email|content)",
+    r"(authorization|cookie|token|secret|password|grant|nonce|api[_-]?key|credential|transcript|text|quote|instructions|audio|email|content|pii)",
     re.I,
 )
 _SENSITIVE_VALUE = re.compile(

@@ -28,6 +28,12 @@ const (
 	Request    = "req"
 	Consent    = "cns"
 	Candidate  = "cand"
+	// Phase 2 (ADR-022).
+	EvaluationAttempt = "eva"
+	Evaluation        = "evl"
+	ReviewTask        = "rvt"
+	ReviewOutcome     = "rvo"
+	Report            = "rep"
 )
 
 // New returns prefix_<22 base62 characters> (about 131 bits of randomness).

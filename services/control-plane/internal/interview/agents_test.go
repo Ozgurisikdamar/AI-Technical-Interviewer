@@ -120,3 +120,40 @@ func TestReleaseDuringALiveInterviewKeepsTheRoom(t *testing.T) {
 		t.Fatal("a live interview's room must not be deleted when an agent releases")
 	}
 }
+
+// The closing remark is spoken after INTERVIEW_COMPLETED. By the time its transcript arrives, the outbox
+// relay may already have enqueued the evaluation (T14) and the Tier-2 worker routed the interview to review
+// (T15): the agent's closing duties work in every post-interview state (ADR-022).
+func TestTheClosingRemarkIsStoredAfterTheInterviewMovedOnToReview(t *testing.T) {
+	h := newHarness(t)
+	id, lease := h.toCalibration()
+	h.must(h.svc.CalibrationComplete(ctx, candidate, nil, id, h.session(id).StateVersion))
+	for i := 0; i < 10 && h.session(id).State != flow.InterviewCompleted; i++ {
+		h.answerOpenQuestion(id, lease, "a synthetic answer")
+	}
+	h.must(h.svc.EnqueueEvaluation(ctx, id))
+	_, err := h.svc.CompleteEvaluation(ctx, Tier2Actor, id, "")
+	h.must(err)
+	if s := h.session(id); s.State != flow.HumanReview {
+		t.Fatalf("state %s", s.State)
+	}
+	h.clock.Advance(2 * time.Second)
+	_, err = h.svc.RenewLease(ctx, id, lease)
+	h.must(err)
+	now := h.timeline(id)
+	closing := Submission{SegmentKey: h.nextKey(), Speaker: "interviewer", Source: "interviewer_output", Engine: "scripted", StartMs: now - 1500, EndMs: now - 100,
+		Text: "Thank you. That was the last question."}
+	if _, err := h.svc.IngestSegment(ctx, agent, lease, id, closing); err != nil {
+		t.Fatalf("the closing remark must be stored after the interview moved on: %v", err)
+	}
+	if n := h.count(`SELECT count(*) FROM ati.transcript_segments WHERE session_id = $1 AND text = 'Thank you. That was the last question.'`, id); n != 1 {
+		t.Fatalf("closing remark stored %d times", n)
+	}
+	h.must(h.svc.ReleaseLease(ctx, id, lease))
+	if !slices.Contains(h.effects.deletedRooms, id) {
+		t.Fatal("the room is deleted once the agent is gone, in review as after completion")
+	}
+	if s := h.session(id); s.State != flow.HumanReview {
+		t.Fatalf("the agent leaving must not change the review state: %s", s.State)
+	}
+}

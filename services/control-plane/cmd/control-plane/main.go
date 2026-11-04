@@ -16,6 +16,7 @@ import (
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/interview"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/logging"
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/outbox"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/realtime"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/recording"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/store"
@@ -95,8 +96,18 @@ func run() error {
 	}
 	metrics := api.NewMetrics()
 	svc.SetObserver(metrics.Transition)
+	// The outbox reaches Tier-2 only when Redis is configured (ADR-022); otherwise it stays pending.
+	var relay api.Relay
+	if cfg.RedisURL != "" {
+		pub, err := outbox.NewRedisPublisher(cfg.RedisURL)
+		if err != nil {
+			return err
+		}
+		defer pub.Close()
+		relay = outbox.NewRelay(pool, pub, svc, log, nil)
+	}
 	srv := api.New(api.Deps{Config: cfg, Service: svc, Tier1: tier1ctx.New(tier1Pool, nil), Media: media, Pool: pool, Tier1Pool: tier1Pool, Log: log, Metrics: metrics,
-		Recorder: recorder})
+		Recorder: recorder, Relay: relay})
 
 	public := &http.Server{Addr: cfg.PublicAddr, Handler: srv.PublicHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: writeTimeout, IdleTimeout: 60 * time.Second}
 	internal := &http.Server{Addr: cfg.InternalAddr, Handler: srv.InternalHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: writeTimeout, IdleTimeout: 60 * time.Second}

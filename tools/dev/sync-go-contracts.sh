@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DEST="$ROOT/services/control-plane/internal/contracts/embedded"
 FILES=(
-  state-machine/interview-session.v1.1.json
+  state-machine/interview-session.v1.2.json
   schemas/tier1/v1/tier1-context.schema.json
   schemas/transcript/v1/segment-submission.schema.json
   schemas/transcript/v1/transcript-segment.schema.json
@@ -13,13 +13,15 @@ FILES=(
   schemas/events/v1/interview-completed.schema.json
   schemas/plan/v1/interview-plan.schema.json
   schemas/consent/v1/consent-notice.schema.json
+  schemas/evaluation/v1/evaluation.schema.json
+  schemas/rubric/v1/rubric.schema.json
 )
 rm -rf "$DEST"
 for f in "${FILES[@]}"; do
   mkdir -p "$DEST/$(dirname "$f")"
   cp "$ROOT/contracts/$f" "$DEST/$f"
 done
-for d in content/plans content/notices; do
+for d in content/plans content/notices content/rubrics; do
   mkdir -p "$DEST/$d"
   cp "$ROOT/contracts/$d/"*.json "$DEST/$d/"
 done

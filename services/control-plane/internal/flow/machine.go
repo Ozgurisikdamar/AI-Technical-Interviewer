@@ -1,5 +1,5 @@
 // Package flow is the deterministic interview flow engine. It loads the state-machine contract
-// (contracts/state-machine/interview-session.v1.1.json) and resolves transitions. It has no I/O,
+// (contracts/state-machine/interview-session.v1.2.json) and resolves transitions. It has no I/O,
 // no clock and no knowledge of evaluation data: the application supplies guard results and executes
 // effects inside its own transaction.
 package flow
@@ -240,13 +240,19 @@ func (m *Machine) validateTransition(t Transition) error {
 	return nil
 }
 
-// Default loads the embedded contract for Phase 1.
+// ImplementedPhase is the highest roadmap phase whose transitions the control plane executes:
+// Phase 2 wires T14 (evaluation enqueued), T15 (human review required) and, from contract v1.2,
+// T17 (review completed). T16 (automatic report) belongs to Phase 2 but no operation fires it:
+// every evaluation is human-reviewed (ADR-022).
+const ImplementedPhase = 2
+
+// Default loads the embedded contract for the implemented phases.
 func Default() (*Machine, error) {
 	raw, err := contracts.Read(contracts.StateMachinePath)
 	if err != nil {
 		return nil, err
 	}
-	return Load(raw, 1)
+	return Load(raw, ImplementedPhase)
 }
 
 // StateInfo returns the description of a state.

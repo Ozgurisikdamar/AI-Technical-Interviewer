@@ -1,0 +1,59 @@
+{
+  "rubric_id": "rub_demo_postgres_mvcc",
+  "version": 1,
+  "status": "draft",
+  "synthetic": true,
+  "title": "PostgreSQL multiversion concurrency control (synthetic demo rubric, not validated)",
+  "languages": ["en", "tr"],
+  "weights": {"technical_accuracy": 0.40, "architecture_maturity": 0.25, "edge_case_awareness": 0.20, "claim_support": 0.15},
+  "criteria": [
+    {
+      "criterion_id": "c_row_versions",
+      "dimension": "technical_accuracy",
+      "description": "Explains that an update writes a new row version instead of overwriting the old one, so readers and writers do not block each other.",
+      "reference_ids": ["ref_pg_mvcc"],
+      "indicators": {"en": ["new version", "row version", "versions of the row", "tuple"], "tr": ["yeni sürüm", "satır sürüm", "sürümünü"]}
+    },
+    {
+      "criterion_id": "c_snapshots",
+      "dimension": "technical_accuracy",
+      "description": "Explains that each transaction reads a consistent snapshot decided by transaction visibility rules (for example xmin and xmax).",
+      "reference_ids": ["ref_pg_mvcc"],
+      "indicators": {"en": ["snapshot", "visibility", "xmin"], "tr": ["anlık görüntü", "snapshot", "görünürlük"]}
+    },
+    {
+      "criterion_id": "c_costs",
+      "dimension": "architecture_maturity",
+      "description": "Discusses the costs of the design: dead row versions, table and index bloat, and the need for cleanup.",
+      "reference_ids": ["ref_pg_vacuum"],
+      "indicators": {"en": ["bloat", "dead tuple", "dead row", "cleanup", "clean up"], "tr": ["şişme", "ölü satır", "temizlik", "temizlen"]}
+    },
+    {
+      "criterion_id": "c_vacuum",
+      "dimension": "edge_case_awareness",
+      "description": "Connects VACUUM and autovacuum to reclaiming dead versions and to preventing transaction ID wraparound.",
+      "reference_ids": ["ref_pg_vacuum"],
+      "indicators": {"en": ["vacuum", "wraparound"], "tr": ["vacuum", "wraparound", "sarmal"]}
+    },
+    {
+      "criterion_id": "c_isolation",
+      "dimension": "edge_case_awareness",
+      "description": "Notes isolation-level effects, such as read committed versus repeatable read, or that concurrent writes to one row still conflict.",
+      "reference_ids": ["ref_pg_mvcc"],
+      "indicators": {"en": ["isolation", "repeatable read", "read committed", "write conflict"], "tr": ["yalıtım", "izolasyon", "çakışma"]}
+    },
+    {
+      "criterion_id": "c_mechanism",
+      "dimension": "claim_support",
+      "description": "Supports claims with a concrete mechanism or example rather than bare assertion.",
+      "reference_ids": [],
+      "indicators": {"en": ["for example", "because", "for instance"], "tr": ["örneğin", "çünkü", "mesela"]}
+    }
+  ],
+  "references": [
+    {"reference_id": "ref_pg_mvcc", "title": "PostgreSQL documentation: Concurrency Control", "url": "https://www.postgresql.org/docs/current/mvcc.html",
+     "summary": "PostgreSQL keeps multiple row versions; each statement or transaction sees a snapshot, so reads do not block writes and writes do not block reads."},
+    {"reference_id": "ref_pg_vacuum", "title": "PostgreSQL documentation: Routine Vacuuming", "url": "https://www.postgresql.org/docs/current/routine-vacuuming.html",
+     "summary": "VACUUM reclaims space held by dead row versions, updates visibility information and prevents transaction ID wraparound."}
+  ]
+}

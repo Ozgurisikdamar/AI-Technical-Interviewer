@@ -45,6 +45,9 @@ LLM_TIMEOUT = Burst(1.0, 1700.0)
 LLM_DROP = Burst(1.0, 1900.0)
 DISCLOSE = Burst(1.0, 2100.0)
 QUIET = Burst(1.5, 300.0, amplitude=600)  # about -38 dBFS: heard, but below the low_energy level
+# A completed interview moves on by itself: the outbox relay enqueues its evaluation (T14) and the Tier-2
+# worker routes it to human review (T15) within seconds (ADR-022).
+POST_INTERVIEW = ("INTERVIEW_COMPLETED", "EVALUATION_PENDING", "HUMAN_REVIEW", "REPORT_READY")
 
 
 def env(name: str) -> str:
@@ -184,6 +187,27 @@ class Candidate:
         data: dict[str, Any] = await self._call("POST", self._path("withdraw"), {"state_version": v["state_version"], "confirm": True})
         return data
 
+    async def begin(self, timeout: float = 30.0) -> dict[str, Any]:
+        """Text mode: the candidate's Begin button (calibration-complete), once it is offered."""
+        deadline = time.monotonic() + timeout
+        while True:
+            v = await self.view()
+            if "begin" in v.get("allowed_actions", []):
+                break
+            if time.monotonic() > deadline:
+                raise AssertionError(f"begin not offered in {timeout}s; state={v['state']}")
+            await asyncio.sleep(0.2)
+        data: dict[str, Any] = await self._call("POST", self._path("calibration-complete"), {"state_version": v["state_version"]})
+        return data
+
+    async def type_answer(self, text: str) -> dict[str, Any]:
+        """Text mode: submit typed text for the open question."""
+        v = await self.view()
+        data: dict[str, Any] = await self._call(
+            "POST", self._path("text-responses"), {"activation_id": v["active_prompt"]["activation_id"], "text": text}
+        )
+        return data
+
     async def finish_answer(self) -> dict[str, Any]:
         v = await self.view()
         data: dict[str, Any] = await self._call(
@@ -221,6 +245,25 @@ class Candidate:
         track = rtc.LocalAudioTrack.create_audio_track("mic", self.source)
         await room.local_participant.publish_track(track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE))
         self._tasks.append(asyncio.ensure_future(self._mic()))
+
+    async def join_text(self) -> None:
+        """Join a text-mode interview: listen to the interviewer, publish nothing."""
+        rt = await self.realtime_session()
+        assert rt["identity"] == "candidate" and rt["can_publish_audio"] is False
+        room = rtc.Room()
+        self.disconnected.clear()
+
+        @room.on("track_subscribed")
+        def on_track(track: rtc.Track, pub: rtc.RemoteTrackPublication, p: rtc.RemoteParticipant) -> None:
+            if track.kind == rtc.TrackKind.KIND_AUDIO:
+                self._tasks.append(asyncio.ensure_future(self._listen(track)))
+
+        @room.on("disconnected")
+        def on_disconnected(*_: Any) -> None:
+            self.disconnected.set()
+
+        await room.connect(rt["livekit_url"], rt["token"])
+        self.room = room
 
     async def _listen(self, track: rtc.Track) -> None:
         stream = rtc.AudioStream(track, sample_rate=SR, num_channels=1)
@@ -308,7 +351,7 @@ async def answer(c: Candidate, *, body: Burst = LONG) -> dict[str, Any]:
     await c.wait_agent_quiet()
     mark = time.monotonic()
     await c.say(DONE)
-    nxt = await c.wait_state("QUESTION_ACTIVE", "CANDIDATE_SPEAKING", "INTERVIEW_COMPLETED", timeout=25, activation_not=act)
-    if nxt["state"] != "INTERVIEW_COMPLETED":
+    nxt = await c.wait_state("QUESTION_ACTIVE", "CANDIDATE_SPEAKING", *POST_INTERVIEW, timeout=25, activation_not=act)
+    if nxt["state"] not in POST_INTERVIEW:
         await listen_to_prompt(c, since=mark)
     return nxt

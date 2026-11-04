@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AI Technical Interviewer — control plane API
   version: 1.0.0-proposed
-  summary: Session lifecycle, consent, realtime session issuance and the internal Tier-1 API.
+  summary: Session lifecycle, consent, realtime session issuance, the internal Tier-1 and Tier-2 APIs, human review and reports.
   description: |
     Contract for the Phase 1 control plane (ADR-016). Two listeners serve this document:
     the **public** listener (`/api/v1`, reachable through the same-origin web rewrite) and the
@@ -16,7 +16,9 @@ info:
     - Mutating public endpoints require `Origin`/`Sec-Fetch-Site` consistent with the configured public origin.
     - State-changing requests carry the `state_version` the client observed; stale versions return `409 stale_state_version`.
     - Interviews outside the caller's tenant or ownership return `404` (no enumeration).
-    - Nothing in this API produces scores, rankings or hiring decisions.
+    - Nothing in this API produces rankings or hiring decisions. Rubric scores appear only in staff review and report
+      operations (tag `review`): every answer is scored by a human reviewer, AI evaluations are uncalibrated drafts, and
+      candidates never see scores (ADR-022).
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -28,7 +30,11 @@ servers:
 tags:
   - name: staff
   - name: candidate
+  - name: review
+    description: Human review of every answer and the decision-support report (staff only, ADR-022).
   - name: tier1-internal
+  - name: tier2-internal
+    description: The Tier-2 evaluator reports attempts and completion; its output is validated before it is kept.
   - name: ops
 
 paths:
@@ -340,6 +346,89 @@ paths:
         '400': {$ref: '#/components/responses/Problem'}
         '409': {$ref: '#/components/responses/Problem'}
 
+  /api/v1/interviews/{interview_id}/report:
+    get:
+      tags: [review]
+      operationId: getReport
+      summary: Decision-support report, available once every answer has been reviewed (REPORT_READY).
+      description: >-
+        Built only from reviewer decisions and validated AI evidence. It has no hiring decision, recommendation or
+        ranking. Roles: admin, recruiter, reviewer. 404 until the report exists or for another tenant.
+      security: [{staffBearer: []}]
+      parameters: [{$ref: '#/components/parameters/InterviewId'}]
+      responses:
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Report'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/review-tasks:
+    get:
+      tags: [review]
+      operationId: listReviewTasks
+      summary: The tenant's review tasks, oldest first. Roles reviewer and admin.
+      security: [{staffBearer: []}]
+      parameters:
+        - {name: status, in: query, required: false, schema: {enum: [open, completed], default: open}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+      responses:
+        '200':
+          description: Review tasks.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReviewTaskList'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/review-tasks/{task_id}:
+    get:
+      tags: [review]
+      operationId: getReviewTask
+      summary: One answer to review — question, rubric, candidate transcript, the AI draft if valid — and nothing about the candidate.
+      security: [{staffBearer: []}]
+      parameters: [{$ref: '#/components/parameters/TaskId'}]
+      responses:
+        '200':
+          description: The review task.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReviewTask'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/review-tasks/{task_id}/outcome:
+    post:
+      tags: [review]
+      operationId: submitReviewOutcome
+      summary: The reviewer's scores and rationale for one answer; the last outcome of an interview writes its report (T17).
+      description: >-
+        Records the reviewer, the prior AI scores, the revised scores, the rationale, the time and the rubric version.
+        409 codes: review_not_open, review_already_completed, no_rubric. Roles reviewer and admin.
+      security: [{staffBearer: []}]
+      parameters: [{$ref: '#/components/parameters/TaskId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReviewDecision'}
+      responses:
+        '201':
+          description: Recorded.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReviewOutcomeResult'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
   /internal/v1/tier1/claims:
     post:
       tags: [tier1-internal]
@@ -523,6 +612,61 @@ paths:
         '401': {$ref: '#/components/responses/Problem'}
         '409': {$ref: '#/components/responses/Problem'}
 
+  /internal/v1/tier2/sessions/{session_id}/evaluations:
+    post:
+      tags: [tier2-internal]
+      operationId: tier2RecordEvaluation
+      summary: One evaluator attempt for an answer, stored as received and kept as an evaluation only if it validates.
+      description: >-
+        Accepted only while the interview's evaluation is pending. Idempotent per answer, transcript version, rubric
+        version and evaluator version (200 with outcome duplicate). 409 codes: evaluation_not_pending, no_rubric,
+        transcript_version_mismatch, synthetic_source, rubric_unavailable.
+      security: [{tier2Service: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EvaluationSubmission'}
+      responses:
+        '201':
+          description: Attempt recorded (valid, invalid, abstained or failed).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecordedEvaluation'}
+        '200':
+          description: The evaluation already exists.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecordedEvaluation'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
+  /internal/v1/tier2/sessions/{session_id}/complete:
+    post:
+      tags: [tier2-internal]
+      operationId: tier2Complete
+      summary: Route the interview to human review (T15); with failure_reason, the pipeline gave up and review is the fallback.
+      security: [{tier2Service: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CompleteEvaluationRequest'}
+      responses:
+        '200':
+          description: Review tasks exist for every answer.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReviewRouting'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+
   /internal/v1/livekit/webhook:
     post:
       tags: [ops]
@@ -590,6 +734,10 @@ components:
       in: header
       name: Authorization
       description: LiveKit webhook JWT signed with the control-plane-only webhook key.
+    tier2Service:
+      type: http
+      scheme: bearer
+      description: Tier-2 evaluator service credential (distinct from the Tier-1 credential).
 
   parameters:
     InterviewId:
@@ -612,6 +760,11 @@ components:
       in: header
       required: true
       schema: {type: integer, minimum: 1}
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema: {type: string, pattern: '^rvt_[A-Za-z0-9]{16,}$'}
 
   responses:
     Problem:
@@ -994,3 +1147,187 @@ components:
         output_text_tokens: {type: [integer, 'null'], minimum: 0}
         input_audio_tokens: {type: [integer, 'null'], minimum: 0}
         output_audio_tokens: {type: [integer, 'null'], minimum: 0}
+
+    DimensionScores:
+      type: object
+      additionalProperties: false
+      required: [technical_accuracy, architecture_maturity, edge_case_awareness, claim_support]
+      properties:
+        technical_accuracy: {type: integer, minimum: 0, maximum: 100}
+        architecture_maturity: {type: integer, minimum: 0, maximum: 100}
+        edge_case_awareness: {type: integer, minimum: 0, maximum: 100}
+        claim_support: {type: integer, minimum: 0, maximum: 100}
+
+    EvaluationSubmission:
+      type: object
+      additionalProperties: false
+      required: [answer_id, transcript_version, evaluator_version, provider, outcome]
+      properties:
+        answer_id: {type: string, pattern: '^ans_[A-Za-z0-9]{16,}$'}
+        transcript_version: {type: integer, minimum: 1}
+        evaluator_version: {type: string, pattern: '^[A-Za-z0-9_.:@/-]{1,200}$'}
+        provider: {enum: [reference, openai, anthropic]}
+        model_id: {type: [string, 'null'], maxLength: 128}
+        prompt_sha256: {type: [string, 'null'], pattern: '^[0-9a-f]{64}$'}
+        provider_request_id: {type: [string, 'null'], maxLength: 200}
+        outcome: {enum: [evaluated, abstained, failed]}
+        output: {description: 'The evaluator output as received (evaluation contract v1); required when outcome is evaluated.'}
+        reason: {type: [string, 'null'], pattern: '^[a-z0-9_]{1,64}$', description: 'Required when outcome is abstained or failed.'}
+        latency_ms: {type: [integer, 'null'], minimum: 0}
+        input_tokens: {type: [integer, 'null'], minimum: 0}
+        output_tokens: {type: [integer, 'null'], minimum: 0}
+
+    RecordedEvaluation:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, evaluation_id, outcome, problems]
+      properties:
+        attempt_id: {type: string}
+        evaluation_id: {type: [string, 'null']}
+        outcome: {enum: [valid, invalid, abstained, failed, duplicate]}
+        problems: {type: array, items: {type: string}, description: 'Why the output was rejected; never echoes its content.'}
+
+    CompleteEvaluationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        failure_reason: {type: [string, 'null'], pattern: '^[a-z0-9_]{1,64}$'}
+
+    ReviewRouting:
+      type: object
+      additionalProperties: false
+      required: [state, review_tasks]
+      properties:
+        state: {$ref: '#/components/schemas/StateEnum'}
+        review_tasks: {type: integer, minimum: 0}
+
+    ReviewTaskSummary:
+      type: object
+      additionalProperties: false
+      required: [task_id, interview_id, answer_id, item_id, status, reasons, has_ai_evaluation, created_at, completed_at]
+      properties:
+        task_id: {type: string}
+        interview_id: {type: string}
+        answer_id: {type: string}
+        item_id: {type: string}
+        status: {enum: [open, completed]}
+        reasons: {type: array, items: {type: string}}
+        has_ai_evaluation: {type: boolean}
+        created_at: {type: string, format: date-time}
+        completed_at: {type: [string, 'null'], format: date-time}
+
+    ReviewTaskList:
+      type: object
+      additionalProperties: false
+      required: [review_tasks]
+      properties:
+        review_tasks: {type: array, items: {$ref: '#/components/schemas/ReviewTaskSummary'}}
+
+    ReviewTask:
+      allOf:
+        - {$ref: '#/components/schemas/ReviewTaskSummary'}
+        - type: object
+          required: [language, question, rubric, transcript, ai_evaluation, outcome]
+          properties:
+            language: {enum: [en, tr]}
+            question: {type: string}
+            rubric: {type: [object, 'null'], description: 'Rubric contract v1 without the synthetic indicators.'}
+            transcript:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [segment_id, start_ms, end_ms, text]
+                properties:
+                  segment_id: {type: string}
+                  start_ms: {type: integer}
+                  end_ms: {type: integer}
+                  text: {type: string}
+            ai_evaluation:
+              description: The first valid AI evaluation, an uncalibrated draft; null when none validated.
+              type: [object, 'null']
+              properties:
+                evaluation_id: {type: string}
+                evaluator_version: {type: string}
+                scores: {$ref: '#/components/schemas/DimensionScores'}
+                weighted_score: {type: number, minimum: 0, maximum: 100}
+                confidence: {type: number, minimum: 0, maximum: 1}
+                calibrated: {const: false}
+                advisory_next_step: {enum: [NEXT_QUESTION, FOLLOW_UP, HUMAN_REVIEW], description: 'The evaluator''s advisory interview step (conflict C5); never a hiring recommendation.'}
+                evaluator_output_risk: {enum: [low, medium, high]}
+                routing_reasons: {type: array, items: {type: string}}
+                evidence: {type: array, items: {type: object}}
+            outcome:
+              type: [object, 'null']
+              properties:
+                outcome_id: {type: string}
+                reviewer_id: {type: string}
+                scores:
+                  description: Null when the question has no rubric (reviewed with a rationale only).
+                  oneOf: [{type: 'null'}, {$ref: '#/components/schemas/DimensionScores'}]
+                weighted_score: {type: [number, 'null']}
+                rationale: {type: string}
+                decided_at: {type: string, format: date-time}
+
+    ReviewDecision:
+      type: object
+      additionalProperties: false
+      description: >-
+        Scores for every dimension of the answer's rubric, and a rationale. An answer whose question has no
+        rubric cannot be scored: it is reviewed with a rationale only, and scores are refused.
+      required: [rationale]
+      properties:
+        scores:
+          oneOf: [{type: 'null'}, {$ref: '#/components/schemas/DimensionScores'}]
+        rationale: {type: string, minLength: 10, maxLength: 4000}
+
+    ReviewOutcomeResult:
+      type: object
+      additionalProperties: false
+      required: [outcome_id, interview_state, open_review_tasks]
+      properties:
+        outcome_id: {type: string}
+        interview_state: {$ref: '#/components/schemas/StateEnum'}
+        open_review_tasks: {type: integer, minimum: 0}
+
+    Report:
+      type: object
+      additionalProperties: false
+      required: [report_version, interview_id, generated_at, plan, language, decision_support_only, notice, answers]
+      properties:
+        report_version: {const: 1}
+        interview_id: {type: string}
+        generated_at: {type: string, format: date-time}
+        plan:
+          type: object
+          required: [plan_id, version, synthetic]
+          properties:
+            plan_id: {type: string}
+            version: {type: integer}
+            synthetic: {type: boolean}
+        language: {enum: [en, tr]}
+        decision_support_only: {const: true}
+        notice: {type: string}
+        answers:
+          type: array
+          items:
+            type: object
+            required: [answer_id, item_id, question, rubric, rubric_synthetic, reviewed, review_reasons, ai_evaluation]
+            properties:
+              answer_id: {type: string}
+              item_id: {type: string}
+              question: {type: string}
+              rubric: {type: [string, 'null'], description: 'rubric_id@version; null when the question has no rubric.'}
+              rubric_synthetic: {type: [boolean, 'null']}
+              reviewed:
+                type: object
+                required: [scores, weighted_score, rationale, reviewer_id, decided_at]
+                properties:
+                  scores:
+                    oneOf: [{type: 'null'}, {$ref: '#/components/schemas/DimensionScores'}]
+                  weighted_score: {type: [number, 'null'], minimum: 0, maximum: 100}
+                  rationale: {type: string}
+                  reviewer_id: {type: string}
+                  decided_at: {type: string, format: date-time}
+              review_reasons: {type: array, items: {type: string}}
+              ai_evaluation: {type: [object, 'null']}

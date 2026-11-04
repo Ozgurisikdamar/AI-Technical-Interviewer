@@ -18,7 +18,7 @@ var files embed.FS
 
 // Paths of the embedded contracts, relative to the repository contracts/ directory.
 const (
-	StateMachinePath       = "state-machine/interview-session.v1.1.json"
+	StateMachinePath       = "state-machine/interview-session.v1.2.json"
 	Tier1ContextSchemaPath = "schemas/tier1/v1/tier1-context.schema.json"
 	SegmentSubmissionPath  = "schemas/transcript/v1/segment-submission.schema.json"
 	TranscriptSegmentPath  = "schemas/transcript/v1/transcript-segment.schema.json"
@@ -26,8 +26,11 @@ const (
 	InterviewCompletedPath = "schemas/events/v1/interview-completed.schema.json"
 	InterviewPlanPath      = "schemas/plan/v1/interview-plan.schema.json"
 	ConsentNoticePath      = "schemas/consent/v1/consent-notice.schema.json"
+	EvaluationPath         = "schemas/evaluation/v1/evaluation.schema.json"
+	RubricPath             = "schemas/rubric/v1/rubric.schema.json"
 	PlansDir               = "content/plans"
 	NoticesDir             = "content/notices"
+	RubricsDir             = "content/rubrics"
 )
 
 // Read returns an embedded contract file by its repository-relative path.

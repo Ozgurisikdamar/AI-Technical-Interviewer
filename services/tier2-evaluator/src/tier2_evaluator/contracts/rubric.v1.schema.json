@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/rubric-v1.schema.json",
+  "title": "Question rubric v1",
+  "description": "Versioned, immutable rubric that plan items reference by rubric_ref (PROMPT_AND_EVALUATION sections 3-5, ADR-022). Evaluators score the four dimensions of the evaluation contract against these criteria and may cite only these references. The backend recomputes the weighted score with these weights, which must equal the documented ones. Indicators exist only in synthetic rubrics: phrases the deterministic reference evaluator looks for, never shown to model evaluators or used to grade candidates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rubric_id", "version", "status", "synthetic", "title", "languages", "weights", "criteria", "references"],
+  "properties": {
+    "rubric_id": {"type": "string", "pattern": "^rub_[a-z0-9_]{3,60}$"},
+    "version": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["draft", "approved"]},
+    "synthetic": {"type": "boolean"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "languages": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["en", "tr"]}},
+    "weights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["technical_accuracy", "architecture_maturity", "edge_case_awareness", "claim_support"],
+      "properties": {
+        "technical_accuracy": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "architecture_maturity": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "edge_case_awareness": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "claim_support": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion_id", "dimension", "description", "reference_ids"],
+        "properties": {
+          "criterion_id": {"type": "string", "pattern": "^c_[a-z0-9_]{2,40}$"},
+          "dimension": {"enum": ["technical_accuracy", "architecture_maturity", "edge_case_awareness", "claim_support"]},
+          "description": {"type": "string", "minLength": 10, "maxLength": 500},
+          "reference_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^ref_[a-z0-9_]{2,60}$"}},
+          "indicators": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "en": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 2, "maxLength": 60}},
+              "tr": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 2, "maxLength": 60}}
+            }
+          }
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reference_id", "title", "summary"],
+        "properties": {
+          "reference_id": {"type": "string", "pattern": "^ref_[a-z0-9_]{2,60}$"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 200},
+          "url": {"type": "string", "format": "uri", "pattern": "^https://"},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 1000}
+        }
+      }
+    }
+  },
+  "if": {"properties": {"synthetic": {"const": false}}, "required": ["synthetic"]},
+  "then": {"properties": {"criteria": {"items": {"not": {"required": ["indicators"]}}}}}
+}

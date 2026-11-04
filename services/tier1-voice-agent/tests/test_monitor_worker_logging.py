@@ -140,6 +140,23 @@ def test_redaction_covers_third_party_loggers_and_extras() -> None:
     assert all(line.get("transcript", "[REDACTED]") == "[REDACTED]" for line in lines)
 
 
+def test_framework_pii_extras_are_redacted() -> None:
+    # livekit-agents marks personal data in log extras with the "lk.pii." prefix, e.g. the candidate's
+    # words in "skipping reply to user input, current speech generation cannot be interrupted".
+    stream = io.StringIO()
+    handler = logging_setup.setup("INFO", stream)
+    try:
+        log = logging.getLogger("livekit.agents")
+        log.warning("skipping reply to user input, speech cannot be interrupted", extra={"lk.pii.user_input": "my answer words"})
+        log.warning("skipping user input, scheduling is paused", extra={"lk.pii.user_input": "more answer words", "lk.pii.other": "x"})
+    finally:
+        logging.getLogger().removeHandler(handler)
+    out = stream.getvalue()
+    assert "answer words" not in out
+    lines = [json.loads(line) for line in out.splitlines()]
+    assert len(lines) == 2 and all(line["lk.pii.user_input"] == "[REDACTED]" for line in lines)
+
+
 def test_the_expected_tool_step_limit_notice_is_not_reported_as_a_fault() -> None:
     # With max_tool_steps=0 livekit-agents warns after every tool call; other warnings still pass.
     stream = io.StringIO()

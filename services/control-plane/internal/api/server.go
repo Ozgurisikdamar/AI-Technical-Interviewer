@@ -36,6 +36,13 @@ type Deps struct {
 	Now       func() time.Time
 	// Recorder is nil when recording is disabled (the default, ADR-017).
 	Recorder Recorder
+	// Relay publishes the outbox to Tier-2; nil without ATI_REDIS_URL (ADR-022).
+	Relay Relay
+}
+
+// Relay publishes outbox events (internal/outbox).
+type Relay interface {
+	RunOnce(ctx context.Context) (int, error)
 }
 
 // Server holds handlers for both listeners.
@@ -51,6 +58,7 @@ type Server struct {
 	now       func() time.Time
 	limiter   *ipLimiter
 	rec       Recorder
+	relay     Relay
 }
 
 // New builds the server.
@@ -62,7 +70,7 @@ func New(d Deps) *Server {
 		d.Metrics = NewMetrics()
 	}
 	return &Server{cfg: d.Config, svc: d.Service, tier1: d.Tier1, media: d.Media, pool: d.Pool, tier1Pool: d.Tier1Pool,
-		log: d.Log, metrics: d.Metrics, now: d.Now, limiter: newIPLimiter(d.Config.InvitationExchangesPerMinute), rec: d.Recorder}
+		log: d.Log, metrics: d.Metrics, now: d.Now, limiter: newIPLimiter(d.Config.InvitationExchangesPerMinute), rec: d.Recorder, relay: d.Relay}
 }
 
 // Route is one registered endpoint.
@@ -88,6 +96,10 @@ var publicRoutes = []Route{
 	{"POST", "/api/v1/interviews/{interview_id}/withdraw", (*Server).withdraw},
 	{"POST", "/api/v1/interviews/{interview_id}/realtime-session", (*Server).realtimeSession},
 	{"POST", "/api/v1/interviews/{interview_id}/text-responses", (*Server).textResponse},
+	{"GET", "/api/v1/interviews/{interview_id}/report", (*Server).getReport},
+	{"GET", "/api/v1/review-tasks", (*Server).listReviewTasks},
+	{"GET", "/api/v1/review-tasks/{task_id}", (*Server).getReviewTask},
+	{"POST", "/api/v1/review-tasks/{task_id}/outcome", (*Server).submitReviewOutcome},
 }
 
 var internalRoutes = []Route{
@@ -102,6 +114,8 @@ var internalRoutes = []Route{
 	{"POST", "/internal/v1/tier1/sessions/{session_id}/pause", (*Server).tier1Pause},
 	{"POST", "/internal/v1/tier1/sessions/{session_id}/telemetry", (*Server).tier1Telemetry},
 	{"POST", "/internal/v1/tier1/sessions/{session_id}/usage", (*Server).tier1Usage},
+	{"POST", "/internal/v1/tier2/sessions/{session_id}/evaluations", (*Server).tier2RecordEvaluation},
+	{"POST", "/internal/v1/tier2/sessions/{session_id}/complete", (*Server).tier2Complete},
 	{"POST", "/internal/v1/livekit/webhook", (*Server).livekitWebhook},
 	{"GET", "/healthz", (*Server).healthz},
 	{"GET", "/readyz", (*Server).readyz},

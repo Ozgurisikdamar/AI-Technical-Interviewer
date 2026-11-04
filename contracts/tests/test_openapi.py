@@ -57,17 +57,75 @@ def test_lease_bound_internal_operations_require_fencing(spec: dict[str, Any]) -
 def test_internal_and_public_namespaces_do_not_mix(spec: dict[str, Any]) -> None:
     for path, _method, op in _ops(spec):
         tags = set(op["tags"])
+        schemes = {name for req in op["security"] for name in req}
         if path.startswith("/internal/"):
-            assert tags <= {"tier1-internal", "ops"}, path
+            assert tags <= {"tier1-internal", "tier2-internal", "ops"}, path
         elif path.startswith("/api/"):
-            assert tags <= {"staff", "candidate"}, path
+            assert tags <= {"staff", "candidate", "review"}, path
+        # The Tier-1 and Tier-2 credentials are separate identities (ADR-001, ADR-022).
+        if path.startswith("/internal/v1/tier2/"):
+            assert tags == {"tier2-internal"} and schemes == {"tier2Service"}, path
+        else:
+            assert "tier2Service" not in schemes, path
+        if "tier2-internal" in tags or "review" in tags:
+            assert not schemes & {"agentService", "agentGrant", "candidateSession"}, path
 
 
-def test_api_exposes_no_scoring_or_decision_surface(spec: dict[str, Any]) -> None:
+def _properties(spec: dict[str, Any], node: Any, seen: set[str] | None = None) -> set[str]:
+    """Every property name reachable from a schema (following $ref, allOf, items, nested objects)."""
+    seen = set() if seen is None else seen
+    out: set[str] = set()
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+            if ref in seen:
+                return out
+            seen.add(ref)
+            return _properties(spec, spec["components"]["schemas"][ref.rsplit("/", 1)[1]], seen)
+        for name, child in node.get("properties", {}).items():
+            out.add(name)
+            out |= _properties(spec, child, seen)
+        for key in ("allOf", "anyOf", "oneOf"):
+            for child in node.get(key, []):
+                out |= _properties(spec, child, seen)
+        if "items" in node:
+            out |= _properties(spec, node["items"], seen)
+    return out
+
+
+def _operation_properties(spec: dict[str, Any], op: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    bodies = [op.get("requestBody", {})] + list(op.get("responses", {}).values())
+    for body in bodies:
+        if "$ref" in body:
+            body = spec["components"]["responses"][body["$ref"].rsplit("/", 1)[1]]
+        for media in body.get("content", {}).values():
+            names |= _properties(spec, media.get("schema", {}))
+    return names
+
+
+def test_api_exposes_no_hiring_decision_surface(spec: dict[str, Any]) -> None:
+    """No path, operation or field makes, ranks or recommends a hiring decision (ADR-008, ADR-022)."""
     text = SPEC_PATH.read_text(encoding="utf-8").lower()
-    for path in spec["paths"]:
-        assert not any(w in path for w in ("score", "evaluation", "rank", "hire", "reject", "decision")), path
-    assert "weighted_score" not in text and "hiring_decision" not in text
+    assert "hiring_decision" not in text
+    for path, _method, op in _ops(spec):
+        assert not any(w in path for w in ("score", "rank", "hire", "reject", "decision")), path
+        if "evaluation" in path:
+            assert path.startswith("/internal/v1/tier2/"), f"{path}: evaluations are reported only by the Tier-2 service"
+        for name in _operation_properties(spec, op):
+            assert not any(w in name.lower() for w in ("hire", "hiring", "reject", "rank", "recommend")), f"{path}: field {name}"
+
+
+def test_scores_appear_only_in_staff_review_and_tier2_operations(spec: dict[str, Any]) -> None:
+    """Rubric scores exist only where a human reviews them or the Tier-2 service reports them: never in a
+    candidate-facing or Tier-1 operation (ADR-022)."""
+    scored = []
+    for path, method, op in _ops(spec):
+        names = _operation_properties(spec, op)
+        if any("score" in n for n in names):
+            assert set(op["tags"]) <= {"review", "tier2-internal"}, f"{method.upper()} {path} exposes scores"
+            scored.append(path)
+    assert "/api/v1/interviews/{interview_id}/report" in scored and "/api/v1/review-tasks/{task_id}" in scored
 
 
 def test_problem_responses_use_problem_json(spec: dict[str, Any]) -> None:

@@ -197,15 +197,52 @@ func SeedPlan(ctx context.Context, owner *pgxpool.Pool, raw []byte) error {
 	return tx.Commit(ctx)
 }
 
-// SeedEmbeddedPlans seeds every plan shipped in contracts/content/plans.
-func SeedEmbeddedPlans(ctx context.Context, owner *pgxpool.Pool) error {
-	files, err := contracts.ListDir(contracts.PlansDir)
-	if err != nil {
+// SeedRubric inserts a rubric version (owner connection). Rubrics are immutable: seeding the same
+// version again is a no-op, and different content under an existing version is refused.
+func SeedRubric(ctx context.Context, owner *pgxpool.Pool, raw []byte) error {
+	if err := schema.ValidateJSON(contracts.RubricPath, raw); err != nil {
+		return fmt.Errorf("rubric does not match the rubric contract: %w", err)
+	}
+	var r struct {
+		RubricID  string `json:"rubric_id"`
+		Version   int    `json:"version"`
+		Synthetic bool   `json:"synthetic"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
 		return err
 	}
-	for _, f := range files {
-		if err := SeedPlan(ctx, owner, contracts.MustRead(f)); err != nil {
-			return fmt.Errorf("%s: %w", f, err)
+	sum := sha256.Sum256(raw)
+	digest := hex.EncodeToString(sum[:])
+	var existing string
+	err := owner.QueryRow(ctx, `SELECT sha256 FROM ati.rubrics WHERE rubric_id = $1 AND version = $2`, r.RubricID, r.Version).Scan(&existing)
+	switch {
+	case err == nil && existing == digest:
+		return nil
+	case err == nil:
+		return fmt.Errorf("rubric %s v%d already exists with different content; publish a new version", r.RubricID, r.Version)
+	case !errors.Is(err, pgx.ErrNoRows):
+		return err
+	}
+	_, err = owner.Exec(ctx, `INSERT INTO ati.rubrics (rubric_id, version, sha256, synthetic, body) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+		r.RubricID, r.Version, digest, r.Synthetic, raw)
+	return err
+}
+
+// SeedEmbeddedContent seeds every rubric and plan shipped in contracts/content (rubrics first:
+// plan items reference them).
+func SeedEmbeddedContent(ctx context.Context, owner *pgxpool.Pool) error {
+	for _, step := range []struct {
+		dir  string
+		seed func(context.Context, *pgxpool.Pool, []byte) error
+	}{{contracts.RubricsDir, SeedRubric}, {contracts.PlansDir, SeedPlan}} {
+		files, err := contracts.ListDir(step.dir)
+		if err != nil {
+			return err
+		}
+		for _, f := range files {
+			if err := step.seed(ctx, owner, contracts.MustRead(f)); err != nil {
+				return fmt.Errorf("%s: %w", f, err)
+			}
 		}
 	}
 	return nil

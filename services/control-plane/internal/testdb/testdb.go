@@ -110,7 +110,7 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 			templateErr = err
 			return
 		}
-		err = store.SeedEmbeddedPlans(ctx, owner)
+		err = store.SeedEmbeddedContent(ctx, owner)
 		owner.Close()
 		if err != nil {
 			templateErr = fmt.Errorf("seed plans: %w", err)

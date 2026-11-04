@@ -82,7 +82,12 @@ func TestAppendOnlyHoldsEvenForOwner(t *testing.T) {
 	f := seed(t, db.Owner)
 	expectDenied(t, db.Owner, "owner updates segment", `UPDATE ati.transcript_segments SET text = 'x' WHERE id = $1`, f.segment)
 	expectDenied(t, db.Owner, "owner deletes segment", `DELETE FROM ati.transcript_segments WHERE id = $1`, f.segment)
-	expectDenied(t, db.Owner, "owner truncates answers", `TRUNCATE ati.candidate_answers`)
+	// CASCADE: Phase 2 tables reference answers, and the trigger must refuse even a cascading truncate.
+	expectDenied(t, db.Owner, "owner truncates answers", `TRUNCATE ati.candidate_answers CASCADE`)
+	expectDenied(t, db.Owner, "owner rewrites a rubric", `UPDATE ati.rubrics SET synthetic = false`)
+	expectDenied(t, db.Owner, "owner deletes a rubric", `DELETE FROM ati.rubrics`)
+	expectDenied(t, db.Owner, "owner truncates review outcomes", `TRUNCATE ati.review_outcomes CASCADE`)
+	expectDenied(t, db.Owner, "owner truncates reports", `TRUNCATE ati.reports`)
 }
 
 func TestTier2EvaluatorRoleReadsEvidenceButNeverWritesLiveState(t *testing.T) {
@@ -126,9 +131,86 @@ func TestTier2EvaluatorRoleReadsEvidenceButNeverWritesLiveState(t *testing.T) {
 		}
 	}
 	var canLogin bool
-	if err := db.Owner.QueryRow(ctx, `SELECT rolcanlogin FROM pg_roles WHERE rolname = 'ati_tier2_evaluator'`).Scan(&canLogin); err != nil || canLogin {
-		t.Fatalf("evaluator role must be NOLOGIN until Phase 2: canLogin=%v err=%v", canLogin, err)
+	if err := db.Owner.QueryRow(ctx, `SELECT rolcanlogin FROM pg_roles WHERE rolname = 'ati_tier2_evaluator'`).Scan(&canLogin); err != nil || !canLogin {
+		t.Fatalf("the evaluator logs in from Phase 2 (ADR-022): canLogin=%v err=%v", canLogin, err)
 	}
+}
+
+// Phase 2 (ADR-022): the evaluator reads evidence, rubrics and two narrow views, and nothing it
+// could use to identify the candidate or to write a result; results reach the database only
+// through the control plane.
+func TestTier2EvaluatorRoleReadsOnlyEvidenceAndNarrowViews(t *testing.T) {
+	db := testdb.New(t)
+	f := seed(t, db.Owner)
+	ctx := context.Background()
+	conn, err := db.Owner.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SET LOCAL ROLE ati_tier2_evaluator`); err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		`SELECT count(*) FROM ati.rubrics`,
+		`SELECT state, plan_id, language FROM ati.tier2_session_v WHERE session_id = '` + f.session + `'`,
+		`SELECT count(*) FROM ati.tier2_evaluation_keys_v`,
+	} {
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			t.Errorf("evaluator must be able to run %q: %v", sql, err)
+		}
+	}
+	for _, sql := range []string{
+		`SELECT * FROM ati.interview_sessions`,
+		`SELECT * FROM ati.evaluation_attempts`,
+		`SELECT * FROM ati.evaluations`,
+		`SELECT * FROM ati.review_tasks`,
+		`SELECT * FROM ati.review_outcomes`,
+		`SELECT * FROM ati.reports`,
+		`SELECT * FROM ati.consent_records`,
+		`SELECT * FROM ati.audio_recordings`,
+		`INSERT INTO ati.evaluations (id) VALUES ('evl_x')`,
+		`INSERT INTO ati.review_tasks (id) VALUES ('rvt_x')`,
+		`UPDATE ati.outbox_events SET published_at = now()`,
+	} {
+		if _, err := tx.Exec(ctx, `SAVEPOINT s`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, sql); err == nil || !strings.Contains(err.Error(), "permission denied") {
+			t.Errorf("evaluator: %q should be denied, got %v", sql, err)
+		}
+		if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT s`); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// The control plane writes evaluation records once: attempts, evaluations, outcomes and reports
+// are insert-only for it; only a review task's status changes; outbox rows change only to record
+// their publication.
+func TestControlPlaneWritesEvaluationRecordsOnce(t *testing.T) {
+	db := testdb.New(t)
+	seed(t, db.Owner)
+	for _, c := range []struct{ label, sql string }{
+		{"update attempt", `UPDATE ati.evaluation_attempts SET outcome = 'valid'`},
+		{"delete attempt", `DELETE FROM ati.evaluation_attempts`},
+		{"update evaluation", `UPDATE ati.evaluations SET weighted_score_centi = 10000`},
+		{"delete evaluation", `DELETE FROM ati.evaluations`},
+		{"update outcome", `UPDATE ati.review_outcomes SET rationale = 'changed rationale'`},
+		{"update report", `UPDATE ati.reports SET body = '{}'`},
+		{"insert rubric", `INSERT INTO ati.rubrics (rubric_id, version, sha256, synthetic, body) VALUES ('rub_evil', 1, '` + strings.Repeat("a", 64) + `', true, '{}')`},
+		{"rewrite outbox payload", `UPDATE ati.outbox_events SET payload = '{}'`},
+		{"delete review task", `DELETE FROM ati.review_tasks`},
+	} {
+		expectDenied(t, db.CP, c.label, c.sql)
+	}
+	mustExec(t, db.CP, `UPDATE ati.review_tasks SET status = 'open' WHERE false`)
+	mustExec(t, db.CP, `UPDATE ati.outbox_events SET published_at = now() WHERE false`)
 }
 
 func TestTier1ContextRoleHasNoTableAccess(t *testing.T) {

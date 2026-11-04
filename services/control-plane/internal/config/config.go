@@ -67,6 +67,10 @@ type Config struct {
 	LiveKitWebhookSecret    string
 	AgentName               string
 	AgentServiceTokenSHA256 string
+	// Phase 2 (ADR-022), both optional: without them the outbox stays unpublished and the Tier-2
+	// endpoints refuse every request.
+	RedisURL                string
+	Tier2ServiceTokenSHA256 string
 
 	Retention Retention
 	Recording Recording
@@ -180,6 +184,8 @@ func Load(get Getenv) (*Config, error) {
 		LiveKitWebhookSecret:    req("ATI_LIVEKIT_WEBHOOK_API_SECRET"),
 		AgentName:               opt("ATI_AGENT_NAME", "ati-tier1-interviewer"),
 		AgentServiceTokenSHA256: strings.ToLower(req("ATI_AGENT_SERVICE_TOKEN_SHA256")),
+		RedisURL:                opt("ATI_REDIS_URL", ""),
+		Tier2ServiceTokenSHA256: strings.ToLower(opt("ATI_TIER2_SERVICE_TOKEN_SHA256", "")),
 		Retention: Retention{
 			TranscriptDays:       days("ATI_RETENTION_TRANSCRIPT_DAYS"),
 			SessionEventsDays:    days("ATI_RETENTION_SESSION_EVENTS_DAYS"),
@@ -237,6 +243,19 @@ func Load(get Getenv) (*Config, error) {
 	}
 	if c.AgentServiceTokenSHA256 != "" && !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(c.AgentServiceTokenSHA256) {
 		errs = append(errs, errors.New("ATI_AGENT_SERVICE_TOKEN_SHA256 must be a hex SHA-256 digest"))
+	}
+	if c.Tier2ServiceTokenSHA256 != "" {
+		if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(c.Tier2ServiceTokenSHA256) {
+			errs = append(errs, errors.New("ATI_TIER2_SERVICE_TOKEN_SHA256 must be a hex SHA-256 digest"))
+		}
+		if c.Tier2ServiceTokenSHA256 == c.AgentServiceTokenSHA256 {
+			errs = append(errs, errors.New("the Tier-2 and Tier-1 service tokens must differ (separate identities, ADR-001)"))
+		}
+	}
+	if c.RedisURL != "" {
+		if u, err := url.Parse(c.RedisURL); err != nil || (u.Scheme != "redis" && u.Scheme != "rediss") || u.Host == "" {
+			errs = append(errs, errors.New("ATI_REDIS_URL must be a redis:// or rediss:// URL"))
+		}
 	}
 	if c.LeaseRenewInterval >= c.LeaseTTL {
 		errs = append(errs, errors.New("ATI_LEASE_RENEW_INTERVAL must be shorter than ATI_LEASE_TTL"))
@@ -311,6 +330,9 @@ func (c *Config) productionErrors() []error {
 	}
 	if strings.HasPrefix(c.LiveKitURL, "ws://") {
 		errs = append(errs, errors.New("production requires a wss:// ATI_LIVEKIT_URL"))
+	}
+	if c.RedisURL != "" && !strings.HasPrefix(c.RedisURL, "rediss://") {
+		errs = append(errs, errors.New("production requires TLS to Redis (rediss://)"))
 	}
 	if err := c.checkNoticeApproved(); err != nil {
 		errs = append(errs, err)

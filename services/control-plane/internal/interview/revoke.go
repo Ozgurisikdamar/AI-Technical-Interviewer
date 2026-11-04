@@ -20,7 +20,7 @@ type Revoked struct {
 // the link can no longer be exchanged and any candidate session cookie stops working. A live
 // interview is paused (access_revoked) and its room deleted at once, because self-hosted LiveKit
 // cannot revoke a connected participant's token; nobody can resume it, so the pause expires to
-// CANCELLED as usual. Contract v1.1 has no staff cancellation, so other states are left as they
+// CANCELLED as usual. The state-machine contract has no staff cancellation, so other states are left as they
 // are. Repeating the request changes nothing.
 func (s *Service) RevokeInvitation(ctx context.Context, actor Actor, sessionID, tenantID string) (*Revoked, error) {
 	out := &Revoked{}

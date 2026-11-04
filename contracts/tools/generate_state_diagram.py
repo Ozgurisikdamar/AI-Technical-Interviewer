@@ -4,7 +4,7 @@ Usage:
     python3 contracts/tools/generate_state_diagram.py          # write the .mmd file
     python3 contracts/tools/generate_state_diagram.py --check  # exit 1 if the file is stale
 
-The generated diagram, not a hand-drawn one, is the reviewable picture of contract v1.1.
+The generated diagram, not a hand-drawn one, is the reviewable picture of contract v1.2.
 Transitions that extend the BLUEPRINT diagram are labelled with their ADR.
 """
 
@@ -15,13 +15,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT = ROOT / "state-machine" / "interview-session.v1.1.json"
-OUTPUT = ROOT / "state-machine" / "interview-session.v1.1.mmd"
+CONTRACT = ROOT / "state-machine" / "interview-session.v1.2.json"
+OUTPUT = ROOT / "state-machine" / "interview-session.v1.2.mmd"
 
 
 def render(contract: dict) -> str:
     lines = [
-        "%% Generated from interview-session.v1.1.json by contracts/tools/generate_state_diagram.py.",
+        "%% Generated from interview-session.v1.2.json by contracts/tools/generate_state_diagram.py.",
         "%% Do not edit by hand.",
         "stateDiagram-v2",
         f"  [*] --> {contract['initial_state']}",

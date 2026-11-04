@@ -1,0 +1,57 @@
+{
+  "rubric_id": "rub_example_cache_design",
+  "version": 2,
+  "status": "approved",
+  "synthetic": false,
+  "title": "Cache design (example)",
+  "languages": [
+    "en"
+  ],
+  "weights": {
+    "technical_accuracy": 0.4,
+    "architecture_maturity": 0.25,
+    "edge_case_awareness": 0.2,
+    "claim_support": 0.15
+  },
+  "criteria": [
+    {
+      "criterion_id": "c_invalidation",
+      "dimension": "technical_accuracy",
+      "description": "Explains when cached entries become stale and how they are invalidated.",
+      "reference_ids": [
+        "ref_cache_doc"
+      ],
+      "indicators": {
+        "en": [
+          "invalidat"
+        ]
+      }
+    },
+    {
+      "criterion_id": "c_placement",
+      "dimension": "architecture_maturity",
+      "description": "Chooses where the cache sits and why (client, edge, service, database).",
+      "reference_ids": []
+    },
+    {
+      "criterion_id": "c_stampede",
+      "dimension": "edge_case_awareness",
+      "description": "Prevents a stampede on expiry of a hot key.",
+      "reference_ids": []
+    },
+    {
+      "criterion_id": "c_evidence",
+      "dimension": "claim_support",
+      "description": "Supports claims with a concrete example or measurement.",
+      "reference_ids": []
+    }
+  ],
+  "references": [
+    {
+      "reference_id": "ref_cache_doc",
+      "title": "Internal cache guide",
+      "url": "https://example.com/cache",
+      "summary": "How the platform caches responses."
+    }
+  ]
+}

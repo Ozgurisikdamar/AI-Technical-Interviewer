@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Local development stack: PostgreSQL 16, LiveKit OSS server, control plane, Tier-1 agent.
+# Local development stack: PostgreSQL 16, Redis, LiveKit OSS server, control plane, Tier-1 agent,
+# Tier-2 evaluator (reference evaluator: synthetic rubrics only, ADR-022).
 #
 #   tools/dev/stack.sh up             start everything (idempotent) and print endpoints
 #   tools/dev/stack.sh down           stop everything and delete runtime state
@@ -9,6 +10,8 @@
 #                                     on, fail-closed: this stack has no egress service)
 #   tools/dev/stack.sh agent-kill     SIGKILL the agent process group (failure tests)
 #   tools/dev/stack.sh agent-start    start the agent again
+#   tools/dev/stack.sh tier2-kill     SIGKILL the Tier-2 worker (failure tests)
+#   tools/dev/stack.sh tier2-start    start the Tier-2 worker again
 #   tools/dev/stack.sh web-up         build (if needed) and start the web UI on http://localhost:3000
 #   tools/dev/stack.sh web-stop
 #   tools/dev/stack.sh env            print the endpoints as shell assignments
@@ -31,6 +34,7 @@ CP_PUBLIC="127.0.0.1:${ATI_DEV_CP_PUBLIC_PORT:-18080}"
 CP_INTERNAL="127.0.0.1:${ATI_DEV_CP_INTERNAL_PORT:-18081}"
 AGENT_HEALTH_PORT="${ATI_DEV_AGENT_HEALTH_PORT:-18082}"
 LK_PORT="${ATI_DEV_LIVEKIT_PORT:-7880}"
+REDIS_PORT="${ATI_DEV_REDIS_PORT:-16379}"
 WEB_PORT="${ATI_DEV_WEB_PORT:-3000}"
 PUBLIC_ORIGIN="${ATI_DEV_PUBLIC_ORIGIN:-http://localhost:$WEB_PORT}"
 NODE_IP="${ATI_DEV_NODE_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
@@ -44,6 +48,7 @@ LK_API_SECRET="ati-dev-livekit-api-secret-0123456789abcdef"
 LK_WEBHOOK_KEY="devwebhookkey"
 LK_WEBHOOK_SECRET="ati-dev-livekit-webhook-secret-0123456789ab"
 AGENT_TOKEN="ati-dev-agent-service-token-0123456789abcdef"
+TIER2_TOKEN="ati-dev-tier2-service-token-0123456789abcdef"
 AGENT_NAME="ati-tier1-interviewer"
 
 export NO_PROXY="localhost,127.0.0.1,::1,$NODE_IP${NO_PROXY:+,$NO_PROXY}"
@@ -140,6 +145,8 @@ ATI_LIVEKIT_WEBHOOK_API_KEY=$LK_WEBHOOK_KEY
 ATI_LIVEKIT_WEBHOOK_API_SECRET=$LK_WEBHOOK_SECRET
 ATI_AGENT_NAME=$AGENT_NAME
 ATI_AGENT_SERVICE_TOKEN_SHA256=$token_sha
+ATI_REDIS_URL=redis://127.0.0.1:$REDIS_PORT/0
+ATI_TIER2_SERVICE_TOKEN_SHA256=$(printf '%s' "$TIER2_TOKEN" | sha256sum | cut -d' ' -f1)
 ATI_RETENTION_TRANSCRIPT_DAYS=${ATI_DEV_RETENTION_DAYS:-7}
 ATI_RETENTION_SESSION_EVENTS_DAYS=${ATI_DEV_RETENTION_DAYS:-7}
 ATI_RETENTION_ASSESSMENT_OUTPUT_DAYS=${ATI_DEV_RETENTION_DAYS:-7}
@@ -191,6 +198,50 @@ agent_start() {
   wait_http agent "http://127.0.0.1:$AGENT_HEALTH_PORT/"
 }
 
+redis_start() { # throwaway Redis for the Tier-2 stream: no persistence, loopback only
+  command -v redis-server >/dev/null || { log "redis-server is required (Tier-2 handoff, ADR-006)"; return 1; }
+  mkdir -p "$STATE/redis"
+  start redis "$STATE" redis-server --port "$REDIS_PORT" --bind 127.0.0.1 --save "" --appendonly no --dir "$STATE/redis"
+  for _ in $(seq 1 100); do
+    [ "$(redis-cli -p "$REDIS_PORT" ping 2>/dev/null)" = "PONG" ] && return 0
+    sleep 0.1
+  done
+  log "redis is not ready; see $LOGS/redis.log"; return 1
+}
+
+tier2_env() {
+  cat <<EOF
+APP_ENV=dev
+ATI_TIER2_EVALUATOR=reference
+ATI_REDIS_URL=redis://127.0.0.1:$REDIS_PORT/0
+ATI_TIER2_DATABASE_URL=postgres://ati_tier2_evaluator@127.0.0.1:$PG_PORT/ati?sslmode=disable
+ATI_CONTROL_PLANE_INTERNAL_URL=http://$CP_INTERNAL
+ATI_TIER2_SERVICE_TOKEN=$TIER2_TOKEN
+ATI_TIER2_VISIBILITY_TIMEOUT_MS=${ATI_DEV_TIER2_VISIBILITY_TIMEOUT_MS:-30000}
+ATI_LOG_LEVEL=info
+EOF
+}
+
+tier2_start() {
+  [ -x "$ROOT/services/tier2-evaluator/.venv/bin/python" ] || (cd "$ROOT/services/tier2-evaluator" && uv sync --frozen)
+  tier2_env >"$STATE/tier2.env"
+  local offset=0
+  [ -f "$LOGS/tier2.log" ] && offset="$(wc -c <"$LOGS/tier2.log")"
+  start tier2 "$ROOT/services/tier2-evaluator" \
+    env -i PATH="$PATH" HOME="$HOME" LANG=C.UTF-8 NO_PROXY="$NO_PROXY" no_proxy="$NO_PROXY" \
+    $(grep -v '^#' "$STATE/tier2.env" | xargs) \
+    "$ROOT/services/tier2-evaluator/.venv/bin/python" -m tier2_evaluator
+  for _ in $(seq 1 150); do # ready once it has started and its consumer group exists
+    if tail -c +"$((offset + 1))" "$LOGS/tier2.log" 2>/dev/null | grep -q '"tier-2 worker started"' &&
+      redis-cli -p "$REDIS_PORT" XINFO GROUPS ati:tier2:events 2>/dev/null | grep -qx tier2; then
+      return 0
+    fi
+    pid_alive "$STATE/tier2.pid" || break
+    sleep 0.2
+  done
+  log "tier2 is not ready; see $LOGS/tier2.log"; tail -n 20 "$LOGS/tier2.log" >&2 || true; return 1
+}
+
 up() {
   mkdir -p "$STATE" "$LOGS" "$BIN"
   chmod 700 "$STATE"
@@ -206,6 +257,7 @@ up() {
     "$BIN/ati-admin" seed-plans --url "$owner"
     "$BIN/ati-admin" create-tenant --url "$owner" --name "Synthetic development tenant" >"$STATE/tenant_id"
     (umask 077 && "$BIN/ati-admin" create-staff-token --url "$owner" --tenant "$(cat "$STATE/tenant_id")" --label dev-stack --role recruiter >"$STATE/staff_token")
+    (umask 077 && "$BIN/ati-admin" create-staff-token --url "$owner" --tenant "$(cat "$STATE/tenant_id")" --label dev-reviewer --role reviewer >"$STATE/reviewer_token")
   else
     [ -x "$BIN/control-plane" ] || (cd "$ROOT/services/control-plane" && go build -o "$BIN/control-plane" ./cmd/control-plane && go build -o "$BIN/ati-admin" ./cmd/ati-admin)
     "$BIN/ati-admin" migrate --url "${admin%/postgres*}/ati?sslmode=disable" # idempotent: applies new migrations
@@ -214,11 +266,13 @@ up() {
   write_livekit_config
   start livekit "$STATE" "$lk" --config "$STATE/livekit.yaml"
   wait_http livekit "http://127.0.0.1:$LK_PORT/"
+  redis_start
   cp_start
   if [ ! -x "$ROOT/services/tier1-voice-agent/.venv/bin/python" ]; then
     (cd "$ROOT/services/tier1-voice-agent" && uv sync --frozen)
   fi
   agent_start
+  tier2_start
   print_env
 }
 
@@ -233,14 +287,17 @@ ATI_E2E_LIVEKIT_API_SECRET=$LK_API_SECRET
 ATI_E2E_DB_ADMIN_URL=postgres://postgres@127.0.0.1:$PG_PORT/ati?sslmode=disable
 ATI_E2E_STATE_DIR=$STATE
 ATI_E2E_WEB_URL=$PUBLIC_ORIGIN
+ATI_E2E_REDIS_PORT=$REDIS_PORT
 EOF
 }
 
 down() {
   stop web
+  stop tier2
   stop agent
   stop control-plane
   stop livekit
+  stop redis
   "$ROOT/tools/dev/pg.sh" stop >/dev/null
   rm -rf "$STATE"
   log "stopped"
@@ -261,7 +318,8 @@ web_up() { # build (once per source state) and start the web UI's production ser
   wait_http web "http://127.0.0.1:${WEB_PORT}/"
 }
 
-restart() { # rebuild the control plane and restart it and the agent (PostgreSQL and LiveKit keep running)
+restart() { # rebuild the control plane; restart it, the agent and the Tier-2 worker (PostgreSQL, Redis, LiveKit keep running)
+  stop tier2
   stop agent
   stop control-plane
   (cd "$ROOT/services/control-plane" && go build -o "$BIN/control-plane" ./cmd/control-plane && go build -o "$BIN/ati-admin" ./cmd/ati-admin)
@@ -269,10 +327,11 @@ restart() { # rebuild the control plane and restart it and the agent (PostgreSQL
   "$BIN/ati-admin" migrate --url "${admin%/postgres*}/ati?sslmode=disable"
   cp_start
   agent_start
+  tier2_start
 }
 
 status() {
-  for n in livekit control-plane agent web; do
+  for n in redis livekit control-plane agent tier2 web; do
     if pid_alive "$STATE/$n.pid"; then echo "$n: running (pid $(cat "$STATE/$n.pid"))"; else echo "$n: stopped"; fi
   done
   "$ROOT/tools/dev/pg.sh" status || true
@@ -290,7 +349,12 @@ case "${1:-}" in
     rm -f "$STATE/agent.pid"
     ;;
   agent-start) agent_start ;;
+  tier2-kill)
+    if pid_alive "$STATE/tier2.pid"; then kill -KILL -- "-$(cat "$STATE/tier2.pid")" 2>/dev/null || true; fi
+    rm -f "$STATE/tier2.pid"
+    ;;
+  tier2-start) tier2_start ;;
   web-up) web_up ;;
   web-stop) stop web ;;
-  *) echo "usage: $0 up|down|status|restart|cp-restart|env|agent-kill|agent-start|web-up|web-stop" >&2; exit 2 ;;
+  *) echo "usage: $0 up|down|status|restart|cp-restart|env|agent-kill|agent-start|tier2-kill|tier2-start|web-up|web-stop" >&2; exit 2 ;;
 esac

@@ -300,3 +300,28 @@ func TestListenersDefaultToLoopbackOnlyInDevAndTest(t *testing.T) {
 		t.Fatalf("explicit listeners: %+v %v", c, err)
 	}
 }
+
+// Phase 2 settings (ADR-022): optional, validated, and the Tier-2 identity is distinct from Tier-1's.
+func TestTier2SettingsAreValidated(t *testing.T) {
+	c, err := Load(getter(devEnv()))
+	if err != nil || c.RedisURL != "" || c.Tier2ServiceTokenSHA256 != "" {
+		t.Fatalf("both are optional: %+v %v", c, err)
+	}
+	if _, err := Load(getter(with(devEnv(), "ATI_TIER2_SERVICE_TOKEN_SHA256", strings.Repeat("ab", 32)))); err == nil || !strings.Contains(err.Error(), "must differ") {
+		t.Fatalf("the Tier-2 token must not be the agent's: %v", err)
+	}
+	if _, err := Load(getter(with(devEnv(), "ATI_TIER2_SERVICE_TOKEN_SHA256", "not-a-digest"))); err == nil {
+		t.Fatal("a malformed digest must be refused")
+	}
+	if _, err := Load(getter(with(devEnv(), "ATI_REDIS_URL", "http://127.0.0.1:6379"))); err == nil || !strings.Contains(err.Error(), "ATI_REDIS_URL") {
+		t.Fatalf("a non-Redis URL must be refused: %v", err)
+	}
+	c, err = Load(getter(with(devEnv(), "ATI_REDIS_URL", "redis://127.0.0.1:16379/0", "ATI_TIER2_SERVICE_TOKEN_SHA256", strings.Repeat("cd", 32))))
+	if err != nil || c.RedisURL == "" || c.Tier2ServiceTokenSHA256 != strings.Repeat("cd", 32) {
+		t.Fatalf("valid settings: %+v %v", c, err)
+	}
+	_, err = Load(getter(with(prodEnv(t), "ATI_REDIS_URL", "redis://redis.internal:6379/0")))
+	if err == nil || !strings.Contains(err.Error(), "rediss://") {
+		t.Fatalf("production requires TLS to Redis: %v", err)
+	}
+}

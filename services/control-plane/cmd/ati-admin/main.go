@@ -25,9 +25,9 @@ const usage = `usage: ati-admin <command> [flags]
 commands:
   bootstrap-roles     --admin-url URL                 create application roles (idempotent)
   migrate             --url URL                       apply migrations as the owner role
-  seed-plans          --url URL                       insert the shipped synthetic demo plans
+  seed-plans          --url URL                       insert the shipped synthetic demo rubrics and plans
   create-tenant       --url URL --name NAME           print a new tenant id
-  create-staff-token  --url URL --tenant ID --role recruiter|admin --label L [--ttl 720h]
+  create-staff-token  --url URL --tenant ID --role recruiter|reviewer|admin --label L [--ttl 720h]
                                                       print a new staff token (shown once)
   tenant-recording    --url URL --tenant ID --allowed=true|false
                                                       set whether a tenant allows consented recordings
@@ -80,7 +80,7 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer, getenv f
 			return err
 		}
 		defer pool.Close()
-		return store.SeedEmbeddedPlans(ctx, pool)
+		return store.SeedEmbeddedContent(ctx, pool)
 	case "create-tenant":
 		if *name == "" {
 			return fmt.Errorf("--name is required")
@@ -97,8 +97,8 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer, getenv f
 		_, err = fmt.Fprintln(out, id)
 		return err
 	case "create-staff-token":
-		if *tenant == "" || *label == "" || (*role != "recruiter" && *role != "admin") {
-			return fmt.Errorf("--tenant, --label and --role recruiter|admin are required")
+		if *tenant == "" || *label == "" || (*role != "recruiter" && *role != "reviewer" && *role != "admin") {
+			return fmt.Errorf("--tenant, --label and --role recruiter|reviewer|admin are required")
 		}
 		if *ttl <= 0 {
 			return fmt.Errorf("--ttl must be positive")

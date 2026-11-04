@@ -117,3 +117,39 @@ def test_shipped_model_registry_is_consistent() -> None:
             assert by_id[r]["status"] != "deprecated" or by_id[r]["shutdown_on"] > m["shutdown_on"], f"{m['id']}: replacement {r} retires first"
         if m["status"] == "verified":
             assert (REPO / m["evidence"]).is_file(), f"{m['id']}: evidence {m['evidence']} is missing"
+
+
+DOCUMENTED_WEIGHTS = {"technical_accuracy": 0.40, "architecture_maturity": 0.25, "edge_case_awareness": 0.20, "claim_support": 0.15}
+
+
+@pytest.mark.parametrize("path", sorted((CONTRACTS / "content/rubrics").glob("*.json")), ids=lambda p: p.name)
+def test_shipped_rubrics_are_consistent(path: Path) -> None:
+    """ADR-022: rubric weights equal the documented ones (the backend recomputes with them); every
+    dimension has a criterion; criteria cite only the rubric's references; nothing shipped is validated."""
+    rubric = load_json(path)
+    errors = list(validator_for("rubric").iter_errors(rubric))
+    assert not errors, [e.message for e in errors]
+    assert path.name == f"{rubric['rubric_id']}.v{rubric['version']}.json"
+    assert rubric["weights"] == DOCUMENTED_WEIGHTS
+    assert {c["dimension"] for c in rubric["criteria"]} == set(DOCUMENTED_WEIGHTS)
+    ids = [c["criterion_id"] for c in rubric["criteria"]]
+    assert len(ids) == len(set(ids))
+    refs = {r["reference_id"] for r in rubric["references"]}
+    assert len(refs) == len(rubric["references"])
+    for c in rubric["criteria"]:
+        assert set(c["reference_ids"]) <= refs, f"{c['criterion_id']} cites an unknown reference"
+        if rubric["synthetic"]:
+            assert set(c["indicators"]) == set(rubric["languages"]), f"{c['criterion_id']} needs indicators for every language"
+    assert rubric["synthetic"] is True and rubric["status"] == "draft" and rubric["rubric_id"].startswith("rub_demo_")
+
+
+def test_every_plan_rubric_reference_resolves_to_a_shipped_rubric() -> None:
+    shipped = {(r["rubric_id"], r["version"]) for r in map(load_json, (CONTRACTS / "content/rubrics").glob("*.json"))}
+    for path in (CONTRACTS / "content/plans").glob("*.json"):
+        plan = load_json(path)
+        for item in plan["items"]:
+            ref = item["rubric_ref"]
+            if ref is not None:
+                assert (ref["rubric_id"], ref["version"]) in shipped, f"{path.name} {item['item_id']} references a missing rubric"
+                rubric = load_json(CONTRACTS / f"content/rubrics/{ref['rubric_id']}.v{ref['version']}.json")
+                assert plan["language"] in rubric["languages"], f"{path.name} {item['item_id']}: rubric does not cover {plan['language']}"

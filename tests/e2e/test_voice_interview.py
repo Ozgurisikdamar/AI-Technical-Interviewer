@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from candidate import DONE, FAIL_LLM, INJECT, LONG, PART, Candidate, answer, calibrate, listen_to_prompt
+from candidate import DONE, FAIL_LLM, INJECT, LONG, PART, POST_INTERVIEW, Candidate, answer, calibrate, listen_to_prompt
 from conftest import Db, stack_cmd
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -48,9 +48,9 @@ async def test_full_interview_follows_the_plan_and_hands_off_ids_only(candidate:
     for _ in range(6):
         items.append(view["active_prompt"]["kind"])
         view = await answer(c)
-        if view["state"] == "INTERVIEW_COMPLETED":
+        if view["state"] in POST_INTERVIEW:
             break
-    assert view["state"] == "INTERVIEW_COMPLETED", view
+    assert view["state"] in POST_INTERVIEW, view
     assert items == ["question", "follow_up", "question", "question"]
     # The closing remark plays, then the agent leaves and the room is deleted (candidate disconnected).
     await c.wait_agent_speaks(timeout=10)
@@ -90,6 +90,15 @@ async def test_full_interview_follows_the_plan_and_hands_off_ids_only(candidate:
     assert db.one("SELECT count(*) FROM ati.audit_logs WHERE subject_id = %s AND action = 'media.room_deleted'", sid) == 1
     usage = db.rows("SELECT engine FROM ati.session_usage WHERE session_id = %s", sid)
     assert usage and usage[0][0] == "scripted"
+    # Tier-2 (ADR-022): synthetic test speech is never evaluated, and every answer still reaches a reviewer.
+    deadline = time.monotonic() + 30
+    while db.one("SELECT state FROM ati.interview_sessions WHERE id = %s", sid) != "HUMAN_REVIEW":
+        assert time.monotonic() < deadline, "the interview was not routed to human review"
+        await asyncio.sleep(0.2)
+    attempts = db.rows("SELECT outcome, problems FROM ati.evaluation_attempts WHERE session_id = %s", sid)
+    assert len(attempts) == 4 and all(a == ("abstained", ["synthetic_source"]) for a in attempts), attempts
+    assert db.one("SELECT count(*) FROM ati.evaluations WHERE session_id = %s", sid) == 0
+    assert db.one("SELECT count(*) FROM ati.review_tasks WHERE session_id = %s AND 'synthetic_source' = ANY(reasons)", sid) == 4
 
 
 async def test_barge_in_stops_the_interviewer_and_keeps_the_answer_open(candidate: Candidate, db: Db) -> None:
@@ -144,7 +153,7 @@ async def test_disconnect_pauses_and_resume_reasks_as_a_new_activation(candidate
     assert resumed["active_prompt"]["text"] == first["active_prompt"]["text"]
     await listen_to_prompt(c, since=mark)  # welcome back + the same question
     await c.say(DONE)
-    await c.wait_state("QUESTION_ACTIVE", "INTERVIEW_COMPLETED", timeout=25, activation_not=resumed["active_prompt"]["activation_id"])
+    await c.wait_state("QUESTION_ACTIVE", *POST_INTERVIEW, timeout=25, activation_not=resumed["active_prompt"]["activation_id"])
     rows = db.rows(
         "SELECT close_reason FROM ati.question_activations WHERE session_id = %s AND item_id = 'q1' ORDER BY opened_at", c.interview_id
     )

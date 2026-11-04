@@ -1,4 +1,4 @@
-"""Structural tests of the interview state-machine contract v1.1 (BLUEPRINT section 4, ADR-012)."""
+"""Structural tests of the interview state-machine contract v1.2 (BLUEPRINT section 4, ADR-012)."""
 
 from __future__ import annotations
 

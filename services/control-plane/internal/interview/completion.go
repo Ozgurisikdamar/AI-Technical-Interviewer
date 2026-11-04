@@ -283,7 +283,7 @@ func (s *Service) IssueLease(ctx context.Context, sessionID, jobID, agentIdentit
 			return err
 		}
 		info, _ := s.machine.StateInfo(sess.State)
-		if info.Kind != flow.KindLive && sess.State != flow.InterviewCompleted {
+		if info.Kind != flow.KindLive && !postInterview[sess.State] { // the closing remark may still be due
 			return &ConflictError{"session_not_live", "no live interview to claim"}
 		}
 		now := s.now().UTC()

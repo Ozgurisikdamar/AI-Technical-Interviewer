@@ -29,6 +29,7 @@ import (
 const (
 	origin     = "http://localhost:3000"
 	agentToken = "ati-dev-agent-service-token-for-tests-0001"
+	tier2Token = "ati-dev-tier2-service-token-for-tests-0001"
 	staffRowID = "stf_testtoken000000000000"
 )
 
@@ -116,6 +117,7 @@ func newEnvPool(t *testing.T, overrides map[string]string, maxConns int32) *env 
 		"ATI_AGENT_SERVICE_TOKEN_SHA256": ids.Hash(agentToken), "ATI_RETENTION_TRANSCRIPT_DAYS": "30",
 		"ATI_RETENTION_SESSION_EVENTS_DAYS": "30", "ATI_RETENTION_ASSESSMENT_OUTPUT_DAYS": "30", "ATI_INVITATION_EXCHANGES_PER_MINUTE": "5",
 		"ATI_PUBLIC_ADDR": "127.0.0.1:0", "ATI_INTERNAL_ADDR": "127.0.0.1:0", // unused: the tests serve with httptest
+		"ATI_TIER2_SERVICE_TOKEN_SHA256": ids.Hash(tier2Token),
 	}
 	for k, v := range overrides {
 		settings[k] = v

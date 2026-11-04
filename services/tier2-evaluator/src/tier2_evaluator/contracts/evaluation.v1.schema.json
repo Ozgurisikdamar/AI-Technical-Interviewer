@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/evaluation-v1.schema.json",
+  "title": "Interview Evaluation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "session_id",
+    "question_id",
+    "evaluation_version",
+    "transcript_quality",
+    "scores",
+    "weighted_score",
+    "confidence",
+    "evidence",
+    "missing_concepts",
+    "contradictions",
+    "unsupported_claims",
+    "hallucination_risk",
+    "recommendation",
+    "review_required"
+  ],
+  "properties": {
+    "session_id": {"type": "string", "minLength": 1},
+    "question_id": {"type": "string", "minLength": 1},
+    "evaluation_version": {"type": "string", "minLength": 1},
+    "transcript_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "language", "ambiguities", "missing_segments"],
+      "properties": {
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "language": {"type": "string"},
+        "ambiguities": {"type": "array", "items": {"type": "string"}},
+        "missing_segments": {"type": "boolean"}
+      }
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "technical_accuracy",
+        "architecture_maturity",
+        "edge_case_awareness",
+        "claim_support"
+      ],
+      "properties": {
+        "technical_accuracy": {"type": "integer", "minimum": 0, "maximum": 100},
+        "architecture_maturity": {"type": "integer", "minimum": 0, "maximum": 100},
+        "edge_case_awareness": {"type": "integer", "minimum": 0, "maximum": 100},
+        "claim_support": {"type": "integer", "minimum": 0, "maximum": 100}
+      }
+    },
+    "weighted_score": {"type": "number", "minimum": 0, "maximum": 100},
+    "confidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "calibrated", "reason"],
+      "properties": {
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "calibrated": {"type": "boolean"},
+        "reason": {"type": "string"}
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dimension",
+          "transcript_start_ms",
+          "transcript_end_ms",
+          "transcript_segment_ids",
+          "quote",
+          "claim",
+          "assessment",
+          "reference_ids"
+        ],
+        "properties": {
+          "dimension": {
+            "enum": [
+              "technical_accuracy",
+              "architecture_maturity",
+              "edge_case_awareness",
+              "claim_support"
+            ]
+          },
+          "transcript_start_ms": {"type": "integer", "minimum": 0},
+          "transcript_end_ms": {"type": "integer", "minimum": 0},
+          "transcript_segment_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "quote": {"type": "string"},
+          "claim": {"type": "string"},
+          "assessment": {
+            "enum": [
+              "correct",
+              "partially_correct",
+              "incorrect",
+              "unsupported",
+              "not_addressed"
+            ]
+          },
+          "reference_ids": {"type": "array", "items": {"type": "string"}}
+        },
+        "if": {
+          "properties": {"assessment": {"const": "not_addressed"}},
+          "required": ["assessment"]
+        },
+        "then": {"properties": {"quote": {"maxLength": 0}}},
+        "else": {"properties": {"quote": {"minLength": 1}}}
+      }
+    },
+    "missing_concepts": {"type": "array", "items": {"type": "string"}},
+    "contradictions": {"type": "array", "items": {"type": "string"}},
+    "unsupported_claims": {"type": "array", "items": {"type": "string"}},
+    "hallucination_risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "severity", "evidence"],
+      "properties": {
+        "score": {"type": "integer", "minimum": 0, "maximum": 100},
+        "severity": {"enum": ["low", "medium", "high"]},
+        "evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "recommendation": {
+      "enum": ["NEXT_QUESTION", "FOLLOW_UP", "HUMAN_REVIEW"]
+    },
+    "review_required": {"type": "boolean"}
+  }
+}

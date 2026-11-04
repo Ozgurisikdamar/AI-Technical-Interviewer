@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from candidate import DONE, LONG, PART, SR
+from candidate import DONE, LONG, PART, POST_INTERVIEW, SR
 from conftest import ROOT, Db, stack_cmd
 
 NODE_PATH = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True).stdout.strip() if shutil.which("npm") else ""
@@ -80,7 +80,7 @@ def run_flow(stack: dict[str, str], staff_token: str, script: str) -> dict[str, 
 @requires_playwright
 def test_voice_interview_in_the_browser(stack: dict[str, str], staff_token: str, db: Db) -> None:
     sid = run_flow(stack, staff_token, "voice_flow.mjs")["interview_id"]
-    assert db.one("SELECT state FROM ati.interview_sessions WHERE id = %s", sid) == "INTERVIEW_COMPLETED"
+    assert db.one("SELECT state FROM ati.interview_sessions WHERE id = %s", sid) in POST_INTERVIEW
     items = [r[0] for r in db.rows("SELECT item_id FROM ati.candidate_answers WHERE session_id = %s ORDER BY finalized_at", sid)]
     assert items == ["q1", "q1f1", "q2", "q3"]
     reasons = {r[0] for r in db.rows("SELECT reason FROM ati.pause_intervals WHERE session_id = %s", sid)}
@@ -102,7 +102,7 @@ def test_keyboard_only_with_device_loss_and_withdrawal(stack: dict[str, str], st
 def test_text_mode_when_the_microphone_is_refused(stack: dict[str, str], staff_token: str, db: Db) -> None:
     sid = run_flow(stack, staff_token, "text_flow.mjs")["interview_id"]
     state, mode = db.rows("SELECT state, input_mode FROM ati.interview_sessions WHERE id = %s", sid)[0]
-    assert (state, mode) == ("INTERVIEW_COMPLETED", "text")
+    assert state in POST_INTERVIEW and mode == "text"
     answers = db.rows(
         "SELECT item_id, finalization_cause, segment_ids FROM ati.candidate_answers WHERE session_id = %s ORDER BY finalized_at", sid
     )

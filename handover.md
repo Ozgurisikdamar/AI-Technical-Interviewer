@@ -1,8 +1,100 @@
 # HANDOVER — Latest Review & Implementation Instructions for Claude
 
-> **LATEST UPDATE — 2026-11-04 (UTC): Milestone A (Phase 1 audit closure) implemented on `main`**
+> **LATEST UPDATE — 2026-11-04 (UTC): Milestone B (Tier-2 evaluation MVP, ADR-022) implemented on `main`**
 >
-> Read this update first. The owner's review below (based on `545983f`) remains the instruction baseline, and its priorities still apply. This section records what has been done against it since then, what was verified, and what remains.
+> Read this update first, then the Milestone A update below it. The owner's review further down (based on `545983f`) remains the instruction baseline.
+
+### Done in Milestone B
+
+- **Handoff (ADR-022 decisions 1–2).**
+  - The control plane's outbox relay publishes identifier-only events to the Redis stream `ati:tier2:events`, in `seq` order. For `interview.completed` it applies T14 first.
+  - `services/tier2-evaluator` consumes the stream with the group `tier2`. It acknowledges each entry after handling, reclaims idle entries (`XAUTOCLAIM`), and keeps its claim alive during slow evaluations.
+  - An entry goes to `ati:tier2:dlq` after 5 deliveries, or at once if malformed. A dead-lettered interview still goes to human review (`pipeline_failed`).
+- **Evidence and writes.**
+  - `ati_tier2_evaluator` can now log in. It reads answers, segments, questions, rubrics and two narrow views, sees no candidate identity, and writes nothing.
+  - Every attempt goes to the control plane's internal Tier-2 API, with its own service token.
+- **Validation.**
+  - `internal/evaluation`, a pure package enforced by an architecture test, checks every attempt against the stored transcript:
+    - identity;
+    - integer scores and the weighted score, recomputed in hundredths;
+    - verbatim quotes (NFC and whitespace only);
+    - spans within the cited candidate segments;
+    - rubric references;
+    - supporting evidence for every non-zero score.
+  - Raw attempts are stored separately from canonical evaluations. The canonical key is answer, transcript version, rubric version and evaluator version.
+- **Human review and report.**
+  - Every answer gets a review task with its reasons (T15). T16 is never fired.
+  - Reviewers decide each answer; the last decision writes a staff-only report, which is decision support with no hiring field (T17, state machine v1.2).
+  - The override record keeps the reviewer, the prior and revised scores, the rationale and the rubric version.
+- **Evaluators.**
+  - A deterministic reference evaluator works on synthetic rubrics only and is refused in production.
+  - OpenAI: Responses API, strict structured output, `store: false`.
+  - Anthropic: Messages API, streamed, structured output, `effort: high`. Server-side fallbacks are deliberately off, because they would change the evaluating model.
+  - Model IDs come from the registry (`claude-opus-5-5` and `gpt-6.1-sol` are `candidate`). Endpoints are pinned.
+- **Contracts.** A rubric schema and three synthetic demo rubrics; state machine v1.2; migration 00007; OpenAPI review, report and Tier-2 operations. The four Phase-1 guard tests were narrowed, not deleted.
+- **Four defects were found while integrating, and fixed with regression tests:**
+  - an interview with a no-rubric question could never leave review; it is now reviewed with a rationale only;
+  - a lowercase `ATI_LOG_LEVEL` stopped the worker from starting;
+  - the closing remark's transcript was refused when the relay had already applied T14/T15; every post-interview state now accepts the agent's closing duties;
+  - livekit-agents warnings carried the candidate's words in `lk.pii.*` log extras, which the Tier-1 redaction missed. They are now redacted; the E2E log scan caught it.
+- **Stack and E2E.** `tools/dev/stack.sh` now runs Redis, the worker (reference evaluator) and a reviewer token. `tests/e2e/test_tier2.py` covers four cases:
+  - typed interview → evaluation → review → report;
+  - RBAC, and a candidate who sees no score;
+  - a redelivered completion;
+  - the dead-letter fallback.
+
+  The voice E2E now asserts that scripted (synthetic) speech is never evaluated.
+
+### Verification at this revision
+
+Each command below ran on 2026-11-04 in this environment:
+
+| Command | Result |
+|---|---|
+| `make test` | pass in 58 s: repository checks and import boundaries; 144 contract tests; Go lint and 17 Go packages (race detector, 0 skipped); 198 agent tests; 106 Tier-2 tests; web lint, typecheck, 229 unit tests, build and bundle scan |
+| `make e2e` | 30 passed from a fresh stack in 13 min 44 s (scripted engine, reference evaluator, loopback), 2026-11-04. The first fresh run before the last two fixes failed one test (the Turkish closing remark was refused after T14/T15), and the log scan found candidate text (`lk.pii.*`); both are fixed above |
+| `make audit` | ok in 11 s: no vulnerable symbol reached in the control plane (one advisory in a required module is not called by the code); no known vulnerabilities in any Python lockfile, including the new Tier-2 one, or in the web production dependencies |
+| `make provider-smoke` | BLOCKED (no key) |
+
+The live voice path, the live evaluator models, real networks and container images remain unverified.
+
+### Still open or blocked
+
+- **Blocked:**
+  - live evaluator runs need `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` as environment secrets;
+  - the live voice path still needs `OPENAI_API_KEY` (`make provider-smoke`);
+  - Docker, egress, TURN and netem;
+  - human reviewers and labels;
+  - every human gate.
+- **Not built:**
+  - a reviewer web UI;
+  - a benchmark and calibration (Milestone C);
+  - purge jobs for evaluation records (data inventory G1);
+  - a transcript-revision workflow;
+  - worker metrics and health.
+
+### Next: Milestone C (data and ML foundations)
+
+`docs/architecture/DATA_AND_ML_LIFECYCLE.md` should cover:
+- lineage;
+- a labelling protocol: two independent reviewers, adjudication, weighted kappa and Krippendorff's α;
+- session-level splits;
+- TR/EN strata;
+- fairness rules.
+
+An offline benchmark harness on a dataset labelled as synthetic would measure:
+- evidence validity;
+- abstention rate;
+- criterion agreement;
+- latency and cost.
+
+Only the reference evaluator can run without keys, so the harness would prove the mechanics, not model quality. Qdrant, embeddings and fine-tuning stay out until a benchmark justifies them and an ADR records the decision.
+
+---
+
+> **UPDATE — 2026-11-04 (UTC): Milestone A (Phase 1 audit closure) implemented on `main` (kept as written)**
+>
+> The owner's review below (based on `545983f`) remains the instruction baseline, and its priorities still apply. This section records what had been done against it at Milestone A, what was verified, and what remained.
 
 ### Done in Milestone A
 

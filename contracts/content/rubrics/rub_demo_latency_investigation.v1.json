@@ -1,0 +1,59 @@
+{
+  "rubric_id": "rub_demo_latency_investigation",
+  "version": 1,
+  "status": "draft",
+  "synthetic": true,
+  "title": "Investigating a sudden p99 latency increase (synthetic demo rubric, not validated)",
+  "languages": ["en", "tr"],
+  "weights": {"technical_accuracy": 0.40, "architecture_maturity": 0.25, "edge_case_awareness": 0.20, "claim_support": 0.15},
+  "criteria": [
+    {
+      "criterion_id": "c_scope",
+      "dimension": "technical_accuracy",
+      "description": "Establishes the scope from metrics first: when it started, which endpoints, regions or tenants are affected, and whether the median moved too.",
+      "reference_ids": ["ref_sre_monitoring"],
+      "indicators": {"en": ["dashboard", "metrics", "p50", "percentile", "when it started"], "tr": ["metrik", "p50", "yüzdelik", "ne zaman başladı"]}
+    },
+    {
+      "criterion_id": "c_recent_changes",
+      "dimension": "technical_accuracy",
+      "description": "Correlates the increase with recent changes: deployments, configuration, traffic or dependencies.",
+      "reference_ids": ["ref_sre_monitoring"],
+      "indicators": {"en": ["deploy", "release", "configuration", "recent change"], "tr": ["dağıtım", "deploy", "yapılandırma", "değişiklik"]}
+    },
+    {
+      "criterion_id": "c_localize",
+      "dimension": "architecture_maturity",
+      "description": "Uses tracing and profiling to find where the time goes: distributed traces, flame graphs, slow query logs.",
+      "reference_ids": ["ref_sre_monitoring"],
+      "indicators": {"en": ["trace", "tracing", "profil", "flame graph", "slow query"], "tr": ["izleme", "tracing", "profil", "yavaş sorgu"]}
+    },
+    {
+      "criterion_id": "c_tail_causes",
+      "dimension": "edge_case_awareness",
+      "description": "Considers causes specific to the tail: garbage collection pauses, lock contention, queueing, noisy neighbours, cold caches, retries.",
+      "reference_ids": ["ref_tail_at_scale"],
+      "indicators": {"en": ["garbage collection", "contention", "queue", "cache", "retries"], "tr": ["çöp toplama", "çekişme", "kuyruk", "önbellek"]}
+    },
+    {
+      "criterion_id": "c_mitigation",
+      "dimension": "edge_case_awareness",
+      "description": "Limits the impact (rollback, scaling, shedding load) before or while the root cause is found.",
+      "reference_ids": [],
+      "indicators": {"en": ["rollback", "roll back", "scale out", "mitigat"], "tr": ["geri al", "ölçekle", "etkisini azalt"]}
+    },
+    {
+      "criterion_id": "c_hypotheses",
+      "dimension": "claim_support",
+      "description": "Reasons from evidence and says how each hypothesis would be confirmed or ruled out.",
+      "reference_ids": [],
+      "indicators": {"en": ["confirm", "rule out", "hypothesis", "because"], "tr": ["doğrula", "ele", "hipotez", "çünkü"]}
+    }
+  ],
+  "references": [
+    {"reference_id": "ref_sre_monitoring", "title": "Site Reliability Engineering: Monitoring Distributed Systems", "url": "https://sre.google/sre-book/monitoring-distributed-systems/",
+     "summary": "Monitor latency, traffic, errors and saturation; distinguish symptoms from causes and look at the distribution, not only the mean."},
+    {"reference_id": "ref_tail_at_scale", "title": "Dean and Barroso, The Tail at Scale", "url": "https://research.google/pubs/the-tail-at-scale/",
+     "summary": "Rare slow components dominate tail latency at scale; causes include queueing, shared resources, background activity and garbage collection."}
+  ]
+}

@@ -24,6 +24,7 @@ SCHEMAS: dict[str, Path] = {
     "answer-finalized": CONTRACTS / "schemas/events/v1/answer-finalized.schema.json",
     "interview-completed": CONTRACTS / "schemas/events/v1/interview-completed.schema.json",
     "model-registry": CONTRACTS / "schemas/models/v1/model-registry.schema.json",
+    "rubric": CONTRACTS / "schemas/rubric/v1/rubric.schema.json",
 }
 
 
@@ -53,4 +54,4 @@ def first_fenced_block(text: str, lang: str) -> str:
 
 @pytest.fixture(scope="session")
 def state_machine() -> dict[str, Any]:
-    return load_json(CONTRACTS / "state-machine/interview-session.v1.1.json")
+    return load_json(CONTRACTS / "state-machine/interview-session.v1.2.json")
