@@ -12,7 +12,7 @@ from livekit.agents import APIConnectionError, APIConnectOptions, APITimeoutErro
 from livekit.plugins.openai.realtime import RealtimeModel
 
 from tier1_voice_agent import monitor
-from tier1_voice_agent.engines import LOCAL_INTERRUPTION_MODE, TURN_PROFILES, turn_handling
+from tier1_voice_agent.engines import LOCAL_INTERRUPTION_MODE, MAX_TOOL_STEPS, TURN_PROFILES, turn_handling
 from tier1_voice_agent.engines.openai_realtime import EAGERNESS, OpenAIRealtimeEngine
 from tier1_voice_agent.engines.scripted import (
     END_SILENCE_S,
@@ -40,7 +40,13 @@ def frame(loud: bool) -> rtc.AudioFrame:
 
 
 def openai_engine() -> OpenAIRealtimeEngine:
-    return OpenAIRealtimeEngine(api_key="test-only-key", model="gpt-realtime", voice="marin", transcription_model="gpt-4o-transcribe")
+    return OpenAIRealtimeEngine(
+        api_key="test-only-key",
+        model="gpt-realtime-2.1",
+        voice="marin",
+        transcription_model="gpt-transcribe",
+        base_url="https://api.openai.com/v1",
+    )
 
 
 @pytest.mark.parametrize("dev_mode", ["0", "1"])
@@ -56,7 +62,7 @@ async def test_sessions_never_select_hosted_inference(monkeypatch: pytest.Monkey
             assert th["interruption"]["mode"] == LOCAL_INTERRUPTION_MODE
             assert th["preemptive_generation"]["enabled"] is False
             assert th["interruption"]["resume_false_interruption"] is False
-            assert session.options.max_tool_steps == 1
+            assert session.options.max_tool_steps == MAX_TOOL_STEPS == 0  # no chained tool calls (test_tool_steps.py)
         finally:
             await session.aclose()
 
@@ -71,15 +77,29 @@ async def test_openai_session_uses_server_vad_only() -> None:
 
 def test_openai_provider_configuration() -> None:
     kw: dict[str, Any] = openai_engine().model_kwargs("tr")
-    assert kw["model"] == "gpt-realtime" and kw["voice"] == "marin"
-    assert kw["input_audio_transcription"].model == "gpt-4o-transcribe" and kw["input_audio_transcription"].language == "tr"
+    assert kw["model"] == "gpt-realtime-2.1" and kw["voice"] == "marin"
+    assert kw["base_url"] == "https://api.openai.com/v1"  # never inherited from OPENAI_BASE_URL
+    assert kw["input_audio_transcription"].model == "gpt-transcribe" and kw["input_audio_transcription"].language == "tr"
     td = kw["turn_detection"]
     assert (td.type, td.eagerness, td.create_response, td.interrupt_response) == ("semantic_vad", "low", True, True)
 
 
 def test_openai_engine_refuses_an_empty_key() -> None:
     with pytest.raises(ValueError):
-        OpenAIRealtimeEngine(api_key="", model="m", voice="v", transcription_model="t")
+        OpenAIRealtimeEngine(api_key="", model="m", voice="v", transcription_model="t", base_url="https://api.openai.com/v1")
+    with pytest.raises(ValueError):
+        OpenAIRealtimeEngine(api_key="k", model="m", voice="v", transcription_model="t", base_url="")
+
+
+async def test_the_realtime_client_uses_the_configured_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without an explicit base_url the client would take OPENAI_BASE_URL from the environment.
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://elsewhere.invalid/v1")
+    session = openai_engine().build_session(language="en")
+    try:
+        assert isinstance(session.llm, RealtimeModel)
+        assert session.llm._opts.base_url == "https://api.openai.com/v1"
+    finally:
+        await session.aclose()
 
 
 def test_turn_handling_refuses_non_local_modes() -> None:

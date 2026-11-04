@@ -170,6 +170,8 @@ type Effects struct {
 	Media realtime.Media
 	Log   *slog.Logger
 	Rec   Recorder
+	// Background tracks asynchronous effects so shutdown can wait for them (nil: untracked).
+	Background *Background
 }
 
 // Recorder starts and stops consented recordings (ADR-017); nil disables recording.
@@ -177,6 +179,8 @@ type Recorder interface {
 	Start(ctx context.Context, sessionID string)
 	Stop(ctx context.Context, sessionID string)
 	OnEgressEvent(ctx context.Context, ev *realtime.Webhook) error
+	// Reconcile settles recordings left starting or stopping by a restart or a lost webhook.
+	Reconcile(ctx context.Context) (int, error)
 }
 
 func (e Effects) DeleteRoom(ctx context.Context, sessionID, room string) {
@@ -196,6 +200,7 @@ func (e Effects) StopRecording(ctx context.Context, sessionID string) {
 // which the recorder bounds and fails closed. Start serializes with transitions on the session row.
 func (e Effects) StartRecording(ctx context.Context, sessionID string) {
 	if e.Rec != nil {
-		go e.Rec.Start(context.WithoutCancel(ctx), sessionID)
+		ctx := context.WithoutCancel(ctx)
+		e.Background.Go(func() { e.Rec.Start(ctx, sessionID) })
 	}
 }

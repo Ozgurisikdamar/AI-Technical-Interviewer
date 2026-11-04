@@ -115,16 +115,25 @@ func (s *Service) ExchangeInvitation(ctx context.Context, actor Actor, token str
 		var invID, sessionID string
 		var expires time.Time
 		var revoked *time.Time
-		err := tx.QueryRow(ctx, `SELECT id, session_id, expires_at, revoked_at FROM ati.invitations WHERE token_hash = $1 FOR UPDATE`, ids.Hash(token)).
-			Scan(&invID, &sessionID, &expires, &revoked)
-		now := s.now().UTC()
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (revoked != nil || !expires.After(now))) {
+		err := tx.QueryRow(ctx, `SELECT session_id FROM ati.invitations WHERE token_hash = $1`, ids.Hash(token)).Scan(&sessionID)
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInvitationInvalid
 		}
 		if err != nil {
 			return err
 		}
+		// Lock order: the session first, then its invitation, as revocation does; the other order
+		// deadlocks against a concurrent revocation.
 		sess, err := s.lockSession(ctx, tx, sessionID)
+		if err != nil {
+			return err
+		}
+		err = tx.QueryRow(ctx, `SELECT id, expires_at, revoked_at FROM ati.invitations WHERE token_hash = $1 FOR UPDATE`, ids.Hash(token)).
+			Scan(&invID, &expires, &revoked)
+		now := s.now().UTC()
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (revoked != nil || !expires.After(now))) {
+			return ErrInvitationInvalid
+		}
 		if err != nil {
 			return err
 		}

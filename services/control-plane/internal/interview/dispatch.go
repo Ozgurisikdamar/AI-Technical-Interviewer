@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,8 +21,11 @@ type DispatchMetadata struct {
 }
 
 // MediaOps are the media-layer calls the dispatch logic needs (implemented by the API layer).
+// They run while the session row is locked, so they must not use the database (the transaction
+// already holds a pool connection) and must be bounded in time.
 type MediaOps struct {
-	RemoveStaleAgents func(ctx context.Context, room string) error
+	// RemoveStaleAgents removes agent participants other than leaseHolder ("" when no lease).
+	RemoveStaleAgents func(ctx context.Context, room, leaseHolder string) error
 	Dispatch          func(ctx context.Context, room, metadata string) (string, error)
 }
 
@@ -73,7 +77,14 @@ func (s *Service) EnsureAgentDispatch(ctx context.Context, sessionID string, ops
 		if _, err := tx.Exec(ctx, `UPDATE ati.agent_dispatches SET superseded_at = $2 WHERE session_id = $1 AND superseded_at IS NULL AND claimed_at IS NULL`, sessionID, now); err != nil {
 			return err
 		}
-		if err := ops.RemoveStaleAgents(ctx, sess.RoomName); err != nil {
+		// The lease holder is read inside this transaction: a second pool connection taken while the
+		// first one is held can deadlock once concurrent dispatches exhaust the pool.
+		var holder string
+		err = tx.QueryRow(ctx, `SELECT agent_identity FROM ati.agent_leases WHERE session_id = $1 AND ended_at IS NULL ORDER BY fencing_token DESC LIMIT 1`, sessionID).Scan(&holder)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err := ops.RemoveStaleAgents(ctx, sess.RoomName, holder); err != nil {
 			return err
 		}
 		nonce := ids.Token()
@@ -195,6 +206,7 @@ func (s *Service) SweepMissingAgents(ctx context.Context) (int, error) {
 	}
 	rows.Close()
 	paused := 0
+	var errs []error
 	for _, id := range list {
 		err := s.inTx(ctx, func(tx pgx.Tx, after *[]func(context.Context)) error {
 			sess, err := s.lockSession(ctx, tx, id)
@@ -220,10 +232,11 @@ func (s *Service) SweepMissingAgents(ctx context.Context) (int, error) {
 			return nil
 		})
 		if err != nil {
-			return paused, err
+			// One session's failure must not hold up the others; the sweeper reports it.
+			errs = append(errs, fmt.Errorf("session %s: %w", id, err))
 		}
 	}
-	return paused, nil
+	return paused, errors.Join(errs...)
 }
 
 // CurrentLeaseHolder returns the identity holding an unexpired lease, if any. While one agent holds
@@ -233,16 +246,6 @@ func (s *Service) CurrentLeaseHolder(ctx context.Context, sessionID string) (str
 	var id string
 	err := s.pool.QueryRow(ctx, `SELECT agent_identity FROM ati.agent_leases WHERE session_id = $1 AND ended_at IS NULL AND expires_at > $2
 		ORDER BY fencing_token DESC LIMIT 1`, sessionID, s.now().UTC()).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
-	}
-	return id, err
-}
-
-// ActiveAgentIdentity returns the identity holding the current lease, if any.
-func (s *Service) ActiveAgentIdentity(ctx context.Context, sessionID string) (string, error) {
-	var id string
-	err := s.pool.QueryRow(ctx, `SELECT agent_identity FROM ati.agent_leases WHERE session_id = $1 AND ended_at IS NULL ORDER BY fencing_token DESC LIMIT 1`, sessionID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}

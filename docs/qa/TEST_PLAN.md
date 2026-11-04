@@ -67,7 +67,7 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | QA-AI-04 | Prompt injection in resume | 3 | — | Phase 3 |
 | QA-AI-05 | Prompt injection in job description | 3 | — | Phase 3 |
 | QA-AI-06 | Instruction embedded in retrieved reference | 2 | — | Phase 2 |
-| QA-AI-07 | Tool invocation without authorization | 1 | G: `TestCompromisedAgentCannotEscalate`; A: `test_the_model_has_exactly_one_tool_without_parameters`; E: forbidden tool call has no effect | Verified |
+| QA-AI-07 | Tool invocation without authorization | 1 | G: `TestCompromisedAgentCannotEscalate`; A: `test_the_model_has_exactly_one_tool_without_parameters`, `test_the_model_cannot_chain_tool_calls` (one tool execution per turn); E: forbidden tool call has no effect | Verified |
 | QA-AI-08 | Malformed evaluator JSON | 2 | C: schema rejects malformed fixtures; validator Phase 2 | Partial: schema fixtures Verified (C) |
 | QA-AI-09 | Fabricated evidence timestamps | 2 | — | Phase 2 (schema requires segment IDs + quote: Verified C) |
 | QA-AI-10 | Unsupported technical claims | 2 | — | Phase 2 |
@@ -135,6 +135,27 @@ Test locations: `contracts/tests` (C), `services/control-plane` Go tests (G), `s
 | PE8-13 | Evaluator disagreement | 2 | Phase 2 |
 | PE8-14 | Human override audit integrity | 5 | Phase 5 |
 
-## Phase-0 contract tests (all Verified, `make contracts-test`, 120 tests)
+## Phase 1 audit regressions ([PHASE1_AUDIT.md](./PHASE1_AUDIT.md))
+
+| ID | Defect | Test | Status |
+|---|---|---|---|
+| CP-01, CP-02 | Unbounded webhook body before verification; webhooks processed at most once | G: `TestWebhookBodiesAreBoundedAndFailedEventsAreProcessedOnRedelivery` | Verified |
+| CP-03 | Second pool connection inside the dispatch transaction | G: `TestAgentDispatchNeedsOnePoolConnection` (one-connection pool) | Verified |
+| CP-04 | Media calls without timeouts under a row lock | G: `TestServerAPICallsAreBounded` | Verified |
+| CP-05 | Shutdown cut off background work; stuck recordings | G: `TestShutdownDrainsBackgroundWorkWithinTheGrace`, `TestReconcileSettlesInterruptedStartsAndStops` | Verified |
+| CP-06 | Client-controlled metric label | G: `TestHTTPMetricsBoundTheMethodLabel` | Verified |
+| CP-08 | Operational records kept forever | G: `TestPurgeOperationalRecordsIsBoundedAndAudited` | Verified |
+| CP-09 | Exchange/revocation deadlock | G: `TestExchangeAndRevocationDoNotDeadlock` | Verified |
+| CP-10 | Idempotency claims blocked forever | G: `TestAStaleIdempotencyClaimCanBeTakenOver` | Verified |
+| CP-11 | Sweepers stopped at the first failing session | G: `TestSweepersContinuePastAFailingSession` | Verified |
+| CP-12 | Rate limit bypass within an IPv6 /64; unbounded table | G: `TestLimiterKeysIPv6ByPrefixAndIPv4ByAddress`, `TestLimiterTableIsBounded` | Verified |
+| CP-13 | Listeners on every interface by default | G: `TestListenersDefaultToLoopbackOnlyInDevAndTest` | Verified |
+| CP-15 | Every body read error reported as 413 | G: `TestRequestBodiesTooLargeOrUnreadable` | Verified |
+| T1-01 | Deprecated default model IDs | A: `tests/test_config.py` (registry, deprecation, production tests); C: `test_shipped_model_registry_is_consistent` | Verified |
+| T1-02 | Provider endpoint inherited from `OPENAI_BASE_URL` | A: `test_the_realtime_client_uses_the_configured_endpoint`, `test_the_provider_endpoint_is_pinned` | Verified |
+| T1-03 | One chained tool call per turn | A: `test_the_model_cannot_chain_tool_calls` | Verified |
+| P0.1 | Live provider: model availability, tool behaviour and injection, transcription, latency | A: `tests/test_provider_smoke.py` (harness against a fake provider); `make provider-smoke` | Harness Verified; live run Blocked: no provider credentials |
+
+## Phase-0 contract tests (all Verified, `make contracts-test`, 129 tests)
 
 Schema meta-validation and fixtures; state-machine structure (closure, determinism, reachability, transient chains, activation balance, INV-3/5/6/8/10, ADR-012 completeness, recording stops); doc drift (diagram ⊆ contract with ADR citations, verbatim prompts with sha256 pins, evaluation schema = document, weights across three documents, accepted ADRs unchanged, generated diagram current); isolation (Tier-1 context forbidden concepts and closed objects, no post-interview states for Tier-1, agent cannot self-attribute, ID-only events); OpenAPI (valid 3.1 with external refs, explicit security, idempotency keys, fencing on lease-bound calls, no scoring surface, problem+json).

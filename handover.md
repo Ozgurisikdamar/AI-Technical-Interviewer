@@ -1,5 +1,67 @@
 # HANDOVER — Latest Review & Implementation Instructions for Claude
 
+> **LATEST UPDATE — 2026-11-04 (UTC): Milestone A (Phase 1 audit closure) implemented on `main`**
+>
+> Read this update first. The owner's review below (based on `545983f`) remains the instruction baseline, and its priorities still apply. This section records what has been done against it since then, what was verified, and what remains.
+
+### Done in Milestone A
+
+- **Audit report.** [docs/qa/PHASE1_AUDIT.md](docs/qa/PHASE1_AUDIT.md) checks the handover findings against the code.
+  - 15 control-plane defects and 3 Tier-1 defects were confirmed and fixed. Each has a regression test, and 11 were reproduced on the old code.
+  - The most serious were: an unbounded webhook body read before signature verification; webhooks processed at most once; a pool deadlock in agent dispatch; media calls under a row lock without timeouts; and shutdown cutting off recording starts, which are now reconciled.
+- **Models and full duplex (ADR-021).**
+  - Both former defaults are deprecated: `gpt-realtime` shuts down on 2027-01-20 and `gpt-4o-transcribe` on 2027-02-26.
+  - Model IDs now come from `contracts/models/model-registry.v1.json` and have no defaults. Production refuses unverified models, and the provider endpoint is pinned.
+  - The model cannot chain tool calls (`MAX_TOOL_STEPS=0`; with 1 it could).
+  - The architecture is turn-based with barge-in, **not full duplex**. ADR-021 records why, and the benchmark a duplex prototype would need.
+- **P0.1.** `make provider-smoke` is an opt-in live check. It covers model availability, tool behaviour under injection attempts, Turkish and English transcription, and latency percentiles, and writes redacted evidence to `docs/status/evidence/`. It reports BLOCKED here because there is no key.
+- **P0.3.** [docs/architecture/DATA_INVENTORY_AND_FLOWS.md](docs/architecture/DATA_INVENTORY_AND_FLOWS.md) holds the data-flow map and table inventory. Its gaps G1–G6 include: no transcript, timeline or candidate purge; no deletion, export or appeal workflow; database TLS not enforced; provider data terms unverified.
+- **P0.4.**
+  - `make audit` runs govulncheck, pip-audit and pnpm audit over every lockfile. It found nothing reachable; `x/net` and `cel-go` were upgraded. One unreachable `x/crypto` advisory still awaits a release.
+  - `ati-admin purge-operational` removes old webhook-dedupe and idempotency records, with an audit entry.
+
+### Verification at this revision
+
+Each command below ran on 2026-11-04 in this environment:
+
+| Command | Result |
+|---|---|
+| `make test` | pass (repository checks; 129 contract tests; Go lint and 15 Go packages; 197 agent tests; web lint, typecheck, 229 unit tests, build and bundle scan) |
+| `make e2e` | 28 passed from a fresh stack in 13 min 33 s (scripted engine, loopback) |
+| `make audit` | ok (see above) |
+| `make provider-smoke` | BLOCKED (no key) |
+
+The live voice path, real networks and container images remain unverified.
+
+### Still open or blocked
+
+- **Blocked:**
+  - live provider verification (needs `OPENAI_API_KEY` as an environment secret; then run `make provider-smoke`);
+  - Docker, real egress, TURN and netem;
+  - every human gate (architecture, legal, annotators, production gates).
+- **Not started yet:** Milestone B and later (Tier-2 evaluation, review, report, data/ML). The owner's sections 4–6 below are the plan.
+
+### Next: Milestone B, the Tier-2 MVP, with every evaluation reviewed by a human
+
+1. An outbox relay to Redis Streams (ADR-006): consumer groups, reclaim, retries and a DLQ. The relay applies T14.
+2. Versioned rubrics (synthetic demo rubrics for the shipped plans).
+3. A Tier-2 worker with a deterministic reference evaluator and OpenAI and Anthropic adapters. It uses a read-only database role and the idempotency key `answer + transcript version + rubric version + evaluator version`.
+4. A deterministic validator in the control plane. It checks the schema, verbatim quotes against candidate segments of the answer, millisecond bounds, rubric references and the weighted arithmetic.
+5. Raw attempts stored separately from canonical evaluations.
+6. Every evaluation routed to human review: T15, then T17. T17 moves to Phase 2 in state-machine contract v1.2; T16 stays unwired.
+7. Staff-only review-queue, review-outcome and report endpoints, with no hiring-decision field.
+8. E2E coverage, from a text-mode interview to a report.
+
+The guard tests that block Phase 2 must be narrowed deliberately, not deleted:
+- `test_openapi.py`;
+- `internal/archtest`;
+- `store_test.go` (the evaluator role's LOGIN);
+- `flow` MaxPhase.
+
+---
+
+> **HANDOVER REVIEW — 2026-11-04 (UTC), owner's remote review of `545983f` (kept as written)**
+
 > **LATEST HANDOVER — 2026-11-04 (UTC)**
 >
 > This section is the current authoritative handover. Read it first. Previous handover sections, if any, must remain below this section; do not delete historical decisions. This review is based on the GitHub `main` tree at commit `545983fb48a88625b4d8c98d391e94cd90fb5733` and repository documentation/code inspection. It is a remote source review; the reviewer did **not** independently execute the local test suite.

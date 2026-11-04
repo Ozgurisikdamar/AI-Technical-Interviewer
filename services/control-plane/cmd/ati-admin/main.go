@@ -1,7 +1,7 @@
 // Command ati-admin performs administrative tasks with an owner/administrator database URL:
-// role bootstrap, migrations, plan seeding, tenants, staff tokens, tenant recording policy and the
-// recording purge. Tokens are printed once
-// and stored only as hashes.
+// role bootstrap, migrations, plan seeding, tenants, staff tokens, tenant recording policy, the
+// recording purge and the purge of operational records. Tokens are printed once and stored only
+// as hashes.
 package main
 
 import (
@@ -12,6 +12,8 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/ids"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/recording"
@@ -31,6 +33,8 @@ commands:
                                                       set whether a tenant allows consented recordings
   recordings          --url URL purge-expired        delete expired recordings (storage: ATI_RECORDING_S3_*),
                                                       leaving audited tombstones
+  purge-operational   --url URL [--older-than 24h]    delete webhook dedupe and idempotency records older
+                                                      than the window (audited; replays hold response bodies)
 `
 
 var errUnknownCommand = errors.New("unknown command")
@@ -61,6 +65,7 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer, getenv f
 	label := fs.String("label", "", "token label")
 	ttl := fs.Duration("ttl", 30*24*time.Hour, "token lifetime")
 	allowed := fs.Bool("allowed", false, "tenant-recording: whether the tenant allows consented recordings")
+	olderThan := fs.Duration("older-than", 24*time.Hour, "purge-operational: keep records younger than this")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -149,6 +154,40 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer, getenv f
 		if _, werr := fmt.Fprintf(out, "purged %d recording(s)\n", n); werr != nil && err == nil {
 			err = werr
 		}
+		return err
+	case "purge-operational":
+		// Webhook dedupe rows matter only while LiveKit may still deliver an event (minutes);
+		// idempotency records only while a client may still retry (hours). Replays hold response
+		// bodies, so neither is kept indefinitely (ADR-009). The control plane cannot delete them.
+		if *olderThan < time.Hour {
+			return fmt.Errorf("--older-than must be at least 1h")
+		}
+		pool, err := store.Open(ctx, *url, 2)
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
+		cutoff := time.Now().Add(-*olderThan).UTC()
+		var webhooks, replays int64
+		err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+			t, err := tx.Exec(ctx, `DELETE FROM ati.webhook_events WHERE received_at < $1`, cutoff)
+			if err != nil {
+				return err
+			}
+			webhooks = t.RowsAffected()
+			if t, err = tx.Exec(ctx, `DELETE FROM ati.idempotency_records WHERE created_at < $1`, cutoff); err != nil {
+				return err
+			}
+			replays = t.RowsAffected()
+			_, err = tx.Exec(ctx, `INSERT INTO ati.audit_logs (actor_type, actor_id, action, subject_type, outcome, details)
+				VALUES ('system', 'ati-admin', 'retention.purge_operational', 'database', 'allowed',
+				jsonb_build_object('webhook_events', $1::bigint, 'idempotency_records', $2::bigint, 'older_than', $3::text))`, webhooks, replays, olderThan.String())
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(out, "purged %d webhook event(s) and %d idempotency record(s)\n", webhooks, replays)
 		return err
 	}
 	return fmt.Errorf("%w %q", errUnknownCommand, cmd)

@@ -2,7 +2,7 @@
 
 ADR-001 to ADR-010 are accepted and live in [DECISIONS_AND_ROADMAP.md](../DECISIONS_AND_ROADMAP.md). They are immutable: a contract test pins a hash of each section, and changes must be made by a superseding ADR.
 
-The records below are **Proposed**. They capture decisions needed to implement Phase 0 and Phase 1 where the accepted documents are silent, ambiguous or in conflict. Code in this repository implements them, but they stay Proposed until an architecture review accepts them. Rejecting one means changing the code that depends on it.
+The records below are **Proposed**. They capture decisions needed to implement Phase 0 and Phase 1 (and, from ADR-021, the Phase 1 audit and Phase 2) where the accepted documents are silent, ambiguous or in conflict. Code in this repository implements them, but they stay Proposed until an architecture review accepts them. Rejecting one means changing the code that depends on it.
 
 | ADR | Title | Status |
 |---|---|---|
@@ -16,5 +16,6 @@ The records below are **Proposed**. They capture decisions needed to implement P
 | [ADR-018](./ADR-018-text-response-mode.md) | Text response mode | Proposed (owner-approved direction) |
 | [ADR-019](./ADR-019-repository-layout-and-contract-locations.md) | Repository layout and contract locations | Proposed |
 | [ADR-020](./ADR-020-environment-gating-and-non-production-safeguards.md) | Environment gating and non-production safeguards | Proposed |
+| [ADR-021](./ADR-021-model-registry-endpoint-pinning-and-duplex-assessment.md) | Provider model registry, endpoint pinning and the full-duplex assessment | Proposed |
 
 "Owner-approved direction" means the project owner chose the option when it was raised as a conflict between documents; the full record still needs architecture review.

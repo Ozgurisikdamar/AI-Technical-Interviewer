@@ -365,33 +365,28 @@ func (s *Server) ensureInterviewer(ctx context.Context, sessionID string) error 
 	if err := s.media.EnsureRoom(ctx, room); err != nil {
 		return fmt.Errorf("ensure room: %w", err)
 	}
-	if _, err := s.svc.EnsureAgentDispatch(ctx, sessionID, interview.MediaOps{RemoveStaleAgents: s.removeStaleAgents(sessionID), Dispatch: s.media.Dispatch}); err != nil {
+	if _, err := s.svc.EnsureAgentDispatch(ctx, sessionID, interview.MediaOps{RemoveStaleAgents: s.removeStaleAgents, Dispatch: s.media.Dispatch}); err != nil {
 		return fmt.Errorf("agent dispatch: %w", err)
 	}
 	return nil
 }
 
 // removeStaleAgents removes agent participants that do not hold the session's lease, so a
-// re-dispatch never leaves two agents writing to one interview (ADR-016).
-func (s *Server) removeStaleAgents(sessionID string) func(ctx context.Context, room string) error {
-	return func(ctx context.Context, room string) error {
-		active, err := s.svc.ActiveAgentIdentity(ctx, sessionID)
-		if err != nil {
-			return err
-		}
-		parts, err := s.media.ListParticipants(ctx, room)
-		if err != nil {
-			return err
-		}
-		for _, p := range parts {
-			if p.Agent && p.Identity != active {
-				if err := s.media.RemoveParticipant(ctx, room, p.Identity); err != nil {
-					return err
-				}
+// re-dispatch never leaves two agents writing to one interview (ADR-016). It runs inside the
+// dispatch transaction and touches only the media layer.
+func (s *Server) removeStaleAgents(ctx context.Context, room, leaseHolder string) error {
+	parts, err := s.media.ListParticipants(ctx, room)
+	if err != nil {
+		return err
+	}
+	for _, p := range parts {
+		if p.Agent && p.Identity != leaseHolder {
+			if err := s.media.RemoveParticipant(ctx, room, p.Identity); err != nil {
+				return err
 			}
 		}
-		return nil
 	}
+	return nil
 }
 
 // textResponse stores a text-mode answer (ADR-018). The text never travels over LiveKit.

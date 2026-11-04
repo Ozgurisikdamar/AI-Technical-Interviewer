@@ -36,8 +36,11 @@ def turn_handling(turn_detection: str, *, min_interruption_s: float, min_endpoin
     return options
 
 
-# One tool step per model turn: the model cannot chain tool calls (single-tool policy, ADR-011).
-MAX_TOOL_STEPS = 1
+# One tool call per model turn, no chaining (single-tool policy, ADR-011). livekit-agents counts
+# steps from 1 and lets the reply to a tool result call tools until num_steps >= max_tool_steps + 1,
+# so 1 would still allow one chained call; with 0 the reply to a tool result is generated with
+# tool_choice="none" (tests/test_tool_steps.py).
+MAX_TOOL_STEPS = 0
 
 # Per-question turn profiles (tier1-context/v1 active_prompt.turn_profile). "extended_pause" gives
 # the candidate longer to think before a pause counts as the end of their turn. Each engine maps a

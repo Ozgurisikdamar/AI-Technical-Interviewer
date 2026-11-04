@@ -74,6 +74,7 @@ func run() error {
 		WebhookKey: cfg.LiveKitWebhookKey, WebhookSecret: cfg.LiveKitWebhookSecret, AgentName: cfg.AgentName,
 		CandidateTTL: cfg.CandidateTokenTTL, DepartureTimeout: cfg.RoomDepartureTimeout,
 	})
+	background := &api.Background{} // asynchronous effects, drained on shutdown
 	// Recording is off unless enabled and every deployment precondition was validated by config (ADR-017).
 	var rec *recording.Recorder
 	var recorder api.Recorder
@@ -88,7 +89,7 @@ func run() error {
 		CandidateSessionTTL: cfg.CandidateSessionTTL, LeaseTTL: cfg.LeaseTTL, AgentDispatchTimeout: cfg.AgentDispatchTimeout, Retention: cfg.Retention,
 		RecordingEnabled: cfg.Recording.Enabled, RecordingAttested: cfg.Recording.EncryptionAttested,
 		NoticeID: cfg.NoticeID, NoticeVersion: cfg.NoticeVersion,
-	}, api.Effects{Media: media, Log: log, Rec: recorder}, log, nil)
+	}, api.Effects{Media: media, Log: log, Rec: recorder, Background: background}, log, nil)
 	if err != nil {
 		return err
 	}
@@ -97,8 +98,8 @@ func run() error {
 	srv := api.New(api.Deps{Config: cfg, Service: svc, Tier1: tier1ctx.New(tier1Pool, nil), Media: media, Pool: pool, Tier1Pool: tier1Pool, Log: log, Metrics: metrics,
 		Recorder: recorder})
 
-	public := &http.Server{Addr: cfg.PublicAddr, Handler: srv.PublicHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
-	internal := &http.Server{Addr: cfg.InternalAddr, Handler: srv.InternalHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	public := &http.Server{Addr: cfg.PublicAddr, Handler: srv.PublicHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: writeTimeout, IdleTimeout: 60 * time.Second}
+	internal := &http.Server{Addr: cfg.InternalAddr, Handler: srv.InternalHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: writeTimeout, IdleTimeout: 60 * time.Second}
 	errs := make(chan error, 2)
 	for _, s := range []*http.Server{public, internal} {
 		go func(s *http.Server) {
@@ -107,7 +108,11 @@ func run() error {
 			}
 		}(s)
 	}
-	go srv.RunSweepers(ctx)
+	sweepers := make(chan struct{})
+	go func() {
+		defer close(sweepers)
+		srv.RunSweepers(ctx)
+	}()
 	log.Info("control plane started", slog.String("env", cfg.Env), slog.String("public", cfg.PublicAddr), slog.String("internal", cfg.InternalAddr))
 	if cfg.Env != config.EnvProduction {
 		log.Warn("pre-production build: not for use with real candidates (ADR-020)")
@@ -117,9 +122,47 @@ func run() error {
 	case err := <-errs:
 		return err
 	}
-	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_ = public.Shutdown(shutdown)
-	_ = internal.Shutdown(shutdown)
+	drain(log, shutdownGrace, sweepers, background, public, internal)
 	return nil
+}
+
+// writeTimeout exceeds the slowest bounded handler, so a slow media server yields an error response
+// rather than a dropped connection: an agent dispatch makes up to six media calls of at most
+// realtime.DefaultCallTimeout (5 s) each; a microphone webhook may wait for an egress start (10 s).
+const writeTimeout = 60 * time.Second
+
+// shutdownGrace bounds a graceful stop: in-flight requests (and the effects they run after
+// commit), the sweepers' current pass and asynchronous effects such as a recording start, whose
+// egress call is bounded by its own timeout (10 s by default).
+const shutdownGrace = 20 * time.Second
+
+// drain stops accepting requests, then waits for in-flight requests, the sweepers and tracked
+// background work. Whatever is still running when the grace ends is cut off; recordings left
+// starting or stopping are reconciled at the next start.
+func drain(log *slog.Logger, grace time.Duration, sweepers <-chan struct{}, background *api.Background, servers ...*http.Server) {
+	ctx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	errs := make(chan error, len(servers))
+	for _, s := range servers {
+		go func(s *http.Server) { errs <- s.Shutdown(ctx) }(s)
+	}
+	var failed []error
+	for range servers {
+		if err := <-errs; err != nil {
+			failed = append(failed, err)
+		}
+	}
+	select {
+	case <-sweepers:
+	case <-ctx.Done():
+		failed = append(failed, errors.New("sweepers still running"))
+	}
+	if err := background.Wait(ctx); err != nil {
+		failed = append(failed, errors.New("background work still running"))
+	}
+	if len(failed) > 0 {
+		log.Warn("shutdown grace ended before all work finished", slog.Any("error", errors.Join(failed...)))
+		return
+	}
+	log.Info("control plane stopped")
 }

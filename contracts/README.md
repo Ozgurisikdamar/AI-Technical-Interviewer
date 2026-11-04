@@ -12,6 +12,7 @@ Machine-readable contracts shared by every service, with their tests (ADR-019). 
 | `schemas/plan/v1/` | Versioned interview plan (unconditional follow-ups) | P&E §5 + ADR-012 |
 | `schemas/consent/v1/` | Purpose-level candidate notice | TM §4 + ADR-017/018 |
 | `schemas/events/v1/` | Outbox handoff events (identifiers only) | ADR-015 |
+| `schemas/models/v1/`, `models/model-registry.v1.json` | Provider model registry: which model IDs services may be configured with, their status and shutdown dates | ADR-021 |
 | `prompts/` | Tier-1 and Tier-2 templates, verbatim, sha256-pinned in `manifest.json` | P&E §1–2 |
 | `content/` | Synthetic demo plans and DRAFT notices (en, tr), not for real candidates | — |
 | `fixtures/` | Valid and invalid instances for every schema | P&E §8 |

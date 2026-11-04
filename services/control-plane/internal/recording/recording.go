@@ -325,6 +325,110 @@ func (r *Recorder) OnEgressEvent(ctx context.Context, ev *realtime.Webhook) erro
 	})
 }
 
+// Reconcile settles recordings left mid-transition, by a restart or by a webhook that never came:
+//   - "starting" past the bound of a start: the start was interrupted. Any egress still writing the
+//     recording's file is stopped and the recording fails (audited). A recording that cannot be
+//     confirmed as capturing is not kept: its start time, which transcript references need, is
+//     only known from the egress lifecycle.
+//   - "stopping" past the bound of a stop: the stop call failed. It is retried; the recording
+//     completes once the egress is stopped.
+//
+// When the media server cannot list the room's egresses the recording still fails, and the audit
+// says the egress state is unknown; a file written regardless is purged with the failed recording.
+func (r *Recorder) Reconcile(ctx context.Context) (int, error) {
+	cutoff := r.now().UTC().Add(-3 * r.set.EgressTimeout)
+	rows, err := r.pool.Query(ctx, `SELECT r.id, r.status, r.egress_id, r.object_key, s.room_name FROM ati.audio_recordings r
+		JOIN ati.interview_sessions s ON s.id = r.session_id
+		WHERE r.status IN ('starting','stopping') AND r.updated_at <= $1 ORDER BY r.updated_at LIMIT 100`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	type stale struct {
+		id, status, key, room string
+		egressID              *string
+	}
+	var list []stale
+	for rows.Next() {
+		var s stale
+		if err := rows.Scan(&s.id, &s.status, &s.egressID, &s.key, &s.room); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		list = append(list, s)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	settled := 0
+	for _, s := range list {
+		var err error
+		if s.status == "stopping" {
+			err = r.retryStop(ctx, s.id, *s.egressID)
+		} else {
+			err = r.abandonStart(ctx, s.id, s.room, s.key, s.egressID)
+		}
+		if err != nil {
+			r.log.Warn("recording reconciliation failed", slog.String("recording_id", s.id), slog.Any("error", err))
+			continue
+		}
+		settled++
+	}
+	return settled, nil
+}
+
+func (r *Recorder) retryStop(ctx context.Context, id, egressID string) error {
+	if r.egress == nil {
+		return errors.New("no egress service configured")
+	}
+	if err := r.call(ctx, func(c context.Context) error { return r.egress.StopEgress(c, egressID) }); err != nil {
+		return err
+	}
+	_, err := r.pool.Exec(ctx, `UPDATE ati.audio_recordings SET status = 'complete', updated_at = $2 WHERE id = $1 AND status = 'stopping'`, id, r.now().UTC())
+	return err
+}
+
+func (r *Recorder) abandonStart(ctx context.Context, id, room, key string, egressID *string) error {
+	reason, stopped := "start interrupted", ""
+	if r.egress != nil {
+		var running []realtime.EgressRef
+		err := r.call(ctx, func(c context.Context) (err error) {
+			running, err = r.egress.ActiveEgress(c, room)
+			return err
+		})
+		switch {
+		case err != nil:
+			reason = "start interrupted; egress state unknown"
+		default:
+			for _, e := range running {
+				if e.Filepath != key && (egressID == nil || e.ID != *egressID) {
+					continue
+				}
+				if err := r.call(ctx, func(c context.Context) error { return r.egress.StopEgress(c, e.ID) }); err != nil {
+					return fmt.Errorf("stop egress %s: %w", e.ID, err) // retried on the next pass
+				}
+				stopped, reason = e.ID, "start interrupted; egress stopped"
+			}
+		}
+	}
+	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		var tenant, sessionID string
+		err := tx.QueryRow(ctx, `UPDATE ati.audio_recordings SET status = 'failed', failure = $2, egress_id = coalesce(egress_id, nullif($3, '')), updated_at = $4
+			WHERE id = $1 AND status = 'starting' RETURNING tenant_id, session_id`, id, reason, stopped, r.now().UTC()).Scan(&tenant, &sessionID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // settled meanwhile (the start finished, or a stop or webhook arrived)
+		}
+		if err != nil {
+			return err
+		}
+		details := map[string]any{"recording_id": id, "reason": reason}
+		if stopped != "" {
+			details["egress_id"] = stopped
+		}
+		return audit(ctx, tx, tenant, sessionID, "recording.failed", "error", details)
+	})
+}
+
 // Active reports whether the session has a recording that may be capturing audio.
 func (r *Recorder) Active(ctx context.Context, sessionID string) bool {
 	var live bool

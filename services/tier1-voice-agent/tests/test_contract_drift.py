@@ -13,6 +13,7 @@ PAIRS = {
     "prompts-manifest.json": "prompts/manifest.json",
     "tier1-context.v1.schema.json": "schemas/tier1/v1/tier1-context.schema.json",
     "segment-submission.v1.schema.json": "schemas/transcript/v1/segment-submission.schema.json",
+    "model-registry.v1.json": "models/model-registry.v1.json",
 }
 
 

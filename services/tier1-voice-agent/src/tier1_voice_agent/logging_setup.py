@@ -28,6 +28,14 @@ _NOISY = ("livekit", "livekit.agents", "livekit.plugins", "openai", "httpx", "ht
 _QUIET = ("httpx", "httpcore", "aiohttp.access")
 
 
+class ExpectedToolStepLimit(logging.Filter):
+    """With max_tool_steps=0 (no chained tool calls, ADR-011) livekit-agents warns after every tool
+    call that the step limit was reached. That is the policy working, not a fault: drop it."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not (record.levelno == logging.WARNING and str(record.msg).startswith("maximum number of function calls steps reached"))
+
+
 def scrub(value: str) -> str:
     return _SENSITIVE_VALUE.sub(REDACTED, value)
 
@@ -77,6 +85,7 @@ class JsonFormatter(logging.Formatter):
 
 def setup(level: str = "INFO", stream: Any = None) -> logging.Handler:
     handler = logging.StreamHandler(stream or sys.stdout)
+    handler.addFilter(ExpectedToolStepLimit())
     handler.addFilter(RedactingFilter())
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()

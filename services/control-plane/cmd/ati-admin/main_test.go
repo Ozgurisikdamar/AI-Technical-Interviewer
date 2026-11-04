@@ -196,3 +196,35 @@ func TestPurgeExpiredUsesTheConfiguredStorage(t *testing.T) {
 		t.Fatal("recordings without a subcommand was accepted")
 	}
 }
+
+// Webhook dedupe rows and idempotency records (whose replays hold response bodies) are purged once
+// they are older than the window; the purge is audited and keeps recent rows.
+func TestPurgeOperationalRecordsIsBoundedAndAudited(t *testing.T) {
+	db := testdb.New(t)
+	owner := db.URLFor("postgres")
+	for _, q := range []string{
+		`INSERT INTO ati.webhook_events (event_id, event_type, created_unix, received_at) VALUES ('EV_old', 'participant_left', 1, now() - interval '3 days'), ('EV_new', 'participant_left', 1, now())`,
+		`INSERT INTO ati.idempotency_records (principal, idem_key, route, request_sha256, status, response, created_at) VALUES
+			('p', 'old-key-0001', 'POST /x', 'h', 201, '{"body": {"candidate_ref": "ref"}}', now() - interval '3 days'),
+			('p', 'new-key-0001', 'POST /x', 'h', 201, '{}', now())`,
+	} {
+		if _, err := db.Owner.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := run(ctx, "purge-operational", []string{"--url", owner, "--older-than", "10m"}, io.Discard, noEnv); err == nil {
+		t.Fatal("a window shorter than an hour must be refused")
+	}
+	out := admin(t, "purge-operational", noEnv, "--url", owner)
+	if out != "purged 1 webhook event(s) and 1 idempotency record(s)" {
+		t.Fatalf("output: %q", out)
+	}
+	var webhooks, replays, audits int
+	if err := db.Owner.QueryRow(ctx, `SELECT (SELECT count(*) FROM ati.webhook_events), (SELECT count(*) FROM ati.idempotency_records),
+		(SELECT count(*) FROM ati.audit_logs WHERE action = 'retention.purge_operational' AND details->>'webhook_events' = '1')`).Scan(&webhooks, &replays, &audits); err != nil {
+		t.Fatal(err)
+	}
+	if webhooks != 1 || replays != 1 || audits != 1 {
+		t.Fatalf("webhooks=%d replays=%d audits=%d", webhooks, replays, audits)
+	}
+}

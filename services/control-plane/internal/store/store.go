@@ -41,6 +41,9 @@ func Open(ctx context.Context, url string, maxConns int32) (*pgxpool.Pool, error
 	cfg.ConnConfig.RuntimeParams["application_name"] = "ati-control-plane"
 	cfg.ConnConfig.RuntimeParams["search_path"] = "ati"
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "15000"
+	// Backstop for a transaction left open across an external call (media calls made under a row
+	// lock are bounded separately): the server ends the session and releases its locks.
+	cfg.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = "30000"
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err

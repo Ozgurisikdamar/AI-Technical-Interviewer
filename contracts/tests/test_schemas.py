@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from conftest import CONTRACTS, SCHEMAS, load_json, validator_for
+from conftest import CONTRACTS, REPO, SCHEMAS, load_json, validator_for
 
 FIXTURES = CONTRACTS / "fixtures"
 
@@ -99,3 +99,21 @@ def test_audio_recording_purpose_is_optional() -> None:
         purposes = {p["purpose_id"]: p for p in load_json(path)["purposes"]}
         assert purposes["audio_recording"]["required"] is False, "recording must never be a precondition for the interview"
         assert purposes["voice_interview_processing"]["required"] is False, "text mode must remain available without voice processing"
+
+
+def test_shipped_model_registry_is_consistent() -> None:
+    """ADR-021: every configurable provider model is listed; replacements resolve within the same
+    purpose; a model is verified only with evidence that exists in the repository."""
+    registry = load_json(CONTRACTS / "models/model-registry.v1.json")
+    errors = list(validator_for("model-registry").iter_errors(registry))
+    assert not errors, [e.message for e in errors]
+    keys = [(m["provider"], m["id"]) for m in registry["models"]]
+    assert len(keys) == len(set(keys)), "a model is listed once per provider"
+    by_id = {m["id"]: m for m in registry["models"]}
+    for m in registry["models"]:
+        for r in m["replacements"]:
+            assert r in by_id, f"{m['id']}: replacement {r} is not in the registry"
+            assert by_id[r]["purpose"] == m["purpose"], f"{m['id']}: replacement {r} serves another purpose"
+            assert by_id[r]["status"] != "deprecated" or by_id[r]["shutdown_on"] > m["shutdown_on"], f"{m['id']}: replacement {r} retires first"
+        if m["status"] == "verified":
+            assert (REPO / m["evidence"]).is_file(), f"{m['id']}: evidence {m['evidence']} is missing"

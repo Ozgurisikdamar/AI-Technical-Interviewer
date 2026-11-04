@@ -3,7 +3,10 @@ package interview
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -350,5 +353,58 @@ func TestInvitationReExchangeRevokesEarlierSession(t *testing.T) {
 	}
 	if _, err := h.svc.ExchangeInvitation(ctx, candidate, "wrong-token-wrong-token-wrong-token-xx"); !errors.Is(err, ErrInvitationInvalid) {
 		t.Fatal("unknown token accepted")
+	}
+}
+
+// One session the sweeper cannot process (here a database error injected for it) must not stop
+// the sweep: the others are processed and the failure is reported.
+func TestSweepersContinuePastAFailingSession(t *testing.T) {
+	h := newHarness(t)
+	var ids []string
+	for range 3 {
+		id, _ := h.toCalibration()
+		v := h.session(id).StateVersion
+		h.must(h.svc.Pause(ctx, candidate, nil, id, &v, "candidate_request"))
+		ids = append(ids, id)
+	}
+	_, err := h.db.Owner.Exec(ctx, `CREATE FUNCTION ati.test_fail_one() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN IF NEW.id = '`+ids[0]+`' THEN RAISE EXCEPTION 'injected failure'; END IF; RETURN NEW; END $$;
+		CREATE TRIGGER test_fail_one BEFORE UPDATE ON ati.interview_sessions FOR EACH ROW EXECUTE FUNCTION ati.test_fail_one();`)
+	h.must(err)
+	h.clock.Advance(31 * time.Minute)
+	n, err := h.svc.ExpirePausedSessions(ctx)
+	if n != 2 || err == nil || !strings.Contains(err.Error(), ids[0]) {
+		t.Fatalf("the sweep must process the other sessions and report the failing one: n=%d err=%v", n, err)
+	}
+	for _, id := range ids[1:] {
+		if s := h.session(id); s.State != flow.Cancelled {
+			t.Fatalf("session %s: %s", id, s.State)
+		}
+	}
+	if s := h.session(ids[0]); s.State != flow.Paused {
+		t.Fatalf("the failing session is untouched: %s", s.State)
+	}
+}
+
+// An exchange racing a revocation of the same invitation must never deadlock: both lock the
+// session before the invitation. Either the exchange wins (and its candidate session is revoked)
+// or the invitation is already revoked.
+func TestExchangeAndRevocationDoNotDeadlock(t *testing.T) {
+	h := newHarness(t)
+	for i := range 25 {
+		c, err := h.svc.CreateInterview(ctx, staff, CreateRequest{TenantID: h.tenant, StaffID: "stf_test", CandidateRef: fmt.Sprintf("ref-race-%d", i), PlanID: "plan_demo_backend_en", PlanVersion: 1})
+		h.must(err)
+		var wg sync.WaitGroup
+		var exErr, revErr error
+		wg.Add(2)
+		go func() { defer wg.Done(); _, exErr = h.svc.ExchangeInvitation(ctx, candidate, c.InvitationToken) }()
+		go func() { defer wg.Done(); _, revErr = h.svc.RevokeInvitation(ctx, staff, c.SessionID, h.tenant) }()
+		wg.Wait()
+		if revErr != nil || (exErr != nil && !errors.Is(exErr, ErrInvitationInvalid)) {
+			t.Fatalf("iteration %d: exchange=%v revoke=%v", i, exErr, revErr)
+		}
+		if n := h.count(`SELECT count(*) FROM ati.candidate_sessions WHERE session_id = $1 AND revoked_at IS NULL`, c.SessionID); n != 0 {
+			t.Fatalf("iteration %d: a candidate session survived the revocation", i)
+		}
 	}
 }

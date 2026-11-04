@@ -43,7 +43,11 @@ def make_engine(cfg: Config) -> VoiceEngine:
         return ScriptedEngine()
     assert cfg.openai_api_key is not None
     return OpenAIRealtimeEngine(
-        api_key=cfg.openai_api_key, model=cfg.openai_model, voice=cfg.openai_voice, transcription_model=cfg.openai_transcription_model
+        api_key=cfg.openai_api_key,
+        model=cfg.openai_model,
+        voice=cfg.openai_voice,
+        transcription_model=cfg.openai_transcription_model,
+        base_url=cfg.openai_base_url,
     )
 
 

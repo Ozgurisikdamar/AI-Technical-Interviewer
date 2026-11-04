@@ -9,5 +9,6 @@ cp "$ROOT/contracts/prompts/tier1-interviewer/v1/system.txt" "$DEST/tier1-interv
 cp "$ROOT/contracts/prompts/manifest.json" "$DEST/prompts-manifest.json"
 cp "$ROOT/contracts/schemas/tier1/v1/tier1-context.schema.json" "$DEST/tier1-context.v1.schema.json"
 cp "$ROOT/contracts/schemas/transcript/v1/segment-submission.schema.json" "$DEST/segment-submission.v1.schema.json"
+cp "$ROOT/contracts/models/model-registry.v1.json" "$DEST/model-registry.v1.json"
 touch "$DEST/__init__.py"
 echo "synced agent contracts into $DEST"

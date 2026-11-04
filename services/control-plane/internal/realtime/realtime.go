@@ -84,7 +84,12 @@ type Options struct {
 	AgentName        string
 	CandidateTTL     time.Duration
 	DepartureTimeout time.Duration
+	CallTimeout      time.Duration // per server API request; DefaultCallTimeout when zero
 }
+
+// DefaultCallTimeout bounds each server API request. Some calls run while a session row is
+// locked (agent dispatch), so a slow or unreachable media server must not hold the lock.
+const DefaultCallTimeout = 5 * time.Second
 
 // LiveKit is the production Media implementation.
 type LiveKit struct {
@@ -107,8 +112,18 @@ func NewLiveKit(o Options) *LiveKit {
 // PublicURL is the URL handed to browsers.
 func (l *LiveKit) PublicURL() string { return l.opts.PublicURL }
 
+func (l *LiveKit) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
+	d := l.opts.CallTimeout
+	if d <= 0 {
+		d = DefaultCallTimeout
+	}
+	return context.WithTimeout(ctx, d)
+}
+
 // EnsureRoom creates the room if needed (rooms are never auto-created by clients).
 func (l *LiveKit) EnsureRoom(ctx context.Context, room string) error {
+	ctx, cancel := l.bounded(ctx)
+	defer cancel()
 	_, err := l.rooms.CreateRoom(ctx, &livekit.CreateRoomRequest{
 		Name:             room,
 		EmptyTimeout:     300,
@@ -120,6 +135,8 @@ func (l *LiveKit) EnsureRoom(ctx context.Context, room string) error {
 
 // DeleteRoom removes the room; connected tokens stop working (ADR-016).
 func (l *LiveKit) DeleteRoom(ctx context.Context, room string) error {
+	ctx, cancel := l.bounded(ctx)
+	defer cancel()
 	_, err := l.rooms.DeleteRoom(ctx, &livekit.DeleteRoomRequest{Room: room})
 	if isNotFound(err) {
 		return nil // already gone (empty-room timeout): deletion is idempotent
@@ -162,6 +179,8 @@ func (l *LiveKit) CandidateToken(room string, canPublishAudio bool) (string, tim
 
 // Dispatch creates an explicit agent dispatch. Metadata must not contain secrets (ADR-016).
 func (l *LiveKit) Dispatch(ctx context.Context, room, metadata string) (string, error) {
+	ctx, cancel := l.bounded(ctx)
+	defer cancel()
 	d, err := l.dispatch.CreateDispatch(ctx, &livekit.CreateAgentDispatchRequest{AgentName: l.opts.AgentName, Room: room, Metadata: metadata})
 	if err != nil {
 		return "", err
@@ -171,6 +190,8 @@ func (l *LiveKit) Dispatch(ctx context.Context, room, metadata string) (string, 
 
 // ListDispatches lists dispatches in a room.
 func (l *LiveKit) ListDispatches(ctx context.Context, room string) ([]Dispatch, error) {
+	ctx, cancel := l.bounded(ctx)
+	defer cancel()
 	res, err := l.dispatch.ListDispatch(ctx, &livekit.ListAgentDispatchRequest{Room: room})
 	if err != nil {
 		return nil, err
@@ -184,6 +205,8 @@ func (l *LiveKit) ListDispatches(ctx context.Context, room string) ([]Dispatch, 
 
 // ListParticipants lists room members.
 func (l *LiveKit) ListParticipants(ctx context.Context, room string) ([]Participant, error) {
+	ctx, cancel := l.bounded(ctx)
+	defer cancel()
 	res, err := l.rooms.ListParticipants(ctx, &livekit.ListParticipantsRequest{Room: room})
 	if err != nil {
 		return nil, err
@@ -206,6 +229,13 @@ func (l *LiveKit) ListParticipants(ctx context.Context, room string) ([]Particip
 type Egress interface {
 	StartTrackEgress(ctx context.Context, room, trackSID, filepath string) (egressID string, err error)
 	StopEgress(ctx context.Context, egressID string) error
+	// ActiveEgress lists the room's running egresses (reconciliation of interrupted starts).
+	ActiveEgress(ctx context.Context, room string) ([]EgressRef, error)
+}
+
+// EgressRef is a running egress and the file it writes.
+type EgressRef struct {
+	ID, Filepath string
 }
 
 // LiveKitEgress uses the LiveKit egress API: TrackEgress without transcoding (OGG/Opus).
@@ -228,6 +258,18 @@ func (e *LiveKitEgress) StartTrackEgress(ctx context.Context, room, trackSID, fi
 	return info.EgressId, nil
 }
 
+func (e *LiveKitEgress) ActiveEgress(ctx context.Context, room string) ([]EgressRef, error) {
+	res, err := e.client.ListEgress(ctx, &livekit.ListEgressRequest{RoomName: room, Active: true})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]EgressRef, 0, len(res.Items))
+	for _, it := range res.Items {
+		out = append(out, EgressRef{ID: it.EgressId, Filepath: it.GetTrack().GetFile().GetFilepath()})
+	}
+	return out, nil
+}
+
 func (e *LiveKitEgress) StopEgress(ctx context.Context, egressID string) error {
 	_, err := e.client.StopEgress(ctx, &livekit.StopEgressRequest{EgressId: egressID})
 	if isNotFound(err) {
@@ -238,6 +280,8 @@ func (e *LiveKitEgress) StopEgress(ctx context.Context, egressID string) error {
 
 // RemoveParticipant removes a member (stale agents after re-dispatch).
 func (l *LiveKit) RemoveParticipant(ctx context.Context, room, identity string) error {
+	ctx, cancel := l.bounded(ctx)
+	defer cancel()
 	_, err := l.rooms.RemoveParticipant(ctx, &livekit.RoomParticipantIdentity{Room: room, Identity: identity})
 	return err
 }

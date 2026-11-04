@@ -140,6 +140,21 @@ def test_redaction_covers_third_party_loggers_and_extras() -> None:
     assert all(line.get("transcript", "[REDACTED]") == "[REDACTED]" for line in lines)
 
 
+def test_the_expected_tool_step_limit_notice_is_not_reported_as_a_fault() -> None:
+    # With max_tool_steps=0 livekit-agents warns after every tool call; other warnings still pass.
+    stream = io.StringIO()
+    handler = logging_setup.setup("INFO", stream)
+    try:
+        log = logging.getLogger("livekit.agents")
+        log.warning("maximum number of function calls steps reached, generating final response with tool_choice='none'")
+        log.warning("failed to generate a reply")
+    finally:
+        logging.getLogger().removeHandler(handler)
+    out = stream.getvalue()
+    assert "maximum number of function calls" not in out
+    assert "failed to generate a reply" in out
+
+
 # -- dependency isolation: no database, cache, queue or object-store clients ----------------
 
 FORBIDDEN = {

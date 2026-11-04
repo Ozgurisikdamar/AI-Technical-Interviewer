@@ -25,9 +25,12 @@ copies with the sources.
 
 ## Engines
 
-- `openai`: OpenAI Realtime through `livekit-plugins-openai` (server semantic VAD, `gpt-4o-transcribe`
-  transcription). **Not verified against the live provider** in this repository: no credentials are available
-  here. Turn-taking settings are uncalibrated.
+- `openai`: OpenAI Realtime through `livekit-plugins-openai` (server semantic VAD, input-audio transcription).
+  The model identifiers have no defaults: they are checked against the model registry
+  (`contracts/models/model-registry.v1.json`, ADR-021), which records deprecations and shutdown dates. **Not
+  verified against the live provider** in this repository: no credentials are available here, so no model is
+  `verified` and production refuses the engine. Turn-taking settings are uncalibrated. The interaction is
+  turn-based with barge-in, not full duplex (ADR-021).
 - `scripted`: deterministic fake VAD, STT, LLM and TTS plugins inside the same `AgentSession`, for end-to-end
   tests without a provider. Candidate intent is encoded in the pitch of a synthetic tone burst (see
   `engines/scripted.py`), including failure injection: speech-recognition and synthesis failures, a model that never
@@ -63,11 +66,15 @@ control plane finalizes on its deadline with `missing_segments=true`.
 `APP_ENV` (`dev`, `test`, `staging`, `production`; anything else is refused), `ATI_VOICE_ENGINE`,
 `ATI_LIVEKIT_URL`, `ATI_LIVEKIT_API_KEY`, `ATI_LIVEKIT_API_SECRET`, `ATI_AGENT_NAME`,
 `ATI_CONTROL_PLANE_INTERNAL_URL`, `ATI_AGENT_SERVICE_TOKEN`, `ATI_AGENT_HTTP_PROXY` (explicit only),
-`OPENAI_API_KEY`, `ATI_OPENAI_REALTIME_MODEL`, `ATI_OPENAI_VOICE`, `ATI_OPENAI_TRANSCRIPTION_MODEL`,
-`ATI_AGENT_HEALTH_PORT`, `ATI_LOG_LEVEL`.
+`OPENAI_API_KEY`, `ATI_OPENAI_REALTIME_MODEL` and `ATI_OPENAI_TRANSCRIPTION_MODEL` (required for the openai
+engine; registered model IDs, e.g. `gpt-realtime-2.1` and `gpt-transcribe`), `ATI_OPENAI_VOICE`,
+`ATI_OPENAI_BASE_URL` (default `https://api.openai.com/v1`, passed explicitly so `OPENAI_BASE_URL` cannot
+redirect the client), `ATI_AGENT_HEALTH_PORT`, `ATI_LOG_LEVEL`.
 
-Production refuses the scripted engine, a non-https control-plane URL, a non-wss LiveKit URL and development
-placeholder secrets (`ati-dev-` prefix).
+Production refuses the scripted engine, a non-https control-plane URL, a non-wss LiveKit URL, development
+placeholder secrets (`ati-dev-` prefix), unverified or deprecated models and any provider endpoint other than the
+pinned one. Staging also refuses unregistered models; dev and test only warn. A model past its provider shutdown
+date is refused everywhere.
 
 ## Run and test
 

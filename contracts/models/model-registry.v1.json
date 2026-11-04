@@ -1,0 +1,60 @@
+{
+  "registry_version": "2026-11-04",
+  "models": [
+    {
+      "id": "gpt-realtime",
+      "provider": "openai",
+      "purpose": "tier1_realtime",
+      "status": "deprecated",
+      "shutdown_on": "2027-01-20",
+      "replacements": ["gpt-realtime-2.1"],
+      "evidence": null,
+      "source": "https://developers.openai.com/api/docs/deprecations",
+      "notes": "Deprecation announced 2026-07-20. Was the Phase 1 default; never verified against the live provider here."
+    },
+    {
+      "id": "gpt-realtime-2.1",
+      "provider": "openai",
+      "purpose": "tier1_realtime",
+      "status": "candidate",
+      "shutdown_on": null,
+      "replacements": [],
+      "evidence": null,
+      "source": "https://developers.openai.com/api/docs/models/gpt-realtime-2.1",
+      "notes": "Realtime API (v1/realtime), audio in and out, function calling; a reasoning model, so latency must be measured. Unverified: no provider key in this repository."
+    },
+    {
+      "id": "gpt-4o-transcribe",
+      "provider": "openai",
+      "purpose": "tier1_transcription",
+      "status": "deprecated",
+      "shutdown_on": "2027-02-26",
+      "replacements": ["gpt-transcribe", "gpt-live-transcribe"],
+      "evidence": null,
+      "source": "https://developers.openai.com/api/docs/deprecations",
+      "notes": "Deprecation announced 2026-08-26. Was the Phase 1 default input-audio transcription model."
+    },
+    {
+      "id": "gpt-transcribe",
+      "provider": "openai",
+      "purpose": "tier1_transcription",
+      "status": "candidate",
+      "shutdown_on": null,
+      "replacements": [],
+      "evidence": null,
+      "source": "https://developers.openai.com/api/docs/deprecations",
+      "notes": "Named replacement for committed-turn transcription. Whether it is accepted as the input-audio transcription model of a conversation session is unverified."
+    },
+    {
+      "id": "gpt-live-transcribe",
+      "provider": "openai",
+      "purpose": "tier1_transcription",
+      "status": "candidate",
+      "shutdown_on": null,
+      "replacements": [],
+      "evidence": null,
+      "source": "https://developers.openai.com/api/docs/deprecations",
+      "notes": "Named replacement aimed at streaming transcription while audio arrives. Unverified as an input-audio transcription model of a conversation session."
+    }
+  ]
+}

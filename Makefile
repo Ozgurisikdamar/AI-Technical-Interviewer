@@ -6,7 +6,7 @@ AGENT := services/tier1-voice-agent
 WEB := apps/web
 STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.2
 
-.PHONY: help checks contracts-test sync-contracts go-lint go-test agent-test web-test e2e stack-up stack-down pg-start pg-stop test
+.PHONY: help checks contracts-test sync-contracts go-lint go-test agent-test web-test e2e stack-up stack-down pg-start pg-stop test provider-smoke audit
 
 help:
 	@echo "make checks          repository hygiene, Python import boundaries, generated diagram"
@@ -20,6 +20,8 @@ help:
 	@echo "make stack-up|stack-down  local stack: PostgreSQL, LiveKit, control plane, scripted agent"
 	@echo "make pg-start|pg-stop ephemeral PostgreSQL 16 for tests"
 	@echo "make test            everything available"
+	@echo "make provider-smoke  opt-in live OpenAI check (needs OPENAI_API_KEY; BLOCKED without it), writes docs/status/evidence/"
+	@echo "make audit           dependency vulnerability scans: govulncheck, pip-audit, pnpm audit (needs network)"
 
 checks:
 	python3 tools/checks/repo_hygiene.py
@@ -63,5 +65,13 @@ stack-down:
 
 e2e:
 	cd tests/e2e && uv run --frozen pytest -q
+
+# Not part of `make test`: the scanners query online vulnerability databases.
+audit:
+	tools/checks/audit.sh
+
+# Not part of `make test`: it calls the live provider with the operator's key (ADR-021).
+provider-smoke:
+	cd $(AGENT) && uv run --frozen python -m tier1_voice_agent.provider_smoke --out ../../docs/status/evidence
 
 test: checks contracts-test go-lint go-test agent-test web-test

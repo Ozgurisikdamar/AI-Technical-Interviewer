@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ati.example/contracts/models/v1/model-registry.schema.json",
+  "title": "Provider model registry",
+  "description": "Provider model identifiers the services may be configured with (ADR-021). A model is 'verified' only with recorded live evidence; 'candidate' models are documented by the provider but unverified here; 'deprecated' models have an announced shutdown.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["registry_version", "models"],
+  "properties": {
+    "registry_version": {"type": "string", "format": "date"},
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "provider", "purpose", "status", "shutdown_on", "replacements", "evidence", "source"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,127}$"},
+          "provider": {"enum": ["openai", "anthropic", "google"]},
+          "purpose": {"enum": ["tier1_realtime", "tier1_transcription", "tier2_evaluator"]},
+          "status": {"enum": ["candidate", "verified", "deprecated"]},
+          "shutdown_on": {"type": ["string", "null"], "format": "date"},
+          "replacements": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "evidence": {"type": ["string", "null"], "pattern": "^docs/status/evidence/[A-Za-z0-9._/-]+$"},
+          "source": {"type": "string", "format": "uri", "pattern": "^https://"},
+          "notes": {"type": "string", "maxLength": 600}
+        },
+        "allOf": [
+          {"if": {"properties": {"status": {"const": "verified"}}}, "then": {"properties": {"evidence": {"type": "string"}}}},
+          {"if": {"properties": {"status": {"const": "deprecated"}}}, "then": {"properties": {"shutdown_on": {"type": "string"}, "replacements": {"minItems": 1}}}}
+        ]
+      }
+    }
+  }
+}

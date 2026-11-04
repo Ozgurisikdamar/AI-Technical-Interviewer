@@ -139,6 +139,8 @@ func prodEnv(t *testing.T) map[string]string {
 		"ATI_LIVEKIT_API_SECRET", "prod-livekit-secret-from-secret-manager",
 		"ATI_LIVEKIT_WEBHOOK_API_SECRET", "prod-webhook-secret-from-secret-manager",
 		"ATI_PRODUCTION_GATES_FILE", gates,
+		"ATI_PUBLIC_ADDR", "0.0.0.0:8080",
+		"ATI_INTERNAL_ADDR", "10.0.0.5:8081",
 	)
 }
 
@@ -274,5 +276,27 @@ func TestProductionGatesRequireNamedHumanSignOff(t *testing.T) {
 	err := CheckProductionGates(anonymous)
 	if err == nil || !strings.Contains(err.Error(), "evaluation_validity") || !strings.Contains(err.Error(), "human_governance") {
 		t.Fatalf("gates without a named approver or valid date accepted: %v", err)
+	}
+}
+
+// Dev and test listen on loopback unless told otherwise; staging and production must name their
+// listeners (the internal listener carries agent credentials and media webhooks).
+func TestListenersDefaultToLoopbackOnlyInDevAndTest(t *testing.T) {
+	for _, env := range []string{"dev", "test"} {
+		c, err := Load(getter(with(devEnv(), "APP_ENV", env)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.PublicAddr != "127.0.0.1:8080" || c.InternalAddr != "127.0.0.1:8081" {
+			t.Fatalf("%s listeners: %q %q", env, c.PublicAddr, c.InternalAddr)
+		}
+	}
+	_, err := Load(getter(with(devEnv(), "APP_ENV", "staging")))
+	if err == nil || !strings.Contains(err.Error(), "ATI_PUBLIC_ADDR is required") || !strings.Contains(err.Error(), "ATI_INTERNAL_ADDR is required") {
+		t.Fatalf("staging must name its listeners: %v", err)
+	}
+	c, err := Load(getter(with(devEnv(), "APP_ENV", "staging", "ATI_PUBLIC_ADDR", "0.0.0.0:8080", "ATI_INTERNAL_ADDR", "10.0.0.5:8081")))
+	if err != nil || c.PublicAddr != "0.0.0.0:8080" || c.InternalAddr != "10.0.0.5:8081" {
+		t.Fatalf("explicit listeners: %+v %v", c, err)
 	}
 }

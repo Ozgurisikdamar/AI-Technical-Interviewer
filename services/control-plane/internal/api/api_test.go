@@ -1,10 +1,15 @@
 package api_test
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -236,7 +241,12 @@ func TestAgentRequestsNeedServiceTokenGrantAndCurrentFencing(t *testing.T) {
 func (e *env) webhook(ev realtime.Webhook, signature string) int {
 	e.t.Helper()
 	b, _ := json.Marshal(ev)
-	r, _ := http.NewRequest("POST", e.internal.URL+"/internal/v1/livekit/webhook", strings.NewReader(string(b)))
+	return e.webhookRaw(b, signature)
+}
+
+func (e *env) webhookRaw(body []byte, signature string) int {
+	e.t.Helper()
+	r, _ := http.NewRequest("POST", e.internal.URL+"/internal/v1/livekit/webhook", bytes.NewReader(body))
 	r.Header.Set("Authorization", signature)
 	r.Header.Set("Content-Type", "application/webhook+json")
 	resp, err := http.DefaultClient.Do(r)
@@ -292,6 +302,108 @@ func TestWebhooksAreVerifiedDeduplicatedAndCrossChecked(t *testing.T) {
 	}
 }
 
+// The verifier reads the whole body before it checks the signature, so the body is bounded first;
+// an event whose processing fails is answered 503 (LiveKit retries) and processed on redelivery.
+func TestWebhookBodiesAreBoundedAndFailedEventsAreProcessedOnRedelivery(t *testing.T) {
+	e := newEnv(t)
+	id, cookie := e.interviewToReady()
+	e.startAndClaim(id, cookie)
+	room := e.do(req{method: "POST", url: e.public.URL + "/api/v1/interviews/" + id + "/realtime-session", cookie: cookie}).str("room")
+	state := func() string {
+		return e.do(req{method: "GET", url: e.public.URL + "/api/v1/interviews/" + id, cookie: cookie}).str("state")
+	}
+	huge := bytes.Repeat([]byte("a"), 2<<20)
+	for _, sig := range []string{"forged", "fake-valid-signature"} {
+		if code := e.webhookRaw(huge, sig); code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("oversized webhook (%s): %d", sig, code)
+		}
+	}
+	e.media.Leave(room, "candidate")
+	left := realtime.Webhook{ID: "EV_retry_1", Event: "participant_left", CreatedAt: time.Now().Unix(), Room: room, ParticipantIdentity: "candidate"}
+	e.media.SetFailList(errors.New("livekit unavailable"))
+	if code := e.webhook(left, "fake-valid-signature"); code != http.StatusServiceUnavailable {
+		t.Fatalf("a failed event must be answered 5xx so LiveKit retries it: %d", code)
+	}
+	if s := state(); s != "CALIBRATION" {
+		t.Fatalf("failed processing changed the state: %s", s)
+	}
+	var processed *time.Time
+	if err := e.db.Owner.QueryRow(context.Background(), `SELECT processed_at FROM ati.webhook_events WHERE event_id = $1`, left.ID).Scan(&processed); err != nil || processed != nil {
+		t.Fatalf("a failed event must stay unprocessed: %v %v", processed, err)
+	}
+	e.media.SetFailList(nil)
+	if code := e.webhook(left, "fake-valid-signature"); code != http.StatusOK {
+		t.Fatalf("redelivery: %d", code)
+	}
+	if s := state(); s != "PAUSED" {
+		t.Fatalf("the redelivered event must be processed: %s", s)
+	}
+	if err := e.db.Owner.QueryRow(context.Background(), `SELECT processed_at FROM ati.webhook_events WHERE event_id = $1`, left.ID).Scan(&processed); err != nil || processed == nil {
+		t.Fatalf("a processed event is recorded: %v %v", processed, err)
+	}
+	if code := e.webhook(left, "fake-valid-signature"); code != http.StatusOK {
+		t.Fatalf("duplicate: %d", code)
+	}
+	// An event for a room the control plane does not know is final, not retried.
+	if code := e.webhook(realtime.Webhook{ID: "EV_unknown_1", Event: "participant_left", CreatedAt: time.Now().Unix(), Room: "room_unknown", ParticipantIdentity: "candidate"}, "fake-valid-signature"); code != http.StatusOK {
+		t.Fatalf("unknown room: %d", code)
+	}
+}
+
+// An idempotent request whose body exceeds the limit is 413; a body the client stops sending
+// (a disconnect or read timeout) is 400, not 413.
+func TestRequestBodiesTooLargeOrUnreadable(t *testing.T) {
+	e := newEnv(t)
+	big := map[string]any{"candidate_ref": strings.Repeat("x", 20<<10), "plan_id": "plan_demo_backend_en", "plan_version": 1}
+	if r := e.do(req{method: "POST", url: e.public.URL + "/api/v1/interviews", headers: map[string]string{"Authorization": "Bearer " + e.staff}, body: big}); r.status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body: %d %s", r.status, r.raw)
+	}
+	conn, err := net.Dial("tcp", strings.TrimPrefix(e.public.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "POST /api/v1/interviews HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nIdempotency-Key: idem-truncated-1\r\n"+
+		"Content-Type: application/json\r\nContent-Length: 200\r\n\r\n{\"candidate_ref\":", e.staff)
+	_ = conn.(*net.TCPConn).CloseWrite() // the body ends early
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("truncated body: %d", resp.StatusCode)
+	}
+}
+
+// The agent dispatch runs under the session row lock in a transaction; nothing inside it may take
+// a second pool connection, or concurrent dispatches deadlock once they exhaust the pool. With a
+// single connection the whole join (dispatch, stale-agent removal, re-dispatch) must complete.
+func TestAgentDispatchNeedsOnePoolConnection(t *testing.T) {
+	e := newEnvPool(t, nil, 1)
+	// A blocked request fails the test (and releases its connection) instead of hanging it.
+	e.client = &http.Client{Timeout: 10 * time.Second}
+	id, cookie := e.interviewToReady()
+	e.startAndClaim(id, cookie)
+	rt := e.do(req{method: "POST", url: e.public.URL + "/api/v1/interviews/" + id + "/realtime-session", cookie: cookie})
+	if rt.status != 200 {
+		t.Fatalf("realtime-session: %d %s", rt.status, rt.raw)
+	}
+	// The lease lapses (not yet swept) while another agent is in the room: the re-dispatch reads
+	// the lease holder inside its transaction and removes only the other agent.
+	e.media.Join(rt.str("room"), "agent-stale", true)
+	if _, err := e.db.Owner.Exec(context.Background(), `UPDATE ati.agent_leases SET expires_at = now() - interval '1 second' WHERE session_id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.do(req{method: "POST", url: e.public.URL + "/api/v1/interviews/" + id + "/realtime-session", cookie: cookie}); r.status != 200 {
+		t.Fatalf("re-dispatch: %d %s", r.status, r.raw)
+	}
+	if !slices.Contains(e.media.Removed, "agent-stale") || slices.Contains(e.media.Removed, "agent-AJ_1") {
+		t.Fatalf("only the agent without the lease is removed: %v", e.media.Removed)
+	}
+}
+
 func TestInvitationExchangeIsRateLimitedAndTextModeHonest(t *testing.T) {
 	e := newEnv(t)
 	id, cookie := e.interviewToReady()
@@ -340,7 +452,7 @@ func TestResumeDispatchesAReplacementForALostAgent(t *testing.T) {
 	}
 	// A second resume-equivalent request does not dispatch again while the new dispatch is pending.
 	if _, err := e.svc.EnsureAgentDispatch(context.Background(), id, interview.MediaOps{
-		RemoveStaleAgents: func(context.Context, string) error { return nil }, Dispatch: e.media.Dispatch,
+		RemoveStaleAgents: func(context.Context, string, string) error { return nil }, Dispatch: e.media.Dispatch,
 	}); err != nil {
 		t.Fatal(err)
 	}

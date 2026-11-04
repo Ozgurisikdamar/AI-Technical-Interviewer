@@ -33,10 +33,15 @@ class OpenAIRealtimeEngine:
     name = "openai_realtime"
     transcript_source = "realtime_transcription"
 
-    def __init__(self, *, api_key: str, model: str, voice: str, transcription_model: str, eagerness: Eagerness = "low") -> None:
+    def __init__(
+        self, *, api_key: str, model: str, voice: str, transcription_model: str, base_url: str, eagerness: Eagerness = "low"
+    ) -> None:
         if not api_key:
             raise ValueError("OPENAI_API_KEY is required for the openai engine")
+        if not base_url:
+            raise ValueError("the provider endpoint must be explicit (ADR-021)")
         self._api_key = api_key
+        self._base_url = base_url
         self.model: str | None = model
         self._voice = voice
         self.asr_model: str | None = transcription_model
@@ -48,6 +53,8 @@ class OpenAIRealtimeEngine:
             "model": self.model,
             "voice": self._voice,
             "api_key": self._api_key,
+            # Explicit: otherwise the client falls back to the OPENAI_BASE_URL environment variable.
+            "base_url": self._base_url,
             "input_audio_transcription": AudioTranscription(model=self.asr_model, language=language),
             "turn_detection": semantic_vad(self._eagerness),
         }

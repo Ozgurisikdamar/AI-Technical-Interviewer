@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -153,6 +154,31 @@ func TestReceiveWebhookAcceptsOnlyTheDedicatedKey(t *testing.T) {
 	} {
 		if _, err := lk.ReceiveWebhook(r); err == nil {
 			t.Errorf("%s: webhook accepted", name)
+		}
+	}
+}
+
+// A media server that never answers must not hold a caller (and the session row lock it may hold)
+// beyond the call timeout.
+func TestServerAPICallsAreBounded(t *testing.T) {
+	hang := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-hang }))
+	defer srv.Close()
+	defer close(hang)
+	l := NewLiveKit(Options{APIURL: srv.URL, APIKey: testAPIKey, APISecret: testAPISecret, CallTimeout: 200 * time.Millisecond})
+	calls := map[string]func(ctx context.Context) error{
+		"ensure room":        func(ctx context.Context) error { return l.EnsureRoom(ctx, "room") },
+		"delete room":        func(ctx context.Context) error { return l.DeleteRoom(ctx, "room") },
+		"dispatch":           func(ctx context.Context) error { _, err := l.Dispatch(ctx, "room", "{}"); return err },
+		"list dispatches":    func(ctx context.Context) error { _, err := l.ListDispatches(ctx, "room"); return err },
+		"list participants":  func(ctx context.Context) error { _, err := l.ListParticipants(ctx, "room"); return err },
+		"remove participant": func(ctx context.Context) error { return l.RemoveParticipant(ctx, "room", "agent") },
+	}
+	for name, call := range calls {
+		start := time.Now()
+		err := call(context.Background())
+		if err == nil || time.Since(start) > 3*time.Second {
+			t.Fatalf("%s: err=%v after %s", name, err, time.Since(start))
 		}
 	}
 }

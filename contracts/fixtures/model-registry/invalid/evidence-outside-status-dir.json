@@ -1,0 +1,7 @@
+{
+  "registry_version": "2026-11-04",
+  "models": [
+    {"id": "model-a", "provider": "openai", "purpose": "tier1_realtime", "status": "verified", "shutdown_on": null, "replacements": [],
+     "evidence": "https://example.com/screenshot.png", "source": "https://example.com/models/model-a"}
+  ]
+}

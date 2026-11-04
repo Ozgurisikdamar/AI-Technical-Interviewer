@@ -56,6 +56,7 @@ type env struct {
 	keys     atomic.Int64
 	svc      *interview.Service
 	rec      *fakeRecorder
+	client   *http.Client // nil: http.DefaultClient
 }
 
 // fakeRecorder records the calls the API makes to the recorder.
@@ -82,6 +83,7 @@ func (f *fakeRecorder) OnEgressEvent(_ context.Context, ev *realtime.Webhook) er
 	f.egress = append(f.egress, ev.EgressID+":"+ev.EgressStatus)
 	return nil
 }
+func (f *fakeRecorder) Reconcile(context.Context) (int, error) { return 0, nil }
 func (f *fakeRecorder) snapshot() (starts, stops, egress []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -91,15 +93,29 @@ func (f *fakeRecorder) snapshot() (starts, stops, egress []string) {
 func newEnv(t *testing.T) *env { return newEnvWith(t, nil) }
 
 // newEnvWith builds the environment with configuration overrides (for example APP_ENV).
-func newEnvWith(t *testing.T, overrides map[string]string) *env {
+func newEnvWith(t *testing.T, overrides map[string]string) *env { return newEnvPool(t, overrides, 0) }
+
+// newEnvPool builds the environment on a control-plane pool of maxConns connections (0: the
+// test database's default pool).
+func newEnvPool(t *testing.T, overrides map[string]string, maxConns int32) *env {
 	t.Helper()
 	db := testdb.New(t)
+	pool := db.CP
+	if maxConns > 0 {
+		p, err := store.Open(context.Background(), db.URLFor("ati_control_plane"), maxConns)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(p.Close)
+		pool = p
+	}
 	settings := map[string]string{
 		"APP_ENV": "test", "ATI_PUBLIC_ORIGIN": origin, "ATI_DATABASE_URL": "unused", "ATI_TIER1_CTX_DATABASE_URL": "unused",
 		"ATI_LIVEKIT_URL": "ws://localhost:7880", "ATI_LIVEKIT_API_KEY": "k", "ATI_LIVEKIT_API_SECRET": "ati-dev-secret",
 		"ATI_LIVEKIT_WEBHOOK_API_KEY": "wk", "ATI_LIVEKIT_WEBHOOK_API_SECRET": "ati-dev-wsecret",
 		"ATI_AGENT_SERVICE_TOKEN_SHA256": ids.Hash(agentToken), "ATI_RETENTION_TRANSCRIPT_DAYS": "30",
 		"ATI_RETENTION_SESSION_EVENTS_DAYS": "30", "ATI_RETENTION_ASSESSMENT_OUTPUT_DAYS": "30", "ATI_INVITATION_EXCHANGES_PER_MINUTE": "5",
+		"ATI_PUBLIC_ADDR": "127.0.0.1:0", "ATI_INTERNAL_ADDR": "127.0.0.1:0", // unused: the tests serve with httptest
 	}
 	for k, v := range overrides {
 		settings[k] = v
@@ -112,7 +128,7 @@ func newEnvWith(t *testing.T, overrides map[string]string) *env {
 	log := logging.New(logs, "debug", "control-plane-test")
 	m, _ := flow.Default()
 	media := realtime.NewFake()
-	svc, err := interview.New(db.CP, m, interview.Settings{
+	svc, err := interview.New(pool, m, interview.Settings{
 		CompletionDeadline: 8 * time.Second, PauseTimeout: 30 * time.Minute, InvitationTTL: time.Hour, CandidateSessionTTL: time.Hour,
 		LeaseTTL: 15 * time.Second, Retention: cfg.Retention, NoticeID: cfg.NoticeID, NoticeVersion: cfg.NoticeVersion,
 	}, api.Effects{Media: media, Log: log}, log, nil)
@@ -125,7 +141,7 @@ func newEnvWith(t *testing.T, overrides map[string]string) *env {
 	}
 	t.Cleanup(tier1Pool.Close)
 	rec := &fakeRecorder{}
-	srv := api.New(api.Deps{Config: cfg, Service: svc, Tier1: tier1ctx.New(tier1Pool, nil), Media: media, Pool: db.CP, Tier1Pool: tier1Pool, Log: log,
+	srv := api.New(api.Deps{Config: cfg, Service: svc, Tier1: tier1ctx.New(tier1Pool, nil), Media: media, Pool: pool, Tier1Pool: tier1Pool, Log: log,
 		Recorder: rec})
 	e := &env{t: t, db: db, media: media, logs: logs, svc: svc, tenant: ids.New(ids.Tenant), rec: rec}
 	e.public = httptest.NewServer(srv.PublicHandler())
@@ -204,7 +220,11 @@ func (e *env) do(q req) response {
 		}
 		r.Header.Set("Sec-Fetch-Site", "same-origin")
 	}
-	resp, err := http.DefaultClient.Do(r)
+	client := e.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(r)
 	if err != nil {
 		e.t.Fatal(err)
 	}

@@ -2,9 +2,12 @@ package api
 
 import (
 	"bytes"
+	"container/list"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/netip"
@@ -18,6 +21,10 @@ import (
 )
 
 var idemKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{8,128}$`)
+
+// staleClaim is how long a claim without an outcome blocks its key: longer than any request runs,
+// so an older claim belongs to a request that never finished (the process stopped mid-request).
+const staleClaim = 5 * time.Minute
 
 type recorder struct {
 	header http.Header
@@ -73,8 +80,13 @@ type storedResponse struct {
 func readBody(w http.ResponseWriter, r *http.Request, max int64) ([]byte, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, max)
 	b, err := io.ReadAll(r.Body)
-	if err != nil {
+	var tooLarge *http.MaxBytesError
+	switch {
+	case errors.As(err, &tooLarge):
 		httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, "request body too large")
+		return nil, false
+	case err != nil: // the client stopped sending (disconnect or read timeout)
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "request body could not be read")
 		return nil, false
 	}
 	r.Body = io.NopCloser(bytes.NewReader(b))
@@ -117,8 +129,14 @@ func (s *Server) idempotent(w http.ResponseWriter, r *http.Request, principalKey
 			httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeIdempotencyKeyReused, "Idempotency-Key was already used for a different request")
 			return
 		case status == nil:
-			httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "an identical request is still in progress")
-			return
+			now := s.now().UTC()
+			t, err := s.pool.Exec(ctx, `UPDATE ati.idempotency_records SET claimed_at = $3 WHERE principal = $1 AND idem_key = $2 AND status IS NULL AND claimed_at <= $4`,
+				principalKey, key, now, now.Add(-staleClaim))
+			if err != nil || t.RowsAffected() == 0 {
+				httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "an identical request is still in progress")
+				return
+			}
+			// The earlier request never finished: this one takes over the claim.
 		case *status == 0:
 			// Previous attempt failed with a server error: allow exactly one retry to claim it.
 			t, err := s.pool.Exec(ctx, `UPDATE ati.idempotency_records SET status = NULL WHERE principal = $1 AND idem_key = $2 AND status = 0`, principalKey, key)
@@ -142,15 +160,19 @@ func (s *Server) idempotent(w http.ResponseWriter, r *http.Request, principalKey
 	if status == 0 {
 		status = http.StatusOK
 	}
+	// The outcome is recorded even when the client has gone away meanwhile: otherwise the claim
+	// would block the key until it goes stale.
+	book, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	if status >= 500 {
-		_, _ = s.pool.Exec(ctx, `UPDATE ati.idempotency_records SET status = 0 WHERE principal = $1 AND idem_key = $2`, principalKey, key)
+		_, _ = s.pool.Exec(book, `UPDATE ati.idempotency_records SET status = 0 WHERE principal = $1 AND idem_key = $2`, principalKey, key)
 	} else {
 		body := rec.body.Bytes()
 		if rec.replay != nil {
 			body = rec.replay
 		}
 		stored, _ := json.Marshal(storedResponse{ContentType: rec.header.Get("Content-Type"), Body: json.RawMessage(nonEmptyJSON(body))})
-		_, _ = s.pool.Exec(ctx, `UPDATE ati.idempotency_records SET status = $3, response = $4 WHERE principal = $1 AND idem_key = $2`, principalKey, key, status, stored)
+		_, _ = s.pool.Exec(book, `UPDATE ati.idempotency_records SET status = $3, response = $4 WHERE principal = $1 AND idem_key = $2`, principalKey, key, status, stored)
 	}
 	rec.flush(w)
 }
@@ -162,37 +184,54 @@ func nonEmptyJSON(b []byte) []byte {
 	return b
 }
 
-// ipLimiter rate-limits anonymous endpoints per client address.
+// ipLimiter rate-limits anonymous endpoints per client. IPv4 clients are keyed by address and
+// IPv6 clients by their /64, which a single subscriber typically controls in full; the table is
+// bounded (least recently seen keys are evicted first), so many distinct addresses cannot grow it.
 type ipLimiter struct {
 	mu      sync.Mutex
 	perMin  int
-	entries map[netip.Addr]*limiterEntry
+	max     int
+	entries map[netip.Addr]*list.Element
+	order   *list.List // front: most recently seen
 }
 
 type limiterEntry struct {
-	lim  *rate.Limiter
-	seen time.Time
+	key netip.Addr
+	lim *rate.Limiter
 }
 
+// limiterCapacity bounds the table: at the default rate an entry is a few hundred bytes.
+const limiterCapacity = 10000
+
 func newIPLimiter(perMinute int) *ipLimiter {
-	return &ipLimiter{perMin: perMinute, entries: map[netip.Addr]*limiterEntry{}}
+	return &ipLimiter{perMin: perMinute, max: limiterCapacity, entries: map[netip.Addr]*list.Element{}, order: list.New()}
+}
+
+// limiterKey is the address, or its /64 for IPv6.
+func limiterKey(a netip.Addr) netip.Addr {
+	a = a.Unmap()
+	if a.Is6() {
+		if p, err := a.Prefix(64); err == nil {
+			return p.Addr()
+		}
+	}
+	return a
 }
 
 func (l *ipLimiter) allow(a netip.Addr, now time.Time) bool {
+	key := limiterKey(a)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.entries) > 10000 {
-		for k, e := range l.entries {
-			if now.Sub(e.seen) > 10*time.Minute {
-				delete(l.entries, k)
-			}
-		}
+	if el, ok := l.entries[key]; ok {
+		l.order.MoveToFront(el)
+		return el.Value.(*limiterEntry).lim.AllowN(now, 1)
 	}
-	e, ok := l.entries[a]
-	if !ok {
-		e = &limiterEntry{lim: rate.NewLimiter(rate.Every(time.Minute/time.Duration(l.perMin)), l.perMin)}
-		l.entries[a] = e
+	for l.order.Len() >= l.max {
+		oldest := l.order.Back()
+		delete(l.entries, oldest.Value.(*limiterEntry).key)
+		l.order.Remove(oldest)
 	}
-	e.seen = now
+	e := &limiterEntry{key: key, lim: rate.NewLimiter(rate.Every(time.Minute/time.Duration(l.perMin)), l.perMin)}
+	l.entries[key] = l.order.PushFront(e)
 	return e.lim.AllowN(now, 1)
 }

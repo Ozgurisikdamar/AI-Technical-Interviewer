@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from tier1_voice_agent.config import ConfigError, load
+from tier1_voice_agent.models import parse, registry
 
 BASE = {
     "APP_ENV": "dev",
@@ -16,11 +19,21 @@ BASE = {
     "ATI_AGENT_SERVICE_TOKEN": "ati-dev-agent-token",
 }
 
+OPENAI = {
+    **BASE,
+    "ATI_VOICE_ENGINE": "openai",
+    "OPENAI_API_KEY": "test-only-openai",
+    "ATI_OPENAI_REALTIME_MODEL": "gpt-realtime-2.1",
+    "ATI_OPENAI_TRANSCRIPTION_MODEL": "gpt-transcribe",
+}
+
 PROD = {
     **BASE,
     "APP_ENV": "production",
     "ATI_VOICE_ENGINE": "openai",
     "OPENAI_API_KEY": "test-only-openai",
+    "ATI_OPENAI_REALTIME_MODEL": "gpt-realtime-2.1",
+    "ATI_OPENAI_TRANSCRIPTION_MODEL": "gpt-transcribe",
     "ATI_LIVEKIT_URL": "wss://media.example.invalid",
     "ATI_LIVEKIT_API_SECRET": "test-only-livekit-secret",
     "ATI_CONTROL_PLANE_INTERNAL_URL": "https://control.example.invalid",
@@ -71,8 +84,72 @@ def test_unknown_engine_is_refused() -> None:
         load({**BASE, "ATI_VOICE_ENGINE": "other"})
 
 
-def test_production_accepts_a_safe_configuration() -> None:
-    assert load(PROD).production
+def _verified(*ids: str) -> object:
+    """The packaged registry with the given models marked verified (no model is, in this repository)."""
+    raw = {
+        "models": [
+            {
+                "id": m.id,
+                "provider": m.provider,
+                "purpose": m.purpose,
+                "status": "verified" if m.id in ids else m.status,
+                "shutdown_on": m.shutdown_on.isoformat() if m.shutdown_on else None,
+                "replacements": list(m.replacements),
+            }
+            for m in registry().values()
+        ]
+    }
+    return parse(raw)
+
+
+def test_production_accepts_a_safe_configuration_with_verified_models() -> None:
+    assert load(PROD, models=_verified("gpt-realtime-2.1", "gpt-transcribe")).production  # type: ignore[arg-type]
+
+
+def test_production_refuses_models_without_live_verification() -> None:
+    with pytest.raises(ConfigError, match="production requires a model verified against the live provider"):
+        load(PROD)
+
+
+def test_openai_models_must_be_named() -> None:
+    env = {k: v for k, v in OPENAI.items() if not k.startswith("ATI_OPENAI_")}
+    with pytest.raises(ConfigError, match="ATI_OPENAI_REALTIME_MODEL is required") as e:
+        load(env)
+    assert "ATI_OPENAI_TRANSCRIPTION_MODEL is required" in str(e.value)
+
+
+def test_deprecated_models_warn_until_their_shutdown_then_are_refused() -> None:
+    env = {**OPENAI, "ATI_OPENAI_REALTIME_MODEL": "gpt-realtime"}
+    cfg = load(env, today=date(2026, 11, 4))
+    assert any("gpt-realtime" in w and "2027-01-20" in w and "gpt-realtime-2.1" in w and "soon" in w for w in cfg.warnings), cfg.warnings
+    with pytest.raises(ConfigError, match="shut down by the provider on 2027-01-20"):
+        load(env, today=date(2027, 1, 20))
+
+
+def test_unregistered_models_warn_in_dev_and_are_refused_in_staging() -> None:
+    env = {**OPENAI, "ATI_OPENAI_REALTIME_MODEL": "gpt-realtime-typo"}
+    assert any("not a registered openai tier1_realtime model" in w for w in load(env).warnings)
+    staging = {**env, "APP_ENV": "staging", "ATI_LIVEKIT_URL": "wss://media.example.invalid"}
+    with pytest.raises(ConfigError, match="not a registered openai tier1_realtime model"):
+        load(staging)
+    # A transcription model is not accepted as the realtime model either.
+    with pytest.raises(ConfigError, match="not a registered openai tier1_realtime model"):
+        load({**staging, "ATI_OPENAI_REALTIME_MODEL": "gpt-transcribe"})
+
+
+def test_the_provider_endpoint_is_pinned() -> None:
+    assert load(OPENAI).openai_base_url == "https://api.openai.com/v1"
+    with pytest.raises(ConfigError, match="OPENAI_BASE_URL differs"):
+        load({**OPENAI, "OPENAI_BASE_URL": "https://elsewhere.invalid/v1"})
+    assert load({**OPENAI, "OPENAI_BASE_URL": "https://api.openai.com/v1/"}).openai_base_url == "https://api.openai.com/v1"
+    assert load({**OPENAI, "ATI_OPENAI_BASE_URL": "http://127.0.0.1:9999/v1"}).openai_base_url == "http://127.0.0.1:9999/v1"
+    with pytest.raises(ConfigError, match="must be an https URL"):
+        load({**OPENAI, "ATI_OPENAI_BASE_URL": "ftp://example.invalid"})
+    verified = _verified("gpt-realtime-2.1", "gpt-transcribe")
+    with pytest.raises(ConfigError, match="must be an https URL"):
+        load({**PROD, "ATI_OPENAI_BASE_URL": "http://api.openai.com/v1"}, models=verified)  # type: ignore[arg-type]
+    with pytest.raises(ConfigError, match="pinned in ADR-021"):
+        load({**PROD, "ATI_OPENAI_BASE_URL": "https://proxy.example.invalid/v1"}, models=verified)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -87,7 +164,7 @@ def test_production_accepts_a_safe_configuration() -> None:
 )
 def test_production_refusals(override: dict[str, str], message: str) -> None:
     with pytest.raises(ConfigError, match=message):
-        load({**PROD, **override})
+        load({**PROD, **override}, models=_verified("gpt-realtime-2.1", "gpt-transcribe"))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("value", ["0", "65", "many"])

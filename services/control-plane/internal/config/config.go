@@ -159,10 +159,18 @@ func Load(get Getenv) (*Config, error) {
 		return nil, fmt.Errorf("APP_ENV must be one of dev, test, staging, production (got %q); refusing to start", env)
 	}
 
+	// Listeners: dev and test default to loopback; staging and production must name the interfaces
+	// they serve on (the internal API carries agent credentials and webhooks).
+	listen := func(key, devDefault string) string {
+		if env == EnvDev || env == EnvTest {
+			return opt(key, devDefault)
+		}
+		return req(key)
+	}
 	c := &Config{
 		Env:                     env,
-		PublicAddr:              opt("ATI_PUBLIC_ADDR", ":8080"),
-		InternalAddr:            opt("ATI_INTERNAL_ADDR", ":8081"),
+		PublicAddr:              listen("ATI_PUBLIC_ADDR", "127.0.0.1:8080"),
+		InternalAddr:            listen("ATI_INTERNAL_ADDR", "127.0.0.1:8081"),
 		DatabaseURL:             req("ATI_DATABASE_URL"),
 		Tier1CtxDatabaseURL:     req("ATI_TIER1_CTX_DATABASE_URL"),
 		LiveKitURL:              req("ATI_LIVEKIT_URL"),

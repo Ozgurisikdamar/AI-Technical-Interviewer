@@ -11,7 +11,7 @@ import (
 
 func fakeOps() MediaOps {
 	return MediaOps{
-		RemoveStaleAgents: func(context.Context, string) error { return nil },
+		RemoveStaleAgents: func(context.Context, string, string) error { return nil },
 		Dispatch:          func(context.Context, string, string) (string, error) { return "AD_test", nil },
 	}
 }

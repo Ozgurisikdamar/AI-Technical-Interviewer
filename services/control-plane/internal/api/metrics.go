@@ -51,7 +51,7 @@ func (m *Metrics) Handler() http.Handler { return promhttp.HandlerFor(m.reg, pro
 // Observer returns an httpx observer for a listener.
 func (m *Metrics) Observer(listener string) func(route, method string, status int, elapsed time.Duration) {
 	return func(route, method string, status int, elapsed time.Duration) {
-		m.httpRequests.WithLabelValues(listener, route, method, strconv.Itoa(status)).Inc()
+		m.httpRequests.WithLabelValues(listener, route, methodLabel(method), strconv.Itoa(status)).Inc()
 		m.httpDuration.WithLabelValues(listener, route).Observe(elapsed.Seconds())
 	}
 }
@@ -72,4 +72,14 @@ func (m *Metrics) Sweep(kind string, n int) {
 	if n > 0 {
 		m.sweeps.WithLabelValues(kind).Add(float64(n))
 	}
+}
+
+// methodLabel bounds the method label: the request method is chosen by the client, so any other
+// value would add a time series per distinct string.
+func methodLabel(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions:
+		return method
+	}
+	return "other"
 }

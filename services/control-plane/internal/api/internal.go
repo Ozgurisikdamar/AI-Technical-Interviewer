@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/httpx"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/interview"
@@ -273,18 +275,38 @@ func (s *Server) tier1Usage(w http.ResponseWriter, r *http.Request) {
 // webhookMaxAge drops replayed or delayed events (ADR-016).
 const webhookMaxAge = 5 * time.Minute
 
+// webhookMaxBytes bounds the body read before the signature is checked: the verifier reads the
+// whole body to compare its digest with the signed one. LiveKit events carry at most a room's and
+// a participant's metadata and attributes (64 KB each by default), so 1 MiB leaves ample room.
+const webhookMaxBytes = 1 << 20
+
 func (s *Server) livekitWebhook(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, webhookMaxBytes)
 	ev, err := s.media.ReceiveWebhook(r)
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			s.metrics.webhooks.WithLabelValues("unknown", "too_large").Inc()
+			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, "request body too large")
+			return
+		}
 		s.metrics.webhooks.WithLabelValues("unknown", "rejected").Inc()
 		unauthorized(w, r)
 		return
 	}
 	outcome := s.handleWebhook(r.Context(), ev)
 	s.metrics.webhooks.WithLabelValues(ev.Event, outcome).Inc()
+	if outcome == "error" || outcome == "in_flight" {
+		// LiveKit retries 5xx responses; the event stays unprocessed until a delivery succeeds.
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleWebhook processes a verified event at least once: a delivery is a duplicate only when an
+// earlier delivery of the same event was processed. Every handler re-checks the current state, so
+// processing an event again (after a failure, or two deliveries in flight) is harmless.
 func (s *Server) handleWebhook(ctx context.Context, ev *realtime.Webhook) string {
 	if ev.ID == "" {
 		return "ignored"
@@ -292,14 +314,33 @@ func (s *Server) handleWebhook(ctx context.Context, ev *realtime.Webhook) string
 	if age := s.now().Sub(time.Unix(ev.CreatedAt, 0)); ev.CreatedAt == 0 || age > webhookMaxAge {
 		return "stale"
 	}
-	tag, err := s.pool.Exec(ctx, `INSERT INTO ati.webhook_events (event_id, event_type, created_unix) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, ev.ID, ev.Event, ev.CreatedAt)
+	var processed bool
+	err := s.pool.QueryRow(ctx, `WITH ins AS (
+			INSERT INTO ati.webhook_events (event_id, event_type, created_unix) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING RETURNING false AS processed)
+		SELECT processed FROM ins UNION ALL SELECT processed_at IS NOT NULL FROM ati.webhook_events WHERE event_id = $1 LIMIT 1`,
+		ev.ID, ev.Event, ev.CreatedAt).Scan(&processed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "in_flight" // a concurrent delivery inserted the event after this statement began
+	}
 	if err != nil {
 		s.log.Warn("webhook dedupe failed", slog.Any("error", err))
 		return "error"
 	}
-	if tag.RowsAffected() == 0 {
+	if processed {
 		return "duplicate"
 	}
+	outcome := s.processWebhook(ctx, ev)
+	if outcome == "error" {
+		return outcome
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE ati.webhook_events SET processed_at = $2 WHERE event_id = $1 AND processed_at IS NULL`, ev.ID, s.now().UTC()); err != nil {
+		s.log.Warn("webhook completion not recorded", slog.Any("error", err))
+		return "error"
+	}
+	return outcome
+}
+
+func (s *Server) processWebhook(ctx context.Context, ev *realtime.Webhook) string {
 	switch ev.Event {
 	case "egress_started", "egress_updated", "egress_ended":
 		if s.rec == nil {
@@ -315,8 +356,11 @@ func (s *Server) handleWebhook(ctx context.Context, ev *realtime.Webhook) string
 		return "ignored"
 	}
 	sessionID, err := s.svc.SessionForRoom(ctx, ev.Room)
-	if err != nil {
+	if errors.Is(err, interview.ErrNotFound) {
 		return "unknown_room"
+	}
+	if err != nil {
+		return "error"
 	}
 	system := interview.Actor{Type: flow.ActorSystem, RequestID: "webhook:" + ev.ID}
 	switch ev.Event {
@@ -378,37 +422,35 @@ func (s *Server) handleWebhook(ctx context.Context, ev *realtime.Webhook) string
 	return "processed"
 }
 
-// RunSweepers runs the deadline, lease and pause-expiry sweepers until ctx ends.
+// RunSweepers runs the deadline, lease, missing-agent, pause-expiry and recording sweepers until
+// ctx ends. A pass that fails for some sessions still counts the ones it processed.
 func (s *Server) RunSweepers(ctx context.Context) {
 	fast := time.NewTicker(time.Second)
 	slow := time.NewTicker(30 * time.Second)
 	defer fast.Stop()
 	defer slow.Stop()
+	sweep := func(kind string, run func(context.Context) (int, error)) {
+		n, err := run(ctx)
+		s.metrics.Sweep(kind, n)
+		if err != nil && ctx.Err() == nil {
+			s.log.Warn("sweeper", slog.String("kind", kind), slog.Any("error", err))
+		}
+	}
+	if s.rec != nil {
+		sweep("recording_reconciled", s.rec.Reconcile) // starts interrupted by the last stop
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-fast.C:
-			if n, err := s.svc.SweepCompletionDeadlines(ctx); err != nil {
-				s.log.Warn("completion sweeper", slog.Any("error", err))
-			} else {
-				s.metrics.Sweep("completion_deadline", n)
-			}
-			if n, err := s.svc.ExpireLeases(ctx); err != nil {
-				s.log.Warn("lease sweeper", slog.Any("error", err))
-			} else {
-				s.metrics.Sweep("lease_expired_pause", n)
-			}
-			if n, err := s.svc.SweepMissingAgents(ctx); err != nil {
-				s.log.Warn("missing-agent sweeper", slog.Any("error", err))
-			} else {
-				s.metrics.Sweep("agent_missing_pause", n)
-			}
+			sweep("completion_deadline", s.svc.SweepCompletionDeadlines)
+			sweep("lease_expired_pause", s.svc.ExpireLeases)
+			sweep("agent_missing_pause", s.svc.SweepMissingAgents)
 		case <-slow.C:
-			if n, err := s.svc.ExpirePausedSessions(ctx); err != nil {
-				s.log.Warn("pause expiry sweeper", slog.Any("error", err))
-			} else {
-				s.metrics.Sweep("pause_expired", n)
+			sweep("pause_expired", s.svc.ExpirePausedSessions)
+			if s.rec != nil {
+				sweep("recording_reconciled", s.rec.Reconcile)
 			}
 		}
 	}

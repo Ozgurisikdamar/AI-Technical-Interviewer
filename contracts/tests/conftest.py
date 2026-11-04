@@ -23,6 +23,7 @@ SCHEMAS: dict[str, Path] = {
     "consent-notice": CONTRACTS / "schemas/consent/v1/consent-notice.schema.json",
     "answer-finalized": CONTRACTS / "schemas/events/v1/answer-finalized.schema.json",
     "interview-completed": CONTRACTS / "schemas/events/v1/interview-completed.schema.json",
+    "model-registry": CONTRACTS / "schemas/models/v1/model-registry.schema.json",
 }
 
 

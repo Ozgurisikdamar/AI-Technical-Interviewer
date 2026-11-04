@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 
@@ -20,6 +21,8 @@ def main() -> None:
         print(f'{{"level":"ERROR","msg":"agent refused to start","reason":"{e}"}}', file=sys.stderr)
         raise SystemExit(1) from None
     logging_setup.setup(os.environ.get("ATI_LOG_LEVEL", "INFO"))
+    for warning in cfg.warnings:
+        logging.getLogger("tier1.config").warning(warning)
     from .worker import build_server
 
     server = build_server(cfg)

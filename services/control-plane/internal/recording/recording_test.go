@@ -463,3 +463,87 @@ func TestPurgeDeletesExpiredRecordingsAndLeavesTombstones(t *testing.T) {
 		t.Fatalf("second purge: n=%d err=%v", n, err)
 	}
 }
+
+// A restart can interrupt a start after LiveKit began the egress but before the control plane
+// stored its id (or before the egress lifecycle webhook arrived), and a stop can fail after the
+// row says "stopping". Reconciliation stops whatever still writes a recording's file and leaves no
+// recording "starting" or "stopping" past their bounds.
+func TestReconcileSettlesInterruptedStartsAndStops(t *testing.T) {
+	e := newEnv(t, allowed)
+	recordingOf := func(id string) (recID, egressID, key string) {
+		var eg *string
+		e.must(e.db.CP.QueryRow(ctx, `SELECT id, egress_id, object_key FROM ati.audio_recordings WHERE session_id = $1`, id).Scan(&recID, &eg, &key))
+		if eg != nil {
+			egressID = *eg
+		}
+		return
+	}
+	age := func(id, set string) {
+		_, err := e.db.Owner.Exec(ctx, `UPDATE ati.audio_recordings SET `+set+`, updated_at = now() - interval '1 minute' WHERE session_id = $1`, id)
+		e.must(err)
+	}
+	status := func(id string) (string, string) {
+		var s string
+		var f *string
+		e.must(e.db.CP.QueryRow(ctx, `SELECT status, failure FROM ati.audio_recordings WHERE session_id = $1`, id).Scan(&s, &f))
+		if f == nil {
+			return s, ""
+		}
+		return s, *f
+	}
+	// 1. The start returned but its lifecycle webhook never came.
+	lost, _, _ := e.toFirstQuestion(allowed)
+	_, lostEgress, _ := recordingOf(lost)
+	age(lost, "status = 'starting'")
+	// 2. LiveKit started the egress but its id was never stored.
+	untracked, _, _ := e.toFirstQuestion(allowed)
+	_, untrackedEgress, _ := recordingOf(untracked)
+	age(untracked, "egress_id = NULL")
+	// 3. A stop whose egress call failed.
+	stopping, _, _ := e.toFirstQuestion(allowed)
+	_, stoppingEgress, _ := recordingOf(stopping)
+	age(stopping, "status = 'stopping'")
+	// 4. A start still within its bound is left alone.
+	recent, _, _ := e.toFirstQuestion(allowed)
+
+	n, err := e.rec.Reconcile(ctx)
+	e.must(err)
+	if n != 3 {
+		t.Fatalf("settled %d recordings, want 3", n)
+	}
+	_, stopped := e.egress.Snapshot()
+	for _, eg := range []string{lostEgress, untrackedEgress, stoppingEgress} {
+		if !slices.Contains(stopped, eg) {
+			t.Fatalf("egress %s still running: stopped=%v", eg, stopped)
+		}
+	}
+	for _, id := range []string{lost, untracked} {
+		if s, f := status(id); s != "failed" || f != "start interrupted; egress stopped" {
+			t.Fatalf("an interrupted start fails: %s %q", s, f)
+		}
+		if e.count(`SELECT count(*) FROM ati.audit_logs WHERE subject_id = $1 AND action = 'recording.failed'`, id) != 1 {
+			t.Fatal("the failure is audited")
+		}
+		if e.svc.RecordingActive(ctx, id) {
+			t.Fatal("a failed recording is not active")
+		}
+	}
+	if _, eg, _ := recordingOf(untracked); eg != untrackedEgress {
+		t.Fatalf("the untracked egress is recorded on the failed recording: %q", eg)
+	}
+	if s, _ := status(stopping); s != "complete" {
+		t.Fatalf("a retried stop completes: %s", s)
+	}
+	if s, _ := status(recent); s != "starting" {
+		t.Fatalf("a start within its bound is untouched: %s", s)
+	}
+	// The media server cannot list egresses: the recording still fails, visibly.
+	unknown, _, _ := e.toFirstQuestion(allowed)
+	age(unknown, "status = 'starting'")
+	e.egress.FailList = errors.New("egress service unavailable")
+	_, err = e.rec.Reconcile(ctx)
+	e.must(err)
+	if s, f := status(unknown); s != "failed" || f != "start interrupted; egress state unknown" {
+		t.Fatalf("unknown egress state: %s %q", s, f)
+	}
+}

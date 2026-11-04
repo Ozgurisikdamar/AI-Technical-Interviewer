@@ -169,6 +169,7 @@ func (s *Service) SweepCompletionDeadlines(ctx context.Context) (int, error) {
 	}
 	rows.Close()
 	n := 0
+	var errs []error
 	for _, d := range list {
 		err := s.inTx(ctx, func(tx pgx.Tx, after *[]func(context.Context)) error {
 			sess, err := s.lockSession(ctx, tx, d.session)
@@ -207,10 +208,11 @@ func (s *Service) SweepCompletionDeadlines(ctx context.Context) (int, error) {
 			return err
 		})
 		if err != nil {
-			return n, err
+			// One session's failure must not hold up the others; the sweeper reports it.
+			errs = append(errs, fmt.Errorf("session %s: %w", d.session, err))
 		}
 	}
-	return n, nil
+	return n, errors.Join(errs...)
 }
 
 // ExpirePausedSessions cancels sessions paused longer than the pause timeout (T26).
@@ -230,6 +232,7 @@ func (s *Service) ExpirePausedSessions(ctx context.Context) (int, error) {
 	}
 	rows.Close()
 	n := 0
+	var errs []error
 	for _, id := range list {
 		err := s.inTx(ctx, func(tx pgx.Tx, after *[]func(context.Context)) error {
 			sess, err := s.lockSession(ctx, tx, id)
@@ -255,10 +258,11 @@ func (s *Service) ExpirePausedSessions(ctx context.Context) (int, error) {
 			return nil
 		})
 		if err != nil {
-			return n, err
+			// One session's failure must not hold up the others; the sweeper reports it.
+			errs = append(errs, fmt.Errorf("session %s: %w", id, err))
 		}
 	}
-	return n, nil
+	return n, errors.Join(errs...)
 }
 
 // Lease is issued to a claiming Tier-1 agent.
@@ -368,6 +372,7 @@ func (s *Service) ExpireLeases(ctx context.Context) (int, error) {
 	}
 	rows.Close()
 	paused := 0
+	var errs []error
 	for _, id := range list {
 		err := s.inTx(ctx, func(tx pgx.Tx, after *[]func(context.Context)) error {
 			sess, err := s.lockSession(ctx, tx, id)
@@ -395,8 +400,9 @@ func (s *Service) ExpireLeases(ctx context.Context) (int, error) {
 			return s.closeRoomAfterInterview(ctx, tx, sess, after, "agent_lease_expired")
 		})
 		if err != nil {
-			return paused, err
+			// One session's failure must not hold up the others; the sweeper reports it.
+			errs = append(errs, fmt.Errorf("session %s: %w", id, err))
 		}
 	}
-	return paused, nil
+	return paused, errors.Join(errs...)
 }

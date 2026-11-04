@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 )
@@ -22,6 +23,7 @@ type Fake struct {
 	Tokens       []FakeToken
 	seq          int
 	FailEnsure   error
+	FailList     error // returned by ListParticipants while set
 }
 
 // FakeToken records an issued candidate token.
@@ -80,7 +82,17 @@ func (f *Fake) ListDispatches(_ context.Context, room string) ([]Dispatch, error
 func (f *Fake) ListParticipants(_ context.Context, room string) ([]Participant, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.FailList != nil {
+		return nil, f.FailList
+	}
 	return append([]Participant(nil), f.Participants[room]...), nil
+}
+
+// SetFailList makes ListParticipants fail with err (nil restores it).
+func (f *Fake) SetFailList(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.FailList = err
 }
 
 func (f *Fake) RemoveParticipant(_ context.Context, room, identity string) error {
@@ -128,14 +140,15 @@ func (f *Fake) Leave(room, identity string) {
 	f.Participants[room] = keep
 }
 
-// ReceiveWebhook decodes a Webhook from the body (no signature: tests only).
+// ReceiveWebhook decodes a Webhook from the body (no signature: tests only). Like the LiveKit
+// verifier, it reads the whole body before it checks the authorization header.
 func (f *Fake) ReceiveWebhook(r *http.Request) (*Webhook, error) {
-	if r.Header.Get("Authorization") != "fake-valid-signature" {
-		return nil, fmt.Errorf("webhook rejected: bad signature")
-	}
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("webhook rejected: %w", err)
+	}
+	if r.Header.Get("Authorization") != "fake-valid-signature" {
+		return nil, fmt.Errorf("webhook rejected: bad signature")
 	}
 	var w Webhook
 	return &w, json.Unmarshal(b, &w)
@@ -151,6 +164,8 @@ type FakeEgress struct {
 	Stopped []string
 	seq     int
 	Fail    error
+	// FailList makes ActiveEgress fail.
+	FailList error
 	// Hang makes StartTrackEgress block until its context ends, like LiveKit when no egress
 	// service is connected (the request is never answered).
 	Hang bool
@@ -185,6 +200,33 @@ func (f *FakeEgress) StopEgress(_ context.Context, egressID string) error {
 	defer f.mu.Unlock()
 	f.Stopped = append(f.Stopped, egressID)
 	return nil
+}
+
+// ActiveEgress returns the started egresses of the room that were not stopped.
+func (f *FakeEgress) ActiveEgress(_ context.Context, room string) ([]EgressRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.FailList != nil {
+		return nil, f.FailList
+	}
+	var out []EgressRef
+	for _, s := range f.Started {
+		if s.Room == room && !slices.Contains(f.Stopped, s.EgressID) {
+			out = append(out, EgressRef{ID: s.EgressID, Filepath: s.Filepath})
+		}
+	}
+	return out, nil
+}
+
+// Running simulates an egress that started at LiveKit without the control plane recording it
+// (a start interrupted by a restart).
+func (f *FakeEgress) Running(room, filepath string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seq++
+	id := fmt.Sprintf("EG_fake%04d", f.seq)
+	f.Started = append(f.Started, FakeEgressStart{EgressID: id, Room: room, Filepath: filepath})
+	return id
 }
 
 // Snapshot returns copies of the recorded calls.

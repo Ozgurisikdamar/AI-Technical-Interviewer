@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/api"
 )
 
 // TestMain lets a test re-execute this binary as the real server (ATI_SMOKE_RUN_MAIN=1), so
@@ -57,6 +60,7 @@ func baseEnv(appEnv string) []string {
 		"ATI_LIVEKIT_WEBHOOK_API_SECRET=ati-dev-webhook-" + sentinel,
 		"ATI_AGENT_SERVICE_TOKEN_SHA256=" + strings.Repeat("ab", 32),
 		"ATI_RETENTION_TRANSCRIPT_DAYS=30", "ATI_RETENTION_SESSION_EVENTS_DAYS=30", "ATI_RETENTION_ASSESSMENT_OUTPUT_DAYS=30",
+		"ATI_PUBLIC_ADDR=127.0.0.1:0", "ATI_INTERNAL_ADDR=127.0.0.1:0",
 	}
 }
 
@@ -107,5 +111,40 @@ func TestLeastPrivilegeIsEnforcedOnlyInProduction(t *testing.T) {
 	}
 	if err := enforceLeastPrivilege("production", nil, log); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A stop waits for in-flight background work (e.g. a recording start) within the grace, and ends
+// at the grace with a warning when work is still running.
+func TestShutdownDrainsBackgroundWorkWithinTheGrace(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logs, nil))
+	sweepers := make(chan struct{})
+	close(sweepers)
+	bg := &api.Background{}
+	finished := make(chan struct{})
+	bg.Go(func() {
+		time.Sleep(200 * time.Millisecond)
+		close(finished)
+	})
+	drain(log, 5*time.Second, sweepers, bg, &http.Server{})
+	select {
+	case <-finished:
+	default:
+		t.Fatal("the stop did not wait for background work")
+	}
+	if !strings.Contains(logs.String(), "control plane stopped") {
+		t.Fatalf("clean stop: %s", logs.String())
+	}
+	release := make(chan struct{})
+	defer close(release)
+	bg.Go(func() { <-release })
+	began := time.Now()
+	drain(log, 100*time.Millisecond, sweepers, bg, &http.Server{})
+	if time.Since(began) > 2*time.Second {
+		t.Fatal("the stop must end at the grace")
+	}
+	if !strings.Contains(logs.String(), "background work still running") {
+		t.Fatalf("an incomplete stop is reported: %s", logs.String())
 	}
 }

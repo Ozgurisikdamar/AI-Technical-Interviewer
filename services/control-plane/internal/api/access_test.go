@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -448,5 +449,59 @@ func TestASecondAgentWhileOneHoldsTheLeaseIsRemoved(t *testing.T) {
 	join("EV_agent_next", "agent-AJ_2")
 	if !present("agent-AJ_2") {
 		t.Fatal("with no lease held, a joining agent may be the dispatched replacement and is kept")
+	}
+}
+
+// The request method is client-controlled: arbitrary methods must not mint metric label values.
+func TestHTTPMetricsBoundTheMethodLabel(t *testing.T) {
+	e := newEnv(t)
+	for _, m := range []string{"BREW", "PROPFIND", "X-" + strings.Repeat("A", 40)} {
+		r, _ := http.NewRequest(m, e.public.URL+"/api/v1/interviews", nil)
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	resp, err := http.Get(e.internal.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	text := string(raw)
+	if strings.Contains(text, "BREW") || strings.Contains(text, "PROPFIND") || strings.Contains(text, "X-AAAA") {
+		t.Fatal("client-chosen methods leaked into metric labels")
+	}
+	if !strings.Contains(text, `method="other"`) {
+		t.Fatal(`unknown methods are counted as method="other"`)
+	}
+}
+
+// A claim whose request never finished (the process stopped mid-request) blocks its key only until
+// it is stale; a recent claim still means "in progress".
+func TestAStaleIdempotencyClaimCanBeTakenOver(t *testing.T) {
+	e := newEnv(t)
+	first := e.createInterview(e.staff, "crash-key-000001", "ref-crash")
+	if first.status != 201 {
+		t.Fatalf("create: %d %s", first.status, first.raw)
+	}
+	// Simulate a request that claimed the key and never recorded an outcome.
+	unfinished := func(age string) {
+		if _, err := e.db.Owner.Exec(context.Background(), `UPDATE ati.idempotency_records SET status = NULL, response = NULL, claimed_at = now() - $1::interval
+			WHERE idem_key = 'crash-key-000001'`, age); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unfinished("10 seconds")
+	if r := e.createInterview(e.staff, "crash-key-000001", "ref-crash"); r.status != 409 || r.str("code") != "conflict" {
+		t.Fatalf("a recent claim is in progress: %d %s", r.status, r.raw)
+	}
+	unfinished("10 minutes")
+	if r := e.createInterview(e.staff, "crash-key-000001", "ref-crash"); r.status != 201 || r.header.Get("Idempotent-Replayed") == "true" {
+		t.Fatalf("a stale claim is taken over: %d %s", r.status, r.raw)
+	}
+	if n := e.count(`SELECT count(*) FROM ati.idempotency_records WHERE idem_key = 'crash-key-000001' AND status = 201`); n != 1 {
+		t.Fatal("the takeover records its outcome")
 	}
 }
