@@ -17,9 +17,15 @@ export function record(value: unknown, field: string): Json {
   return value as Json;
 }
 
+/**
+ * A string of at most `maxLength` characters, counted in code points as the server and the
+ * database count them (Go runes, PostgreSQL `length()`), so text outside the BMP is not cut short.
+ */
 export function string(obj: Json, key: string, field: string, maxLength = 10_000): string {
   const value = obj[key];
-  if (typeof value !== 'string' || value.length > maxLength) throw new ResponseShapeError(`${field}.${key}`);
+  if (typeof value !== 'string' || (value.length > maxLength && [...value].length > maxLength)) {
+    throw new ResponseShapeError(`${field}.${key}`);
+  }
   return value;
 }
 

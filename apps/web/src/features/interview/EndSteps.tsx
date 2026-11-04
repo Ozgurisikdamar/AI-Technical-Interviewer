@@ -4,7 +4,7 @@ import ui from '@/components/ui.module.css';
 import { useMessages } from '@/i18n/client';
 import { Captions } from './Captions';
 import styles from './EndSteps.module.css';
-import { useFocusOnMount } from './useFocusOnMount';
+import { useFocusOnMount } from '@/components/useFocusOnMount';
 import type { RealtimeApi } from './useRealtime';
 
 /**

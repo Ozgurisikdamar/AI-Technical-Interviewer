@@ -2,13 +2,15 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
+import { useId, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 import { ErrorNotice } from '@/components/ErrorNotice';
 import ui from '@/components/ui.module.css';
+import { useFocusOnMount } from '@/components/useFocusOnMount';
 import { useMessages } from '@/i18n/client';
 import { toApiError, type ApiError } from '@/lib/api/errors';
 import { signIn } from '@/lib/api/staff';
-import { homeFor } from '@/lib/staff/nav';
+import type { StaffRole } from '@/lib/api/staffTypes';
+import { homeFor, safeNext } from '@/lib/staff/nav';
 import { cleanToken, isStaffTokenFormat } from '@/lib/staff/token';
 import styles from './staff.module.css';
 import { useStaffSession } from './StaffSession';
@@ -19,24 +21,21 @@ const noSubscription = () => () => {};
  * Sign-in. The token is read from an uncontrolled input that has no `name`, so it cannot reach a
  * URL or a request body even if the form were submitted before the page hydrated (the input and
  * the button are disabled until then). It is cleared once the server accepts it, and is never put
- * in state, storage or an address.
+ * in state, storage or an address. Afterwards the console opens `next` if it is a page the role
+ * may open (safeNext), or the role's home.
  */
-export function SignIn() {
+export function SignIn({ next }: { next: string | undefined }) {
   const t = useMessages();
   const router = useRouter();
   const { state, signedIn } = useStaffSession();
   const hydrated = useSyncExternalStore(noSubscription, () => true, () => false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const problemRef = useRef<HTMLDivElement | null>(null);
   const id = useId();
   const [problem, setProblem] = useState<'required' | 'malformed' | null>(null);
   const [failure, setFailure] = useState<ApiError | null>(null);
   const [attempts, setAttempts] = useState(0);
   const [pending, setPending] = useState(false);
-
-  useEffect(() => {
-    if (attempts > 0) problemRef.current?.focus();
-  }, [attempts]);
+  const destination = (role: StaffRole) => safeNext(next, role) ?? homeFor(role);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -55,7 +54,7 @@ export function SignIn() {
       const session = await signIn(token);
       if (input !== null) input.value = '';
       signedIn(session);
-      router.push(homeFor(session.role));
+      router.push(destination(session.role));
     } catch (error) {
       setFailure(toApiError(error));
       setAttempts((n) => n + 1);
@@ -81,14 +80,15 @@ export function SignIn() {
         <div className={ui.info}>
           <p>{t.staff.signIn.signedIn(signedInSession.label)}</p>
           <p>
-            <Link href={homeFor(signedInSession.role)}>{t.staff.signIn.continue}</Link>
+            <Link href={destination(signedInSession.role)}>{t.staff.signIn.continue}</Link>
           </p>
         </div>
       ) : (
         <>
           <p>{t.staff.signIn.intro}</p>
           {problem !== null || failure !== null ? (
-            <div ref={problemRef} tabIndex={-1} id={`${id}-problem`} data-testid="staff-sign-in-problem">
+            // A new block on every attempt, so each one takes focus.
+            <Problem key={attempts} id={`${id}-problem`}>
               {problem !== null ? (
                 <p role="alert" className={ui.error}>
                   {problem === 'required' ? t.staff.signIn.required : t.staff.signIn.malformed}
@@ -98,9 +98,9 @@ export function SignIn() {
                   {t.staff.signIn.refused}
                 </p>
               ) : failure !== null ? (
-                <ErrorNotice error={failure} catalog={t.staff.errors} />
+                <ErrorNotice error={failure} />
               ) : null}
-            </div>
+            </Problem>
           ) : null}
           <form method="post" onSubmit={(e) => void onSubmit(e)} noValidate className={styles.form}>
             <div className={styles.field}>
@@ -139,6 +139,15 @@ export function SignIn() {
           </form>
         </>
       )}
+    </div>
+  );
+}
+
+function Problem({ id, children }: { id: string; children: ReactNode }) {
+  const ref = useFocusOnMount<HTMLDivElement>(true);
+  return (
+    <div ref={ref} tabIndex={-1} id={id} data-testid="staff-sign-in-problem">
+      {children}
     </div>
   );
 }

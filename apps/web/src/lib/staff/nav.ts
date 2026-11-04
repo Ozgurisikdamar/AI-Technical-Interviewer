@@ -51,3 +51,33 @@ export function queueParams(search: { status?: string | string[]; interview?: st
   const interviewId = typeof search.interview === 'string' && isInterviewId(search.interview) ? search.interview : undefined;
   return { status, interviewId };
 }
+
+/** The sign-in page, asked to return to `next` afterwards (if safeNext accepts it then). */
+export function signInHref(next: string): string {
+  return `${SIGN_IN_PATH}?${new URLSearchParams({ next }).toString()}`;
+}
+
+/**
+ * Where to go after signing in: `next` when it is a console page this role may open, rebuilt from
+ * its parts and equal to them, so nothing else (another site, `//host`, dot segments, encoded or
+ * control characters, extra parameters) can pass. Otherwise null, and the caller uses homeFor.
+ */
+export function safeNext(next: string | undefined, role: StaffRole): string | null {
+  if (next === undefined) return null;
+  const [path = '', query, ...more] = next.split('?');
+  if (more.length > 0) return null;
+  const target = ((): { section: StaffSection; href: string } | null => {
+    if (path === QUEUE_PATH) {
+      const params = new URLSearchParams(query ?? '');
+      const { status, interviewId } = queueParams({ status: params.get('status') ?? undefined, interview: params.get('interview') ?? undefined });
+      return { section: 'review', href: queueHref(status, interviewId) };
+    }
+    if (path === REPORTS_PATH) return { section: 'reports', href: REPORTS_PATH };
+    const taskId = path.startsWith(`${QUEUE_PATH}/`) ? path.slice(QUEUE_PATH.length + 1) : '';
+    if (isReviewTaskId(taskId)) return { section: 'review', href: taskHref(taskId) };
+    const interviewId = path.startsWith(`${REPORTS_PATH}/`) ? path.slice(REPORTS_PATH.length + 1) : '';
+    if (isInterviewId(interviewId)) return { section: 'reports', href: reportHref(interviewId) };
+    return null;
+  })();
+  return target !== null && target.href === next && sectionsFor(role).includes(target.section) ? target.href : null;
+}

@@ -9,7 +9,7 @@ import type { InterviewCandidateView } from '@/lib/api/types';
 import { setupControls } from '@/lib/interview/viewModel';
 import styles from './SetupStep.module.css';
 import type { InterviewActions } from './useInterviewActions';
-import { useFocusOnMount } from './useFocusOnMount';
+import { useFocusOnMount } from '@/components/useFocusOnMount';
 import { useMicrophoneCheck } from './useMicrophoneCheck';
 
 interface SetupStepProps {

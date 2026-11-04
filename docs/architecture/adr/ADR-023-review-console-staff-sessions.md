@@ -21,15 +21,17 @@
      - The control plane stores only its SHA-256, in `ati.staff_sessions`.
    - Lifetime:
      - The session lasts `ATI_STAFF_SESSION_TTL`: 8 hours by default, from 15 minutes to 24 hours.
-     - It never outlives its staff token.
+     - It never outlives its staff token. A token with less than a minute left cannot start one: it gets the same 401 as any refused token.
      - It ends at once when the token is revoked: every request checks the session and the token together.
-   - Signing in again from the same browser revokes the session that browser presents. `POST /api/v1/staff/session/end` signs out: it revokes the session and clears the cookie.
+   - Signing in again from the same browser revokes the session that browser presents.
+   - `POST /api/v1/staff/session/end` signs out: it revokes the session and clears the cookie. It clears the cookie only when it ended a session, so a request made with a bearer token leaves a browser's session alone.
    - Failed sign-ins:
      - A malformed, unknown, expired or revoked token gets the same 401.
      - Failed sign-ins are not audited, as with invitations.
      - Sign-ins are rate-limited per client address (`ATI_STAFF_SIGNINS_PER_MINUTE`, default 10). Behind a reverse proxy, `ATI_TRUSTED_PROXY_CIDRS` must name the proxy, or every client shares its budget and one client can use it up.
    - The sign-in request carries no bearer token, so the same-origin guard (`Origin`, `Sec-Fetch-Site`) applies to it. This also refuses login CSRF.
    - The control plane audits `staff.session.start` and `staff.session.end` under the staff token's id. The audit never holds the token, its hash or the token's label.
+   - Every action taken through a session also records the session's id in its audit details (`staff_session_id`), so a decision can be traced to the browser session that made it.
 2. **Where the session counts.**
    - The cookie is accepted only by the review operations, the report operations and the staff session itself. These are the operations tagged `review`, plus `/api/v1/staff/session`.
    - Interview management and `GET /api/v1/interviews/{id}` keep requiring the bearer token. Interview management means creating an interview and revoking an invitation.
@@ -37,6 +39,7 @@
      - Interview management is an integration surface for hiring systems, not a console action.
    - When an `Authorization` header is present, it alone decides. A bad bearer token is never rescued by a cookie.
    - The principal is always the staff token. Its id is the reviewer id, the scope of idempotency keys and the audited actor, whichever credential was used.
+   - A missing, malformed, unknown, expired or revoked credential gets 401. A failure to check one (the database is unreachable, for example) gets 500, so the console never takes an outage for the end of a session. The same holds for the candidate cookie.
 3. **Reviewers do not learn who the candidate is.**
    - The staff view of an interview names the candidate, so only `admin` and `recruiter` may read it; reviewers get 403.
    - Review tasks and reports carry no candidate identity (ADR-022).
@@ -69,6 +72,7 @@
 - The staff token is still pasted into the browser once.
   - The field is a password field, has no `name`, is disabled until the page is ready, and is cleared after use. The token never reaches state, storage or an address.
   - Browsers may still offer to save it. Tokens issued for the console should therefore be short-lived (`create-staff-token --ttl`), and single sign-on should replace pasted tokens before production.
+- A session can end while a reviewer is deciding. The form then keeps what was typed and offers sign-in in a new tab; the cookie is shared, so the decision is recorded from the same form afterwards.
 - Reviewers can no longer read the staff view of an interview.
 - Staff have two credentials. Each operation declares which it accepts: in OpenAPI the `staffSession` scheme appears only on the allowed operations, and a contract test enforces this.
 
@@ -76,17 +80,18 @@
 
 - **Control-plane API tests:**
   - sign-in, its refusals (all alike), the rate limit and login CSRF;
-  - the cookie's attributes, a lifetime bounded by the token, replacement, sign-out and revocation;
-  - the cookie is accepted only where allowed; with both cookies, the browser gets the candidate view;
+  - the cookie's attributes, a lifetime bounded by the token (a token about to expire cannot sign in), replacement, sign-out and revocation;
+  - route by route, the cookie is accepted exactly by the operations whose OpenAPI security lists `staffSession`; with both cookies, the browser gets the candidate view;
+  - an outage answers 500, never 401, for every credential;
   - reviewers get 403 on the staff view;
-  - the queue filter and its answer order, the report list without scores, and `ai_draft_viewed`.
+  - the queue filter and its answer order, the report list without scores, `ai_draft_viewed`, and the session id in the decisions' audits.
 - **Store test:** the control plane may only create sessions and mark them revoked.
 - **`ati-admin` tests:** revoke, list and purge.
 - **Contract tests:** the security scheme of every operation.
-- **Web unit tests:** the highlighter (with the validator's cases), the weighted score, the decision checks, the parsers, the query allow-list and the split of reasons.
+- **Web unit tests:** the highlighter (with the validator's cases, which the control plane also runs through its validator), the weighted score, the decision checks, the parsers, the query allow-list, the split of reasons, and the return address after sign-in (only a console page the role may open).
 - **Browser end-to-end flow** (`tests/e2e/browser/reviewer_flow.mjs`):
   - headers, sign-in refusals, cookie attributes, and the token gone from the page;
   - the queue; every answer decided with the draft closed first, one by keyboard only;
   - the report, sign-out, and a recruiter who may read reports but not review;
-  - an accessibility audit of every screen.
-  - The test then checks the database: outcomes, sessions, audits, and no credential stored anywhere.
+  - an accessibility audit of every kind of screen.
+  - The test then checks the database: outcomes, sessions, audits (each decision names its session), and no credential stored anywhere.

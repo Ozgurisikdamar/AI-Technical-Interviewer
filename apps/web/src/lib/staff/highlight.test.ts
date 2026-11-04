@@ -11,7 +11,7 @@ interface SharedCase {
   found: boolean;
 }
 
-/** The cases the control plane's quote rule is tested with (internal/evaluation/quote_internal_test.go). */
+/** The cases the control plane's validator is tested with (internal/evaluation/quote_cases_test.go). */
 const shared = JSON.parse(
   readFileSync(new URL('../../../../../contracts/fixtures/quote-matching/cases.v1.json', import.meta.url), 'utf8'),
 ) as { cases: SharedCase[] };
@@ -77,6 +77,22 @@ describe('locateQuotes', () => {
     expect(ranges.get(a)).toEqual([{ start: 13, end: 17 }]);
     expect(ranges.get(b)).toBeUndefined();
     expect(ranges.get(c)).toEqual([{ start: 0, end: 12 }]);
+  });
+
+  it('keeps whitespace at a segment edge highlighted, but not the joining space', () => {
+    const t = [segment(a, 'Old versions stay '), segment(b, ' until VACUUM runs.')];
+    const { ranges } = locateQuotes(t, [item([a, b], 'stay until')]);
+    expect(ranges.get(a)).toEqual([{ start: 13, end: 18 }]);
+    expect(ranges.get(b)).toEqual([{ start: 0, end: 6 }]);
+    expect(highlighted(t, [item([a, b], 'stay until')])).toEqual(['stay ', ' until']);
+  });
+
+  it('skips an empty cited segment', () => {
+    const t = [segment(a, 'keys are'), segment(b, ''), segment(c, 'stored')];
+    const { ranges, status } = locateQuotes(t, [item([a, b, c], 'keys are stored')]);
+    expect(status).toEqual(['located']);
+    expect(ranges.get(b)).toBeUndefined();
+    expect(highlighted(t, [item([a, b, c], 'keys are stored')])).toEqual(['keys are', 'stored']);
   });
 
   it('merges overlapping quotes of several evidence items', () => {

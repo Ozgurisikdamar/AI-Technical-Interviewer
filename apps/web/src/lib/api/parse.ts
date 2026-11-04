@@ -28,9 +28,8 @@ import {
   type TextResponseAccepted,
 } from './types';
 
-export { ResponseShapeError } from './shape';
-
-function state(value: unknown, field: string): InterviewState {
+/** An interview state; one this build does not know becomes 'UNKNOWN'. */
+export function state(value: unknown, field: string): InterviewState {
   if (typeof value !== 'string' || !/^[A-Z][A-Z_]{0,39}$/.test(value)) throw new ResponseShapeError(field);
   return (INTERVIEW_STATES as readonly string[]).includes(value) ? (value as InterviewState) : 'UNKNOWN';
 }

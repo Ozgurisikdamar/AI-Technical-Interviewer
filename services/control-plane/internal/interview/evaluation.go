@@ -9,8 +9,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -344,6 +346,8 @@ func (s *Service) CompleteEvaluation(ctx context.Context, actor Actor, sessionID
 		if len(answers) == 0 {
 			return &ConflictError{Code: "no_answers", Msg: "the interview has no answers to review"}
 		}
+		// The tasks are created together, so they share one time; the queue orders them by answer.
+		created := s.now().UTC()
 		for _, a := range answers {
 			evalID, reasons, err := s.reviewReasons(ctx, tx, a, failure)
 			if err != nil {
@@ -351,7 +355,7 @@ func (s *Service) CompleteEvaluation(ctx context.Context, actor Actor, sessionID
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO ati.review_tasks (id, tenant_id, session_id, answer_id, evaluation_id, reasons, created_at)
 				VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (answer_id) DO NOTHING`,
-				ids.New(ids.ReviewTask), sess.TenantID, sess.ID, a.ID, evalID, reasons, s.now().UTC()); err != nil {
+				ids.New(ids.ReviewTask), sess.TenantID, sess.ID, a.ID, evalID, reasons, created); err != nil {
 				return err
 			}
 		}
@@ -447,10 +451,21 @@ type ReviewTaskSummary struct {
 
 var sessionIDPattern = regexp.MustCompile(`^ses_[A-Za-z0-9]{16,}$`)
 
-// ReviewQueue lists the tenant's review tasks with the given status, oldest first and in answer
-// order within an interview. A non-empty interviewID keeps only that interview's tasks.
+// queueOrder keeps each interview's tasks together and in answer order. Open interviews come
+// oldest first, the work waiting longest: an interview's tasks share one creation time
+// (CompleteEvaluation), so this needs no window and the open-task index can serve it. Completed
+// interviews come most recently decided first, so the latest decisions stay within the list's
+// limit. Constants only: never built from input.
+var queueOrder = map[string]string{
+	"open":      `t.created_at, t.session_id, a.finalized_at, t.id`,
+	"completed": `max(t.completed_at) OVER (PARTITION BY t.session_id) DESC, t.session_id, a.finalized_at, t.id`,
+}
+
+// ReviewQueue lists the tenant's review tasks with the given status (see queueOrder). A non-empty
+// interviewID keeps only that interview's tasks.
 func (s *Service) ReviewQueue(ctx context.Context, tenantID, status, interviewID string, limit int) ([]ReviewTaskSummary, error) {
-	if status != "open" && status != "completed" {
+	order, ok := queueOrder[status]
+	if !ok {
 		return nil, &ValidationError{"status must be open or completed"}
 	}
 	if interviewID != "" && !sessionIDPattern.MatchString(interviewID) {
@@ -459,7 +474,7 @@ func (s *Service) ReviewQueue(ctx context.Context, tenantID, status, interviewID
 	rows, err := s.pool.Query(ctx, `SELECT t.id, t.session_id, t.answer_id, a.item_id, t.status, t.reasons, t.evaluation_id IS NOT NULL, t.created_at, t.completed_at
 		FROM ati.review_tasks t JOIN ati.candidate_answers a ON a.id = t.answer_id
 		WHERE t.tenant_id = $1 AND t.status = $2 AND ($3 = '' OR t.session_id = $3)
-		ORDER BY t.created_at, a.finalized_at, t.id LIMIT $4`, tenantID, status, interviewID, limit)
+		ORDER BY `+order+` LIMIT $4`, tenantID, status, interviewID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -509,10 +524,13 @@ type ReviewOutcomeView struct {
 }
 
 // ReviewTaskDetail is everything a reviewer needs for one answer, and nothing about the candidate.
+// RubricRef names the question's rubric (null when it has none); Rubric is null both then and when
+// that rubric is not stored, which RubricRef tells apart.
 type ReviewTaskDetail struct {
 	ReviewTaskSummary
 	Language     string              `json:"language"`
 	Question     string              `json:"question"`
+	RubricRef    *string             `json:"rubric_ref"`
 	Rubric       json.RawMessage     `json:"rubric"`
 	Transcript   []TranscriptExcerpt `json:"transcript"`
 	AIEvaluation *AIEvaluationView   `json:"ai_evaluation"`
@@ -552,6 +570,8 @@ func (s *Service) reviewTask(ctx context.Context, tx pgx.Tx, tenantID, taskID st
 	}
 	d.ItemID, d.Question, d.Language, d.HasAIDraft = a.ItemID, a.Question, sess.NoticeLanguage, evalID != nil
 	if a.RubricID != nil && a.RubricVersion != nil {
+		ref := *a.RubricID + "@" + strconv.Itoa(*a.RubricVersion)
+		d.RubricRef = &ref
 		if _, body, err := s.loadRubric(ctx, tx, *a.RubricID, *a.RubricVersion); err == nil {
 			d.Rubric = reviewerRubric(body)
 		}
@@ -710,7 +730,12 @@ func (s *Service) SubmitReviewOutcome(ctx context.Context, actor Actor, tenantID
 			details["rubric"] = rubric.Ref()
 		}
 		if priorCenti != nil {
-			details["prior_weighted_score_centi"], details["changed_from_ai"] = *priorCenti, string(priorScores) != string(scores)
+			// Compare values: the stored jsonb and the request's JSON never match byte for byte.
+			var prior map[string]int
+			if err := json.Unmarshal(priorScores, &prior); err != nil {
+				return err
+			}
+			details["prior_weighted_score_centi"], details["changed_from_ai"] = *priorCenti, !maps.Equal(prior, dec.Scores)
 		}
 		if err := s.audit(ctx, tx, sess.TenantID, actor, "review.outcome", "interview_session", sess.ID, "allowed", details); err != nil {
 			return err
@@ -856,11 +881,16 @@ type ReportSummary struct {
 	AnswerCount int    `json:"answer_count"`
 }
 
-// ListReports lists the tenant's reports, newest first.
+// ListReports lists the tenant's reports, newest first. It never reads a report's body: the newest
+// rows are picked first, and the plan, language and answer count come from the interview, its plan
+// and its review tasks (one per answer), which the report was written from.
 func (s *Service) ListReports(ctx context.Context, tenantID string, limit int) ([]ReportSummary, error) {
-	rows, err := s.pool.Query(ctx, `SELECT session_id, created_at, body->'plan'->>'plan_id', (body->'plan'->>'version')::int, (body->'plan'->>'synthetic')::boolean,
-			body->>'language', jsonb_array_length(body->'answers')
-		FROM ati.reports WHERE tenant_id = $1 ORDER BY created_at DESC, id LIMIT $2`, tenantID, limit)
+	rows, err := s.pool.Query(ctx, `SELECT r.session_id, r.created_at, s.plan_id, s.plan_version, p.synthetic, s.notice_language,
+			(SELECT count(*) FROM ati.review_tasks t WHERE t.session_id = r.session_id)
+		FROM (SELECT id, session_id, created_at FROM ati.reports WHERE tenant_id = $1 ORDER BY created_at DESC, id LIMIT $2) r
+		JOIN ati.interview_sessions s ON s.id = r.session_id
+		JOIN ati.interview_plans p ON p.plan_id = s.plan_id AND p.version = s.plan_version
+		ORDER BY r.created_at DESC, r.id`, tenantID, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -34,22 +34,7 @@
   white-space: pre-line;
 }
 
-.summaryList {
-  margin: 0;
-  padding-left: 1.25rem;
-}
 
-.linkButton {
-  font: inherit;
-  color: var(--color-error-text);
-  background: none;
-  border: none;
-  padding: 0.25rem 0;
-  text-decoration: underline;
-  text-underline-offset: 0.15em;
-  cursor: pointer;
-  text-align: left;
-}
 
 .purpose {
   margin: 1.25rem 0;

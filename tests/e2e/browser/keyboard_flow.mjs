@@ -1,16 +1,7 @@
 // Keyboard-only flow with microphone loss and withdrawal: every control is reached with Tab and
 // operated with Enter or Space; losing the microphone pauses the interview (device_lost) and stops
 // publishing; withdrawal is confirmed through the dialog, whose safe choice has focus first.
-import { WEB, audit, candidateTracks, createInvitation, findCandidateRoom, run, step, until } from './common.mjs';
-
-/** Presses Tab until the element with the test id has focus; fails if it never does. */
-async function tabTo(page, testId, maxTabs = 40) {
-  for (let i = 0; i < maxTabs; i++) {
-    if ((await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))) === testId) return;
-    await page.keyboard.press('Tab');
-  }
-  throw new Error(`could not reach ${testId} with the keyboard`);
-}
+import { WEB, activeTestId, audit, candidateTracks, createInvitation, findCandidateRoom, run, step, tabTo, until } from './common.mjs';
 
 await run(async ({ page, context, result }) => {
   // Keep a handle on every capture track so the test can simulate the device going away.
@@ -89,8 +80,8 @@ await run(async ({ page, context, result }) => {
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.querySelector('dialog')?.open === true, null, { timeout: 5_000 });
   await audit(page, 'withdraw dialog');
-  const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.textContent);
-  step('withdrawal dialog focuses the safe choice first', focused !== 'withdraw-confirm', String(focused));
+  const focused = await activeTestId(page);
+  step('withdrawal dialog focuses the safe choice first', focused !== 'withdraw-confirm', focused);
   await tabTo(page, 'withdraw-confirm', 10);
   await page.keyboard.press('Enter');
   await page.locator('#cancelled-heading').waitFor({ timeout: 15_000 });

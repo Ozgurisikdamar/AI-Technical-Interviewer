@@ -13,9 +13,9 @@ import (
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/api"
 )
 
-// TestRoutesMatchOpenAPI keeps docs/contracts/openapi/control-plane.v1.yaml and the route tables
-// identical, including which listener serves which path (ADR-016).
-func TestRoutesMatchOpenAPI(t *testing.T) {
+// readOpenAPI decodes docs/contracts/openapi/control-plane.v1.yaml into spec.
+func readOpenAPI(t *testing.T, spec any) {
+	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
 	path := filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "docs", "contracts", "openapi", "control-plane.v1.yaml")
 	raw, err := os.ReadFile(path)
@@ -25,12 +25,18 @@ func TestRoutesMatchOpenAPI(t *testing.T) {
 		}
 		t.Skipf("OpenAPI document not found: %v", err)
 	}
+	if err := yaml.Unmarshal(raw, spec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRoutesMatchOpenAPI keeps docs/contracts/openapi/control-plane.v1.yaml and the route tables
+// identical, including which listener serves which path (ADR-016).
+func TestRoutesMatchOpenAPI(t *testing.T) {
 	var spec struct {
 		Paths map[string]map[string]any `yaml:"paths"`
 	}
-	if err := yaml.Unmarshal(raw, &spec); err != nil {
-		t.Fatal(err)
-	}
+	readOpenAPI(t, &spec)
 	var publicSpec, internalSpec []string
 	for p, ops := range spec.Paths {
 		for method := range ops {

@@ -56,6 +56,10 @@ type StaffSession struct {
 	Token     string
 }
 
+// MinStaffSession is the shortest browser session worth starting: a token about to expire is
+// refused at sign-in rather than producing a session that ends at once.
+const MinStaffSession = time.Minute
+
 // StartStaffSession exchanges a staff token for a browser session that ends after ttl, or with the
 // token if that comes first. A session the browser still presents is revoked, so signing in again
 // never leaves a second session behind. Failed sign-ins are not audited (as with invitations): the
@@ -72,8 +76,8 @@ func (s *Service) StartStaffSession(ctx context.Context, actor Actor, tokenHash,
 			p.ExpiresAt = expires
 		}
 		// Whole seconds: the cookie's Max-Age is in seconds, and the stored and reported times agree.
-		if p.ExpiresAt = p.ExpiresAt.Truncate(time.Second); !p.ExpiresAt.After(now) {
-			return ErrNotFound // the token expires within the second
+		if p.ExpiresAt = p.ExpiresAt.Truncate(time.Second); p.ExpiresAt.Sub(now) < MinStaffSession {
+			return ErrNotFound // the token is about to expire
 		}
 		p.SessionID = ids.New(ids.StaffSession)
 		replaced := false
@@ -89,7 +93,9 @@ func (s *Service) StartStaffSession(ctx context.Context, actor Actor, tokenHash,
 			return err
 		}
 		out.Principal = *p
-		return s.audit(ctx, tx, p.TenantID, staffActor(actor, p), "staff.session.start", "staff_session", p.SessionID, "allowed",
+		// The audited actor is the staff token, never the credential; the new session is the subject.
+		signIn := Actor{Type: flow.ActorSystem, ID: p.TokenID, RequestID: actor.RequestID}
+		return s.audit(ctx, tx, p.TenantID, signIn, "staff.session.start", "staff_session", p.SessionID, "allowed",
 			map[string]any{"role": p.Role, "expires_at": p.ExpiresAt, "replaced_session": replaced})
 	})
 	if err != nil {
@@ -114,8 +120,9 @@ func (s *Service) AuthenticateStaffSession(ctx context.Context, sessionHash stri
 	return &p, nil
 }
 
-// EndStaffSession revokes the principal's browser session (sign-out). It reports false when there
-// was none to end: a bearer token, or a session that ended meanwhile.
+// EndStaffSession revokes the principal's browser session (sign-out), audited as actor, the staff
+// member who signs out. It reports false when there was none to end: a bearer token, or a session
+// that ended meanwhile.
 func (s *Service) EndStaffSession(ctx context.Context, actor Actor, p *StaffPrincipal) (bool, error) {
 	if p.SessionID == "" {
 		return false, nil
@@ -127,12 +134,7 @@ func (s *Service) EndStaffSession(ctx context.Context, actor Actor, p *StaffPrin
 			return err
 		}
 		ended = true
-		return s.audit(ctx, tx, p.TenantID, staffActor(actor, p), "staff.session.end", "staff_session", p.SessionID, "allowed", nil)
+		return s.audit(ctx, tx, p.TenantID, actor, "staff.session.end", "staff_session", p.SessionID, "allowed", nil)
 	})
 	return ended, err
-}
-
-// staffActor is the audited actor of a staff request: the staff token, never the credential.
-func staffActor(a Actor, p *StaffPrincipal) Actor {
-	return Actor{Type: flow.ActorSystem, ID: p.TokenID, RequestID: a.RequestID}
 }

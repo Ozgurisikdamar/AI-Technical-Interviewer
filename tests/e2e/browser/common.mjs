@@ -111,8 +111,29 @@ export async function launch({ microphone = 'granted', device = true } = {}) {
   return { browser, context, page, seen };
 }
 
-/** Records the policy violations of a page; launch() watches its own page, flows call it for others. */
-export function watch(page, seen) {
+/** A second browser context and page (another person), watched like the first. */
+export async function newPage(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  watch(page);
+  return { context, page };
+}
+
+/** The test id of the focused element, or its id when it has none. */
+export const activeTestId = (page) =>
+  page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.id ?? '');
+
+/** Presses Tab until the element with the test id has focus; fails if it never does. */
+export async function tabTo(page, testId, maxTabs = 40) {
+  for (let i = 0; i < maxTabs; i++) {
+    if ((await activeTestId(page)) === testId) return;
+    await page.keyboard.press('Tab');
+  }
+  throw new Error(`could not reach ${testId} with the keyboard`);
+}
+
+/** Records the policy violations of a page; launch() and newPage() watch the pages they open, flows the others. */
+export function watch(page, seen = current) {
   page.on('console', (m) => {
     if (/Content Security Policy|Refused to/i.test(m.text())) seen.violations.push(m.text());
   });
@@ -153,6 +174,12 @@ export async function audit(page, label) {
   }
 }
 
+/** The whole Permissions-Policy of a candidate page ('self') and of the review console ('none'). */
+const PERMISSIONS_POLICY = {
+  self: 'microphone=(self), camera=(), geolocation=()',
+  none: 'microphone=(), camera=(), geolocation=()',
+};
+
 /**
  * The document response must carry the security headers (ADR-016, THREAT_MODEL addendum).
  * microphone: 'self' for candidate pages, 'none' for the review console (ADR-023).
@@ -168,12 +195,8 @@ export function checkDocumentHeaders(response, label, { microphone = 'self' } = 
   step(`${label}: Referrer-Policy no-referrer`, h['referrer-policy'] === 'no-referrer', h['referrer-policy']);
   step(`${label}: X-Frame-Options DENY`, h['x-frame-options'] === 'DENY', h['x-frame-options']);
   step(`${label}: nosniff`, h['x-content-type-options'] === 'nosniff', h['x-content-type-options']);
-  const policy = h['permissions-policy'] ?? '';
-  if (microphone === 'self') {
-    step(`${label}: microphone only for this origin`, policy.includes('microphone=(self)') && policy.includes('camera=()'), policy);
-  } else {
-    step(`${label}: no microphone, camera or location`, policy.includes('microphone=()') && policy.includes('camera=()') && policy.includes('geolocation=()'), policy);
-  }
+  const expected = PERMISSIONS_POLICY[microphone];
+  step(`${label}: Permissions-Policy ${expected}`, h['permissions-policy'] === expected, h['permissions-policy']);
 }
 
 /** Exchanges the invitation (user click) and answers every purpose of the notice. */

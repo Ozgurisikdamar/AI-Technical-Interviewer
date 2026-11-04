@@ -469,7 +469,9 @@ paths:
     get:
       tags: [review]
       operationId: listReviewTasks
-      summary: The tenant's review tasks, oldest first and in answer order within an interview. Roles reviewer and admin.
+      summary: >-
+        The tenant's review tasks: open ones oldest interview first, completed ones most recently decided interview
+        first, each interview's answers together and in order. Roles reviewer and admin.
       security: [{staffBearer: []}, {staffSession: []}]
       parameters:
         - {name: status, in: query, required: false, schema: {enum: [open, completed], default: open}}
@@ -1340,10 +1342,16 @@ components:
       allOf:
         - {$ref: '#/components/schemas/ReviewTaskSummary'}
         - type: object
-          required: [language, question, rubric, transcript, ai_evaluation, outcome]
+          required: [language, question, rubric_ref, rubric, transcript, ai_evaluation, outcome]
           properties:
             language: {enum: [en, tr]}
             question: {type: string}
+            rubric_ref:
+              type: [string, 'null']
+              pattern: '^rub_[a-z0-9_]{3,60}@[1-9][0-9]*$'
+              description: >-
+                rubric_id@version of the question's rubric; null when the question has none (reviewed with a rationale
+                only). A rubric_ref with a null rubric means the rubric is not stored, and the answer cannot be decided.
             rubric: {type: [object, 'null'], description: 'Rubric contract v1 without the synthetic indicators.'}
             transcript:
               type: array

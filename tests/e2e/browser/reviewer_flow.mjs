@@ -3,7 +3,7 @@
 // then reads the report but cannot review. The interview was prepared by test_browser.py.
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { WEB, audit, checkDocumentHeaders, env, run, secret, step, until, watch } from './common.mjs';
+import { WEB, activeTestId, audit, checkDocumentHeaders, env, newPage, run, secret, step, tabTo, until, watch } from './common.mjs';
 
 const REVIEWER = env('ATI_E2E_REVIEWER_TOKEN');
 const RECRUITER = env('ATI_E2E_STAFF_TOKEN');
@@ -21,8 +21,6 @@ async function shot(page, name) {
   await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: true });
 }
 
-const activeTestId = (page) => page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.id ?? '');
-
 function consoleHeaders(response, label) {
   const h = response.headers();
   checkDocumentHeaders(response, label, { microphone: 'none' });
@@ -34,23 +32,24 @@ async function sessionCookie(context) {
   return (await context.cookies()).find((c) => c.name === 'ati_ss') ?? null;
 }
 
-/** The token must be nowhere the page can read or leak it: address, markup, inputs, storage or script-visible cookies. */
+/**
+ * After sign-in the page has moved on, so the token can only linger where it outlives a page: the
+ * address, browser storage, or a cookie that script can read (the session cookie must not be one).
+ */
 async function tokenIsGone(page, token, label) {
   const exposed = await page.evaluate(
     (t) => [
       location.href.includes(t),
-      document.documentElement.outerHTML.includes(t),
-      [...document.querySelectorAll('input, textarea')].some((i) => i.value.includes(t)),
       JSON.stringify(Object.entries(localStorage)).includes(t) || JSON.stringify(Object.entries(sessionStorage)).includes(t),
       document.cookie.includes(t) || document.cookie.includes('ati_ss'),
     ],
     token,
   );
-  step(`${label}: the token is not in the address, page, inputs, storage or document.cookie`, !exposed.some(Boolean), JSON.stringify(exposed));
+  step(`${label}: the token is not in the address, storage or document.cookie`, !exposed.some(Boolean), JSON.stringify(exposed));
 }
 
 async function signInAs(page, token, label) {
-  await until(() => page.getByTestId('staff-token').isEnabled(), 15_000, 'sign-in form hydrated');
+  // fill() waits until the field is enabled, which it is once the page has hydrated.
   await page.getByTestId('staff-token').fill(token);
   const [response] = await Promise.all([
     page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/staff/session' && r.request().method() === 'POST'),
@@ -59,18 +58,55 @@ async function signInAs(page, token, label) {
   step(`${label} signs in`, response.status() === 200, String(response.status()));
 }
 
+/** The four scores and the rationale as the form holds them. */
+const formValues = (page) =>
+  Promise.all([...Object.keys(SCORES).map((d) => page.getByTestId(`score-${d}`).inputValue()), page.getByTestId('decision-rationale').inputValue()]);
+
 async function scoreInputsEmpty(page) {
-  const values = await Promise.all([...Object.keys(SCORES).map((d) => page.getByTestId(`score-${d}`).inputValue()), page.getByTestId('decision-rationale').inputValue()]);
-  return values.every((v) => v === '');
+  return (await formValues(page)).every((v) => v === '');
+}
+
+/**
+ * The session ends while an answer is being decided (here the reviewer signs out in another tab).
+ * Recording then fails, but the form keeps what was typed and offers sign-in in a new tab; the
+ * cookie is shared, so after signing in there the same form records the decision. Returns the new
+ * session cookie.
+ */
+async function sessionEndsWhileDeciding(page, context, label) {
+  const other = await context.newPage();
+  watch(other);
+  await other.goto(`${WEB}/staff/review`);
+  await other.getByTestId('staff-sign-out').click();
+  await other.getByTestId('staff-signed-out').waitFor();
+  await other.close();
+
+  const typed = await formValues(page);
+  await page.getByTestId('decision-submit').click();
+  await page.getByTestId('decision-session-ended').waitFor();
+  step(`${label}: after the session ended, recording fails but keeps what was typed`, JSON.stringify(await formValues(page)) === JSON.stringify(typed), JSON.stringify(typed));
+  await audit(page, `${label} session ended`);
+
+  const [tab] = await Promise.all([context.waitForEvent('page'), page.getByTestId('decision-sign-in').click()]);
+  watch(tab);
+  await tab.waitForURL(`${WEB}/staff`);
+  step(`${label}: sign-in opens in a new tab, without a return address`, new URL(tab.url()).search === '', tab.url());
+  await signInAs(tab, REVIEWER, `${label}: the reviewer, again in the new tab`);
+  await tab.waitForURL(`${WEB}/staff/review`);
+  const again = await sessionCookie(context);
+  appendFileSync(SECRETS, `${secret(again.value)}\n`, { mode: 0o600 });
+  await tab.close();
+  await page.bringToFront();
+  return again;
 }
 
 await run(
-  async ({ browser, context, page, seen, result }) => {
+  async ({ browser, context, page, result }) => {
     result.interview_id = INTERVIEW;
 
     // 1. The sign-in screen.
     const signInDoc = await page.goto(`${WEB}/staff`);
     consoleHeaders(signInDoc, 'sign-in');
+    // The audit below is of the working form: wait until the page has hydrated and enabled it.
     await until(() => page.getByTestId('staff-token').isEnabled(), 15_000, 'sign-in form hydrated');
     const field = page.getByTestId('staff-token');
     step('the token field has no name, so no form submission can carry it', (await field.getAttribute('name')) === null);
@@ -105,6 +141,11 @@ await run(
     await page.getByTestId('staff-who').waitFor();
     step('the console shows who is signed in', (await page.getByTestId('staff-who').innerText()).includes('(reviewer)'));
 
+    // An answer the API does not know (a well-formed id) says so in its heading and leads back to the queue.
+    await page.goto(`${WEB}/staff/review/rvt_${'Z'.repeat(22)}`);
+    await page.getByRole('heading', { level: 1, name: 'Not found' }).waitFor();
+    step('an unknown answer is reported as not found', (await page.getByRole('link', { name: 'Go to the review queue' }).count()) === 1);
+
     // 3. The queue of this interview.
     const queueDoc = await page.goto(`${WEB}/staff/review?interview=${INTERVIEW}`);
     consoleHeaders(queueDoc, 'queue');
@@ -116,9 +157,13 @@ await run(
     await shot(page, '1-queue');
     await page.getByTestId('queue-open-task').first().click();
 
-    // 4. Each answer, independently of the AI draft. The third is done with the keyboard only.
+    // 4. Each answer, independently of the AI draft. The third is done with the keyboard only; the
+    // first and the third are audited (the others show the same screens). While the fourth is
+    // decided, the session ends and the reviewer signs in again.
+    let secondCookie = null;
     for (let i = 1; i <= 4; i += 1) {
       const label = `answer ${i}`;
+      const audited = i === 1 || i === 3;
       await page.getByTestId('decision-form').waitFor();
       step(`${label}: the heading has focus`, (await activeTestId(page)) === 'task-heading');
       step(`${label}: the form starts empty`, await scoreInputsEmpty(page));
@@ -126,14 +171,19 @@ await run(
       step(`${label}: the AI draft is closed and not rendered`, (await toggle.getAttribute('aria-expanded')) === 'false' && (await page.getByTestId('ai-draft-panel').count()) === 0);
       step(`${label}: no AI-derived reason before the draft`, (await page.locator(AI_REASONS.map((r) => `[data-reason="${r}"]`).join(', ')).count()) === 0);
       step(`${label}: passages the draft cites are highlighted`, (await page.getByTestId('cited').count()) > 0);
-      step(`${label}: the transcript and question carry their language`, (await page.getByTestId('transcript').getAttribute('lang')) === 'en' && (await page.getByTestId('task-question').getAttribute('lang')) === 'en');
-      await audit(page, `${label}`);
+      // What the candidate said is in the interview's language; the console's own labels ("at 0:03") are not.
+      const segmentLangs = await page.getByTestId('segment-text').evaluateAll((els) => els.map((e) => e.getAttribute('lang')));
+      step(
+        `${label}: the transcript's text and the question carry their language, the console's labels do not`,
+        segmentLangs.length > 0 && segmentLangs.every((l) => l === 'en') && (await page.getByTestId('transcript').getAttribute('lang')) === null && (await page.getByTestId('task-question').getAttribute('lang')) === 'en',
+        JSON.stringify(segmentLangs),
+      );
+      if (audited) await audit(page, `${label}`);
       if (i === 1) await shot(page, '2-task-draft-closed');
 
       if (i === 3) {
         // Keyboard only: Tab to the first score, type, Tab through the form, Enter.
-        for (let n = 0; n < 60 && (await activeTestId(page)) !== 'score-technical_accuracy'; n += 1) await page.keyboard.press('Tab');
-        step(`${label}: Tab reaches the first score`, (await activeTestId(page)) === 'score-technical_accuracy');
+        await tabTo(page, 'score-technical_accuracy', 60);
         for (const [d, v] of Object.entries(SCORES)) {
           step(`${label}: Tab order reaches ${d}`, (await activeTestId(page)) === `score-${d}`);
           await page.keyboard.type(v);
@@ -150,7 +200,7 @@ await run(
         await page.getByTestId('decision-errors').waitFor();
         step(`${label}: an empty decision lists its problems and takes focus`, (await activeTestId(page)) === 'decision-errors');
         step(`${label}: the fields are marked invalid`, (await page.getByTestId('score-claim_support').getAttribute('aria-invalid')) === 'true' && (await page.getByTestId('decision-rationale').getAttribute('aria-invalid')) === 'true');
-        await audit(page, `${label} problems`);
+        if (audited) await audit(page, `${label} problems`);
 
         await toggle.click();
         await page.getByTestId('ai-draft-panel').waitFor();
@@ -158,17 +208,19 @@ await run(
         step(`${label}: the draft shows the AI scores`, (await page.getByTestId('ai-draft-scores').locator('td').count()) === 4);
         step(`${label}: the draft never prefills the form`, await scoreInputsEmpty(page));
         step(`${label}: AI-derived reasons appear with the draft`, (await page.getByTestId('ai-draft-reasons').locator('[data-reason="low_confidence"]').count()) === 1);
-        await audit(page, `${label} draft`);
+        if (audited) await audit(page, `${label} draft`);
         if (i === 1) await shot(page, '3-task-draft-open');
 
         for (const [d, v] of Object.entries(SCORES)) await page.getByTestId(`score-${d}`).fill(v);
         await page.getByTestId('decision-rationale').fill(RATIONALE);
         step(`${label}: the weighted preview`, (await page.getByTestId('decision-preview').innerText()).includes('49.00'));
+        if (i === 4) secondCookie = await sessionEndsWhileDeciding(page, context, label);
         await page.getByTestId('decision-submit').click();
       }
 
       await page.getByTestId('recorded').waitFor();
       step(`${label}: the confirmation takes focus`, (await activeTestId(page)) === 'task-recorded');
+      if (i === 1) await audit(page, `${label} recorded`);
       if (i < 4) {
         if (i === 3) {
           await page.keyboard.press('Tab');
@@ -179,7 +231,6 @@ await run(
         }
         await until(async () => (await page.getByTestId('recorded').count()) === 0, 10_000, `${label}: next answer`);
       } else {
-        await audit(page, `${label} recorded`);
         await page.getByTestId('recorded-report').click();
       }
     }
@@ -190,26 +241,30 @@ await run(
     step('the report says it is decision support only', (await page.getByTestId('report-notice').innerText()).includes('Decision support only'));
     const weighted = await page.getByTestId('report-weighted').allInnerTexts();
     step("the report shows the reviewer's weighted scores", weighted.length === 4 && weighted.every((w) => w.includes('49.00')), JSON.stringify(weighted));
-    step('the AI drafts are folded', await page.evaluate(() => [...document.querySelectorAll('details')].every((d) => !d.open)));
+    const folded = await page.evaluate(() => [...document.querySelectorAll('details')].map((d) => d.open));
+    step("each answer's AI draft is there and folded", folded.length === 4 && folded.every((open) => !open), JSON.stringify(folded));
     await audit(page, 'report');
     await shot(page, '4-report');
 
-    // 6. Sign out: the cookie is cleared, the console asks for sign-in, and the old cookie is dead.
+    // 6. Sign out: the cookie is cleared, the console asks for sign-in, and the old cookies are dead.
     await page.getByTestId('staff-sign-out').click();
     await page.waitForURL(`${WEB}/staff`);
     await page.getByTestId('staff-signed-out').waitFor();
     step('signing out clears the session cookie', (await sessionCookie(context)) === null);
     await page.goto(`${WEB}/staff/review`);
-    await page.getByTestId('staff-sign-in-required').waitFor();
-    step('after signing out, the queue asks to sign in', true);
+    const required = page.getByTestId('staff-sign-in-required');
+    await required.waitFor();
+    step('after signing out, the queue asks to sign in and its heading has focus', (await page.evaluate(() => document.activeElement?.tagName)) === 'H1');
+    const back = await required.getByRole('link').getAttribute('href');
+    step('signing in from there returns to the queue', back === `/staff?next=${encodeURIComponent('/staff/review')}`, String(back));
     await audit(page, 'signed out');
-    const replay = await fetch(`${WEB}/api/v1/review-tasks`, { headers: { Cookie: `ati_ss=${cookie.value}` } });
-    step('the old session cookie is refused by the API', replay.status === 401, String(replay.status));
+    for (const [which, old] of [['first', cookie], ['second', secondCookie]]) {
+      const replay = await fetch(`${WEB}/api/v1/review-tasks`, { headers: { Cookie: `ati_ss=${old.value}` } });
+      step(`the reviewer's ${which} session cookie is refused by the API`, replay.status === 401, String(replay.status));
+    }
 
     // 7. A recruiter reads reports and cannot review.
-    const recruiterContext = await browser.newContext();
-    const rp = await recruiterContext.newPage();
-    watch(rp, seen);
+    const { context: recruiterContext, page: rp } = await newPage(browser);
     const reportsDoc = await rp.goto(`${WEB}/staff`);
     consoleHeaders(reportsDoc, 'recruiter sign-in');
     await signInAs(rp, RECRUITER, 'the recruiter');
@@ -220,7 +275,8 @@ await run(
     await tokenIsGone(rp, RECRUITER, 'recruiter');
     await rp.locator(`[data-interview="${INTERVIEW}"]`).waitFor();
     step('the recruiter has no review navigation', (await rp.getByTestId('staff-nav-review').count()) === 0 && (await rp.getByTestId('staff-nav-reports').count()) === 1);
-    step('the report list holds no scores', !(await rp.getByTestId('report-list').innerText()).includes('49.00'));
+    const list = await rp.getByTestId('report-list').innerText();
+    step('the report list holds no scores', !/\d{1,3}\.\d{2}/.test(list), list);
     await audit(rp, 'reports');
     await rp.locator(`[data-interview="${INTERVIEW}"]`).getByTestId('report-open').click();
     await rp.getByTestId('report-answer').first().waitFor();

@@ -2,7 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildQuery } from './client';
 import { ApiError } from './errors';
 import * as staff from './staff';
-import { parseReport, parseReportList, parseReviewTask, parseReviewTaskList, parseStaffSession, safeReferenceUrl } from './staffParse';
+import {
+  parseReport,
+  parseReportList,
+  parseReviewOutcomeResult,
+  parseReviewTask,
+  parseReviewTaskList,
+  parseStaffSession,
+  safeReferenceUrl,
+} from './staffParse';
 
 const SES = 'ses_ABCDEFGHIJKLMNOPQRSTUV';
 const TASK = 'rvt_ABCDEFGHIJKLMNOPQRSTUV';
@@ -41,6 +49,7 @@ const task = {
   ...summary,
   language: 'en',
   question: 'How does MVCC work?',
+  rubric_ref: 'rub_demo_postgres_mvcc@1',
   rubric,
   transcript: [{ segment_id: SEG, start_ms: 97, end_ms: 102, text: 'Each update writes a new row version.' }],
   ai_evaluation: {
@@ -90,8 +99,15 @@ describe('query parameters', () => {
     vi.stubGlobal('fetch', fetchMock);
     const tasks = await staff.listReviewTasks({ status: 'open', interviewId: SES });
     expect(tasks).toHaveLength(1);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/review-tasks?status=open&interview_id=${SES}`);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/review-tasks?status=open&interview_id=${SES}&limit=200`);
     expect(() => staff.listReviewTasks({ status: 'open', interviewId: 'ses_bad' })).toThrow();
+  });
+
+  it('ask for the largest page of reports', async () => {
+    const fetchMock = vi.fn((_input: string, _init: RequestInit) => Promise.resolve(json({ reports: [] })));
+    vi.stubGlobal('fetch', fetchMock);
+    await staff.listReports();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/reports?limit=200');
   });
 
   it('every staff call uses a relative public path and the decision carries ai_draft_viewed', async () => {
@@ -130,18 +146,57 @@ describe('staff parsers', () => {
     expect(() => parseStaffSession({ role: 'reviewer', label: 'r', expires_at: 'tomorrow' })).toThrow();
   });
 
-  it('keep unknown reasons and refuse malformed ones', () => {
+  it('keep unknown reasons once each and refuse malformed ones', () => {
     expect(parseReviewTaskList({ review_tasks: [summary] })[0]?.reasons).toEqual(['policy_all_reviewed', 'brand_new_reason']);
+    expect(parseReviewTaskList({ review_tasks: [{ ...summary, reasons: ['no_rubric', 'no_rubric'] }] })[0]?.reasons).toEqual(['no_rubric']);
     expect(() => parseReviewTaskList({ review_tasks: [{ ...summary, reasons: ['Not A Code'] }] })).toThrow();
     expect(() => parseReviewTaskList({ review_tasks: [{ ...summary, task_id: 'rvt_x' }] })).toThrow();
     expect(() => parseReviewTaskList({ review_tasks: [{ ...summary, interview_id: 'ses_<script>' }] })).toThrow();
   });
 
+  it('accept every item id the plan contract allows, and only those', () => {
+    for (const ok of ['q1', '1', '2b_follow_up', 'a'.repeat(32)]) {
+      expect(parseReviewTaskList({ review_tasks: [{ ...summary, item_id: ok }] })[0]?.item_id, ok).toBe(ok);
+    }
+    for (const bad of ['', 'Q1', 'q-1', 'a'.repeat(33)]) {
+      expect(() => parseReviewTaskList({ review_tasks: [{ ...summary, item_id: bad }] }), bad).toThrow();
+    }
+  });
+
   it('parse a task, dropping reference URLs that are not https', () => {
     const parsed = parseReviewTask(task);
+    expect(parsed.rubric_ref).toBe('rub_demo_postgres_mvcc@1');
     expect(parsed.rubric?.references.map((r) => r.url)).toEqual(['https://www.postgresql.org/docs/current/mvcc.html', null]);
     expect(parsed.ai_evaluation?.evidence[0]?.quote).toBe('a new row version');
-    expect(parseReviewTask({ ...task, rubric: null, ai_evaluation: null }).rubric).toBeNull();
+    expect(parseReviewTask({ ...task, rubric_ref: null, rubric: null, ai_evaluation: null }).rubric).toBeNull();
+    expect(() => parseReviewTask({ ...task, rubric_ref: 'rub_demo_postgres_mvcc' })).toThrow();
+    expect(() => parseReviewTask({ ...task, rubric_ref: undefined })).toThrow();
+  });
+
+  it('count lengths in code points, as the server does', () => {
+    const outcome = (rationale: string) => ({
+      ...task,
+      outcome: {
+        outcome_id: 'rvo_ABCDEFGHIJKLMNOPQRSTUV',
+        reviewer_id: 'stf_ABCDEFGHIJKLMNOPQRSTUV',
+        scores: SCORES,
+        weighted_score: 50,
+        rationale,
+        ai_draft_viewed: false,
+        decided_at: '2026-11-04T13:13:52Z',
+      },
+    });
+    // 4,000 characters outside the BMP are 8,000 UTF-16 code units.
+    expect(parseReviewTask(outcome('😀'.repeat(4_000))).outcome?.rationale).toHaveLength(8_000);
+    expect(() => parseReviewTask(outcome('😀'.repeat(4_001)))).toThrow();
+    expect(() => parseReviewTask(outcome('x'.repeat(4_001)))).toThrow();
+  });
+
+  it('turn an interview state this build does not know into UNKNOWN', () => {
+    const result = (interview_state: unknown) => ({ outcome_id: 'rvo_ABCDEFGHIJKLMNOPQRSTUV', interview_state, open_review_tasks: 0 });
+    expect(parseReviewOutcomeResult(result('REPORT_READY')).interview_state).toBe('REPORT_READY');
+    expect(parseReviewOutcomeResult(result('A_LATER_STATE')).interview_state).toBe('UNKNOWN');
+    expect(() => parseReviewOutcomeResult(result('report_ready'))).toThrow();
   });
 
   it('refuse out-of-range or incomplete scores', () => {
@@ -192,5 +247,15 @@ describe('staff parsers', () => {
     expect(parsed.answers[0]?.reviewed.ai_draft_viewed).toBeNull();
     expect(() => parseReport({ ...report, decision_support_only: false })).toThrow();
     expect(() => parseReport({ ...report, report_version: 2 })).toThrow();
+
+    // The AI part of a report is parsed like the task's draft, without the advisory step and the output risk.
+    const { advisory_next_step: _step, evaluator_output_risk: _risk, ...aiPart } = task.ai_evaluation;
+    const first = report.answers[0];
+    const withAI = { ...report, answers: [{ ...first, item_id: '2', reviewed: { ...first?.reviewed, ai_draft_viewed: true }, ai_evaluation: aiPart }] };
+    const answer = parseReport(withAI).answers[0];
+    expect(answer?.item_id).toBe('2');
+    expect(answer?.reviewed.ai_draft_viewed).toBe(true);
+    expect(answer?.ai_evaluation?.evidence[0]?.quote).toBe('a new row version');
+    expect(answer?.ai_evaluation).not.toHaveProperty('advisory_next_step');
   });
 });

@@ -16,9 +16,6 @@ import (
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/interview"
 )
 
-// staffRoles are every staff role: each may sign in, see who it is and sign out.
-var staffRoles = []string{"admin", "recruiter", "reviewer"}
-
 // staffTokenFormat is the shape of a staff token; anything else is refused before any lookup.
 var staffTokenFormat = regexp.MustCompile(`^` + StaffTokenPrefix + `[A-Za-z0-9_-]{20,120}$`)
 
@@ -57,7 +54,7 @@ func (s *Server) startStaffSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	previous := ""
-	if tok, ok := staffSessionCookie(r); ok {
+	if tok, ok := cookieValue(r, StaffCookie); ok {
 		previous = ids.Hash(tok)
 	}
 	sess, err := s.svc.StartStaffSession(r.Context(), interview.Actor{RequestID: httpx.RequestIDFrom(r.Context())}, ids.Hash(req.Token), previous, s.cfg.StaffSessionTTL)
@@ -69,10 +66,8 @@ func (s *Server) startStaffSession(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: StaffCookie, Value: sess.Token, Path: "/api", HttpOnly: true, Secure: s.cfg.SecureCookies(),
-		SameSite: http.SameSiteStrictMode, MaxAge: max(1, int(sess.Principal.ExpiresAt.Sub(s.now())/time.Second)),
-	})
+	// The service refuses sessions shorter than MinStaffSession, so this is about a minute or more.
+	http.SetCookie(w, s.apiCookie(StaffCookie, sess.Token, int(sess.Principal.ExpiresAt.Sub(s.now())/time.Second)))
 	httpx.WriteJSON(w, http.StatusOK, sessionView(&sess.Principal))
 }
 
@@ -80,19 +75,20 @@ func staffSignInRefused(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeUnauthorized, "the staff token is invalid, expired or revoked")
 }
 
-// getStaffSession tells the console who is signed in and until when.
+// getStaffSession tells the console who is signed in, with which role and until when.
 func (s *Server) getStaffSession(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.staffWith(w, r, bearerOrSession, staffRoles...)
+	p, ok := s.staffPrincipal(w, r, bearerOrSession)
 	if !ok {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, sessionView(p.staff))
 }
 
-// endStaffSession signs out: the session is revoked and the cookie cleared. A bearer token has no
-// session to end. The answer is JSON because the console parses every answer.
+// endStaffSession signs out: the session is revoked and its cookie cleared. A bearer token has no
+// session to end, so nothing is cleared then: a cookie sent alongside stays valid, and clearing it
+// would only pretend otherwise. The answer is JSON because the console parses every answer.
 func (s *Server) endStaffSession(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.staffWith(w, r, bearerOrSession, staffRoles...)
+	p, ok := s.staffPrincipal(w, r, bearerOrSession)
 	if !ok || !requireIdempotencyKey(w, r) {
 		return
 	}
@@ -101,8 +97,8 @@ func (s *Server) endStaffSession(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: StaffCookie, Value: "", Path: "/api", HttpOnly: true, Secure: s.cfg.SecureCookies(), SameSite: http.SameSiteStrictMode, MaxAge: -1,
-	})
+	if ended {
+		http.SetCookie(w, s.apiCookie(StaffCookie, "", -1))
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ended": ended})
 }

@@ -3,12 +3,14 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/api"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/ids"
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/interview"
 )
 
 // signIn posts a staff token to the sign-in endpoint as the review console does (same origin).
@@ -235,5 +237,104 @@ func TestStaffSessionsNeverOutliveTheirToken(t *testing.T) {
 	expires, _ := time.Parse(time.RFC3339Nano, r.str("expires_at"))
 	if d := time.Until(expires); d > 20*time.Minute || d < 19*time.Minute || c.MaxAge > 20*60 || c.MaxAge < 19*60 {
 		t.Fatalf("the session ends with the token: expires in %v, max-age %d", d, c.MaxAge)
+	}
+	// A token about to expire is refused rather than producing a session that ends at once.
+	dying := api.StaffTokenPrefix + ids.Token()
+	if _, err := e.db.Owner.Exec(context.Background(), `INSERT INTO ati.staff_tokens (id, tenant_id, token_hash, role, label, expires_at) VALUES ($1,$2,$3,'reviewer','dying',now() + interval '30 seconds')`,
+		ids.New(ids.Staff), e.tenant, ids.Hash(dying)); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.signIn(dying, nil); r.status != 401 || len((&http.Response{Header: r.header}).Cookies()) != 0 {
+		t.Fatalf("a token with 30 s left: %d %s", r.status, r.raw)
+	}
+}
+
+// Sign-out with a bearer token ends no session, so it must not clear a session cookie sent alongside:
+// that would look like a sign-out while the session stays valid.
+func TestSigningOutWithABearerTokenLeavesTheSessionCookieAlone(t *testing.T) {
+	e := newEnv(t)
+	cookie := staffCookie(t, e.signIn(e.staff, nil)).Value
+	both := asSession(cookie)
+	both["Authorization"] = "Bearer " + e.staff
+	r := e.do(req{method: "POST", url: e.public.URL + "/api/v1/staff/session/end", headers: both})
+	if r.status != 200 || r.body["ended"] != false || len((&http.Response{Header: r.header}).Cookies()) != 0 {
+		t.Fatalf("bearer sign-out: %d %s %v", r.status, r.raw, r.header.Values("Set-Cookie"))
+	}
+	if who := e.do(req{method: "GET", url: e.public.URL + "/api/v1/staff/session", headers: asSession(cookie)}); who.status != 200 {
+		t.Fatalf("the session must still be valid: %d", who.status)
+	}
+}
+
+// A failure while authenticating (here: the database is gone) is a server error, never a 401: the
+// console treats 401 as "signed out", and the candidate page as "session lost".
+func TestAnOutageIsNeverMistakenForASignedOutUser(t *testing.T) {
+	e := newEnv(t)
+	id, candidate := e.interviewToReady()
+	session := staffCookie(t, e.signIn(e.staff, nil)).Value
+	e.pool.Close()
+	for name, q := range map[string]req{
+		"staff bearer":     {method: "GET", url: e.public.URL + "/api/v1/reports", headers: map[string]string{"Authorization": "Bearer " + e.staff}},
+		"staff session":    {method: "GET", url: e.public.URL + "/api/v1/reports", headers: asSession(session)},
+		"who am I":         {method: "GET", url: e.public.URL + "/api/v1/staff/session", headers: asSession(session)},
+		"candidate cookie": {method: "GET", url: e.public.URL + "/api/v1/interviews/" + id, cookie: candidate},
+	} {
+		if r := e.do(q); r.status != 500 || r.str("code") != "internal_error" {
+			t.Errorf("%s during an outage: %d %s", name, r.status, r.raw)
+		}
+	}
+	if r := e.do(req{method: "GET", url: e.public.URL + "/api/v1/reports"}); r.status != 401 {
+		t.Fatalf("no credential at all is still 401: %d", r.status)
+	}
+}
+
+// The OpenAPI document and the code agree on which operations accept the review console's cookie
+// (ADR-023): accepted exactly where an operation's security lists staffSession.
+func TestOnlyOperationsDeclaringStaffSessionAcceptTheCookie(t *testing.T) {
+	var spec struct {
+		Paths map[string]map[string]struct {
+			Security []map[string][]string `yaml:"security"`
+		} `yaml:"paths"`
+	}
+	readOpenAPI(t, &spec)
+	e := newEnv(t)
+	admin := e.staffToken("admin") // every role check passes, so only the credential decides
+	fakeIDs := strings.NewReplacer("{interview_id}", ids.New(ids.Session), "{task_id}", ids.New(ids.ReviewTask))
+	counts := map[string]int{}
+	for _, rt := range api.PublicRoutes() {
+		route := rt.Method + " " + rt.Pattern
+		op, ok := spec.Paths[rt.Pattern][strings.ToLower(rt.Method)]
+		if !ok {
+			t.Fatalf("%s is not in the OpenAPI document", route)
+		}
+		if len(op.Security) == 0 { // security: [] (anonymous)
+			counts["skipped"]++
+			continue
+		}
+		declared := slices.ContainsFunc(op.Security, func(s map[string][]string) bool { _, ok := s["staffSession"]; return ok })
+		url := e.public.URL + fakeIDs.Replace(rt.Pattern)
+		headers := map[string]string{"Origin": origin, "Sec-Fetch-Site": "same-origin"}
+		if r := e.do(req{method: rt.Method, url: url, headers: headers}); r.status != 401 {
+			t.Errorf("%s without a credential: %d (authentication must come first)", route, r.status)
+			continue
+		}
+		// A fresh session per route: sign-out revokes the one it is given, and HTTP sign-ins are rate-limited.
+		sess, err := e.svc.StartStaffSession(context.Background(), interview.Actor{}, ids.Hash(admin), "", time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		headers["Cookie"] = api.StaffCookie + "=" + sess.Token
+		r := e.do(req{method: rt.Method, url: url, headers: headers})
+		if r.str("code") == "origin_mismatch" || r.str("detail") == "no such endpoint" || r.status == 429 || r.status >= 500 {
+			t.Errorf("%s: %d %s says nothing about the cookie", route, r.status, r.raw)
+			continue
+		}
+		accepted := r.status != 401
+		if accepted != declared {
+			t.Errorf("%s: cookie accepted=%v, but the OpenAPI document lists staffSession=%v", route, accepted, declared)
+		}
+		counts[map[bool]string{true: "accepted", false: "refused"}[accepted]]++
+	}
+	if counts["accepted"] != 7 || counts["refused"] != 14 || counts["skipped"] != 2 {
+		t.Fatalf("operations: %v", counts)
 	}
 }

@@ -27,19 +27,22 @@ export function Transcript({ segments, language, ranges, headingId }: Transcript
         </p>
       ) : null}
       {segments.length > 0 ? (
-        <ol className={styles.transcript} lang={language} data-testid="transcript">
+        <ol className={styles.transcript} data-testid="transcript">
           {segments.map((segment) => (
             <li key={segment.segment_id} className={styles.segment} data-segment={segment.segment_id}>
+              {/* The offset is console text; only what the candidate said is in the interview's language. */}
               <span className={styles.offset}>{t.staff.task.at(formatOffset(segment.start_ms))}</span>
-              {splitText(displayText(segment), ranges.get(segment.segment_id)).map((part, i) =>
-                part.highlighted ? (
-                  <mark key={i} className={styles.cited} data-testid="cited">
-                    {part.text}
-                  </mark>
-                ) : (
-                  <span key={i}>{part.text}</span>
-                ),
-              )}
+              <span lang={language} data-testid="segment-text">
+                {splitText(displayText(segment), ranges.get(segment.segment_id)).map((part, i) =>
+                  part.highlighted ? (
+                    <mark key={i} className={styles.cited} data-testid="cited">
+                      {part.text}
+                    </mark>
+                  ) : (
+                    <span key={i}>{part.text}</span>
+                  ),
+                )}
+              </span>
             </li>
           ))}
         </ol>

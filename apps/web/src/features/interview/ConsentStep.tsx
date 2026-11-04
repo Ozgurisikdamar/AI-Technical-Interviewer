@@ -1,10 +1,13 @@
 'use client';
 
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ErrorNotice } from '@/components/ErrorNotice';
+import { ErrorSummary } from '@/components/ErrorSummary';
 import ui from '@/components/ui.module.css';
+import { useFocusOnMount } from '@/components/useFocusOnMount';
 import { useMessages } from '@/i18n/client';
+import { label } from '@/i18n/label';
 import { isAbortError, toApiError, type ApiError } from '@/lib/api/errors';
 import { getConsentNotice } from '@/lib/api/interviews';
 import type { ConsentNoticeView, InterviewCandidateView, NoticePurpose } from '@/lib/api/types';
@@ -12,7 +15,6 @@ import { VOICE_PURPOSE_ID, buildConsentRequest, validateConsent, type Decisions 
 import { consentSubmitEnabled } from '@/lib/interview/viewModel';
 import styles from './ConsentStep.module.css';
 import type { InterviewActions } from './useInterviewActions';
-import { useFocusOnMount } from './useFocusOnMount';
 
 type NoticeState =
   | { readonly status: 'loading' }
@@ -82,7 +84,6 @@ function ConsentForm({ view, actions, data, onSubmitted }: ConsentFormProps) {
   const [decisions, setDecisions] = useState<Decisions>({});
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [confirming, setConfirming] = useState(false);
-  const summaryRef = useRef<HTMLDivElement | null>(null);
   const formId = useId();
 
   const validation = validateConsent(notice.purposes, decisions);
@@ -90,10 +91,6 @@ function ConsentForm({ view, actions, data, onSubmitted }: ConsentFormProps) {
   const busy = actions.pending !== null;
   const canSubmit = consentSubmitEnabled(view, busy);
   const titleOf = (purposeId: string) => notice.purposes.find((p) => p.purpose_id === purposeId)?.title ?? purposeId;
-
-  useEffect(() => {
-    if (failedAttempts > 0) summaryRef.current?.focus();
-  }, [failedAttempts]);
 
   async function send() {
     setConfirming(false);
@@ -113,10 +110,6 @@ function ConsentForm({ view, actions, data, onSubmitted }: ConsentFormProps) {
       return;
     }
     void send();
-  }
-
-  function focusChoice(purposeId: string) {
-    document.getElementById(`${formId}-${purposeId}-yes`)?.focus();
   }
 
   return (
@@ -143,20 +136,14 @@ function ConsentForm({ view, actions, data, onSubmitted }: ConsentFormProps) {
         <p>{t.consent.voiceExplanation}</p>
       </div>
 
-      {showErrors ? (
-        <div ref={summaryRef} tabIndex={-1} role="alert" className={ui.error} aria-labelledby={`${formId}-summary`}>
-          <h3 id={`${formId}-summary`}>{t.consent.errorSummaryHeading}</h3>
-          <ul className={styles.summaryList}>
-            {validation.missing.map((purposeId) => (
-              <li key={purposeId}>
-                <button type="button" className={styles.linkButton} onClick={() => focusChoice(purposeId)}>
-                  {t.consent.errorSummaryItem(titleOf(purposeId))}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      <ErrorSummary
+        heading={t.consent.errorSummaryHeading}
+        attempt={failedAttempts}
+        items={validation.missing.map((purposeId) => ({
+          fieldId: `${formId}-${purposeId}-yes`,
+          text: t.consent.errorSummaryItem(titleOf(purposeId)),
+        }))}
+      />
 
       {notice.purposes.map((purpose) => (
         <PurposeChoice
@@ -213,7 +200,7 @@ interface PurposeChoiceProps {
 
 function PurposeChoice({ idPrefix, purpose, language, retentionDays, decision, showError, onChange }: PurposeChoiceProps) {
   const t = useMessages();
-  const categories = purpose.data_categories.map((c) => t.consent.dataCategory[c] ?? t.consent.unknownCategory).join(', ');
+  const categories = purpose.data_categories.map((c) => label(t.consent.dataCategory, c) ?? t.consent.unknownCategory).join(', ');
   const describedBy = [`${idPrefix}-description`, `${idPrefix}-details`, showError ? `${idPrefix}-error` : '']
     .filter(Boolean)
     .join(' ');
@@ -240,7 +227,7 @@ function PurposeChoice({ idPrefix, purpose, language, retentionDays, decision, s
         </div>
         <div>
           <dt>{t.consent.legalBasis}</dt>
-          <dd>{t.consent.basis[purpose.basis] ?? t.consent.unknownBasis}</dd>
+          <dd>{label(t.consent.basis, purpose.basis) ?? t.consent.unknownBasis}</dd>
         </div>
       </dl>
       {showError ? (

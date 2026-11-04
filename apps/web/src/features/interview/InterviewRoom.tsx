@@ -11,7 +11,7 @@ import { progressLabelValues, roomControls, roomStatus } from '@/lib/interview/v
 import { Captions } from './Captions';
 import styles from './InterviewRoom.module.css';
 import type { InterviewActions } from './useInterviewActions';
-import { useFocusOnMount } from './useFocusOnMount';
+import { useFocusOnMount } from '@/components/useFocusOnMount';
 import type { RealtimeApi } from './useRealtime';
 
 interface InterviewRoomProps {

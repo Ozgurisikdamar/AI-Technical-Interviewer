@@ -1,6 +1,6 @@
 # Implementation status and repository audit
 
-**Last updated:** 2026-11-04 (Milestone D: reviewer web UI, ADR-023; Milestone C: data and ML lifecycle, offline benchmark harness; Milestone B: Tier-2 evaluation MVP, ADR-022; earlier the same day, Milestone A: Phase 1 audit closure, see [PHASE1_AUDIT.md](../qa/PHASE1_AUDIT.md); 2026-11-03: Phase 0 and Phase 1 milestones M1–M9 and a completion pass)
+**Last updated:** 2026-11-04 (a review pass of Milestone D; Milestone D: reviewer web UI, ADR-023; Milestone C: data and ML lifecycle, offline benchmark harness; Milestone B: Tier-2 evaluation MVP, ADR-022; earlier the same day, Milestone A: Phase 1 audit closure, see [PHASE1_AUDIT.md](../qa/PHASE1_AUDIT.md); 2026-11-03: Phase 0 and Phase 1 milestones M1–M9 and a completion pass)
 **Rule:** a capability counts as implemented only when its code, tests and integration are verified. Status labels:
 
 | Label | Meaning |
@@ -75,7 +75,7 @@ accepts every reference attempt. It measures no model quality. No human labels e
 **Milestone D (2026-11-04).** Reviewers now work in a browser: `apps/web` has a review console at `/staff` (ADR-023).
 - **Sign-in.** A staff token, pasted once, is exchanged by the control plane for a session:
   - an HttpOnly, SameSite=Strict cookie, scoped to `/api` and stored only as a hash;
-  - 8 hours at most, never longer than its token, and ended at once by revoking the token;
+  - 8 hours by default (at most 24), never longer than its token, and ended at once by revoking the token;
   - rate-limited, and protected against login CSRF by the same-origin guard.
 
   The cookie is accepted only by the review, report and session operations. Interview management still needs the
@@ -97,6 +97,46 @@ accepts every reference attempt. It measures no model quality. No human labels e
 - **End to end:** a browser flow signs a reviewer in, decides every answer of a typed interview (one by keyboard
   only), reads the report and signs out. A recruiter then reads the report but cannot review. Every screen is
   audited with axe-core, and the database is checked afterwards: outcomes, sessions, audits, and no credential stored.
+
+**Review pass (2026-11-04).** A correctness and simplification review of Milestone D (`/code-review`, `/simplify`)
+found the defects below. Each is fixed and covered by a test.
+- **Control plane:**
+  - a failure while checking a credential (an unreachable database, for example) answered 401, which the console
+    takes for a signed-out user. It now answers 500, for staff and candidate credentials alike;
+  - `changed_from_ai` in the decision audit was always true, because it compared jsonb text with Go's JSON. It now
+    compares the scores;
+  - the reviewed queue listed the oldest decisions and froze once there were 200. It now lists the most recently
+    decided interviews first;
+  - the answer-order test never reached the answer-order tie-break, because each task had its own creation time.
+    An interview's tasks now share one, which also lets the open queue use its index;
+  - the report list read and parsed every stored report. It now reads only the newest rows;
+  - signing out with a bearer token cleared a browser's still-valid session cookie;
+  - a token with seconds left could start a session;
+  - `revoke-staff-token` counted expired sessions as revoked.
+- **Added in the control plane:**
+  - actions taken through a session record its id in the audit;
+  - review tasks state their `rubric_ref`;
+  - the shared quote cases run through the real validator;
+  - a route-by-route test holds the cookie to the operations whose OpenAPI security lists it.
+- **Console:**
+  - the response parsers refused valid data: item ids that start with a digit, transcripts of more than 500
+    segments, and long texts outside the BMP. The limits now follow the server's, counted in code points;
+  - a decision could be sent twice while the next answer was being looked up;
+  - a session that ended while deciding discarded what was typed. The form now keeps it and offers sign-in in a
+    new tab;
+  - a new filter could briefly show the previous list, and the first session check could overwrite a sign-in that
+    finished first;
+  - codes from the server such as `constructor` could resolve to built-in object members;
+  - the transcript's language tag also covered the console's own labels;
+  - the report list stopped silently at 50. Both lists now ask for 200 and say when they may have been cut off.
+- **Added in the console:** sign-in returns to the page that asked for it, through an allow-list.
+- **Simplified:**
+  - one loader shell, one error summary and one error page;
+  - session guards per section layout;
+  - shared views of a draft and of a decision;
+  - one content width.
+- **Browser flow:** while the last answer is being decided, the reviewer signs out in another tab. The form keeps
+  what was typed, sign-in happens in a new tab, and the decision is then recorded under the new session.
 
 ## 1. Baseline audit (repository state before implementation)
 
@@ -120,6 +160,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | B — Tier-2 evaluation MVP (2026-11-04) | ADR-022; state machine v1.2 (T17 in Phase 2); rubric contract and synthetic demo rubrics; migration 00007 (rubrics, raw attempts, canonical evaluations, review tasks and outcomes, reports; evaluator LOGIN with narrow views; `reviewer` role); outbox relay to Redis Streams; deterministic validator; internal Tier-2 API; reviewer queue, task, outcome and report endpoints; `services/tier2-evaluator` (consumer, evidence loader, reference/OpenAI/Anthropic adapters, configuration refusals); stack integration | **Verified (local)**: G (validator, relay with a real redis-server, service, API, store grants, architecture), T2 (`make tier2-test`: config, prompt pin and drift, reference evaluator, adapters against recorded shapes, consumer against a real redis-server, worker flow, redaction), E (`test_tier2.py`; synthetic voice answers abstained in `test_voice_interview.py`). Model evaluators **Implemented — unverified** (no credentials) |
 | C — Data and ML foundations (2026-11-04) | Data and ML lifecycle document; offline benchmark harness (`tier2_evaluator.bench`: dataset manifest and leakage checks, quadratic-weighted kappa, Krippendorff's alpha, MAE, within-10, percentiles); `ati-admin validate-evaluations` (the Go validator offline); synthetic TR/EN dataset `synthetic-v1` | **Verified (local)**: metrics against hand-computed values and Krippendorff's published example, dataset integrity and leakage refusal (T2), the offline validator (G), `make tier2-bench` (every reference attempt accepted). **No benchmark of evaluator quality**: the labels are synthetic |
 | D — Reviewer web UI (2026-11-04) | ADR-023; staff browser sessions (migration 00008: `staff_sessions`, `review_outcomes.ai_draft_viewed`; `ATI_STAFF_SESSION_TTL`, `ATI_STAFF_SIGNINS_PER_MINUTE`); `/api/v1/staff/session` sign-in, who-am-I and sign-out; report list; queue filter by interview, in answer order; reviewers refused the staff interview view; `ati-admin revoke-staff-token`, `list-staff-tokens`, session purge; web route groups `(candidate)` and `staff`; console screens (sign-in, queue, task with the AI draft closed until opened, report list, report); quote highlighter tested with the validator's cases | **Verified (local)**: G (sessions, refusals, rate limit, CSRF, cookie scope, revocation, reviewer 403, queue filter, report list, grants, admin commands, shared quote cases), contracts (security schemes per operation), W (highlighter, weighted score, decision checks, parsers, query allow-list). **Verified (scripted, loopback)** in Chromium: `reviewer_flow.mjs` with the database checks of `test_reviewer_decides_every_answer_in_the_browser` |
+| R — Review pass of Milestone D (2026-11-04) | `/code-review` and `/simplify` of the review console: credential failures answer 500, `changed_from_ai` by value, queue orders, report list query, session ids in audits, `rubric_ref`, parsers within the server's limits, no double submit, work kept when a session ends, return address after sign-in, shared UI pieces | **Verified (local)**: `make test`. **Verified (scripted, loopback)**: `make e2e`, including the extended reviewer flow |
 | M9 — Text mode | `POST /text-responses` (text mode only, activation-bound, refused during a pending completion; control-plane-written `candidate_text` segments; audit without text); Tier-1 view of the open question's text answers; agent passes each once as user input; text-mode greeting; UI offers text mode without a microphone | **Verified (local)**: G API tests (binding, mode, length, ordering, contract-valid context, manifest-free confirmation, no text in logs), A tests (user input only, once, other activations ignored). **Verified (scripted, loopback)** in Chromium with the microphone refused (`text_flow.mjs`): captions, no published track, completion |
 
 ## 3. Gap analysis (requirement → status)
@@ -240,12 +281,12 @@ The repository does not use GitHub Actions (repository convention, enforced by `
 |---|---|---|
 | `make checks` | repository hygiene (secrets, media files, PII patterns), Python import boundaries, generated state diagram | pass |
 | `make contracts-test` | schema meta-validation and fixtures, state-machine structure, doc drift, isolation, OpenAPI (including the security scheme of every operation), model registry, rubrics | 145 passed |
-| `make go-lint` / `make go-test` | gofmt, vet, staticcheck; Go tests with the race detector against PostgreSQL 16 | pass (17 packages with tests, 0 skipped, including the Phase 1 audit regressions, the Tier-2 validator, relay, service, API and grant tests, and the staff session, review console API, admin and shared quote-rule tests) |
+| `make go-lint` / `make go-test` | gofmt, vet, staticcheck; Go tests with the race detector against PostgreSQL 16 | pass (17 packages with tests, 0 skipped, including the Phase 1 audit regressions, the Tier-2 validator, relay, service, API and grant tests, and the staff session, review console API, admin and shared quote-rule tests; the review pass adds the outage, route-by-route cookie and queue-order tests) |
 | `make agent-test` | ruff, mypy (strict), pytest for the Tier-1 agent | 198 passed |
 | `make tier2-test` | ruff, mypy (strict), pytest for the Tier-2 worker (consumer tests against a throwaway redis-server) and the benchmark harness | 114 passed |
-| `make web-test` | eslint, tsc, vitest, production build, bundle secret scan (including staff tokens) | 289 passed; build and scan pass (10 rules) |
-| `make e2e` | local stack (with Redis and the Tier-2 worker); synthetic WebRTC candidate (voice interview, failure injection and signals, recording, media security) and typed interviews through Tier-2; Chromium flows, including the review console (each screen audited with axe-core); log scans for credentials (including session cookies), JWTs and transcript text; audio-file scan | 31 passed from a fresh stack in 13 min 53 s (scripted engine, reference evaluator, loopback), 2026-11-04, including the review console flow |
-| `make audit` | govulncheck v1.9.0 (control plane), pip-audit 2.9.0 (every uv lockfile, including the Tier-2 worker's), pnpm audit (web, production) | ok in 14 s: no vulnerable symbol reached in the control plane (one advisory in a required module is not called by the code); no known vulnerabilities in any Python lockfile or in the web production dependencies |
+| `make web-test` | eslint, tsc, vitest, production build, bundle secret scan (including staff tokens) | 299 passed; build and scan pass (10 rules) |
+| `make e2e` | local stack (with Redis and the Tier-2 worker); synthetic WebRTC candidate (voice interview, failure injection and signals, recording, media security) and typed interviews through Tier-2; Chromium flows, including the review console (every kind of screen audited with axe-core); log scans for credentials (including session cookies), JWTs and transcript text; audio-file scan | 31 passed from a fresh stack in 14 min 5 s (scripted engine, reference evaluator, loopback), 2026-11-04, including the extended review console flow |
+| `make audit` | govulncheck v1.9.0 (control plane), pip-audit 2.9.0 (every uv lockfile, including the Tier-2 worker's), pnpm audit (web, production) | ok in 19 s: no vulnerable symbol reached in the control plane (one advisory in a required module is not called by the code); no known vulnerabilities in any Python lockfile or in the web production dependencies |
 | `make provider-smoke` | opt-in live OpenAI check (ADR-021) | BLOCKED: no `OPENAI_API_KEY` in this environment |
 | `make tier2-bench` | offline benchmark on `synthetic-v1` with the reference evaluator and the Go validator (DATA_AND_ML_LIFECYCLE.md) | pass: 14/14 reference attempts accepted by the Go validator, 1 abstention (no candidate speech); agreement figures are on synthetic labels and say nothing about quality |
 
@@ -259,7 +300,11 @@ Milestone D (review console):
 - The sign-in rate limit is per client address: behind a reverse proxy it needs `ATI_TRUSTED_PROXY_CIDRS` (ADR-023).
 - Cookie-authenticated changes rely on SameSite=Strict and the `Origin`/`Sec-Fetch-Site` check; there is no separate
   CSRF token.
-- Lists load at most 200 entries (no paging yet).
+- Lists load at most 200 entries (no paging yet); the queue and the report list say when they may have been cut off.
+- `ai_draft_viewed` is false both when the draft was not opened and when an API client did not report it. Telling
+  the two apart needs a migration and an owner decision, before the automation-bias study starts.
+- `ati.reports` has no index on `(tenant_id, created_at)`. The list reads only the newest rows; revisit with
+  volume.
 - No screen-reader run of the console; keyboard use, focus management and automated WCAG 2.1 A/AA checks are
   browser-tested.
 

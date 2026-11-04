@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -67,59 +68,85 @@ func bearer(r *http.Request) string {
 	return ""
 }
 
+// errNoCredential means the request carries no credential the endpoint accepts, or a malformed one.
+var errNoCredential = errors.New("no credential")
+
 // authStaff authenticates a staff member. An Authorization header alone decides when one is
-// present; otherwise the browser session cookie counts where the endpoint accepts it.
-func (s *Server) authStaff(r *http.Request, accepts staffCredential) (*interview.StaffPrincipal, bool) {
+// present; otherwise the browser session cookie counts where the endpoint accepts it. It fails with
+// errNoCredential or interview.ErrNotFound when the request is not authenticated, and with any
+// other error when authentication itself failed.
+func (s *Server) authStaff(r *http.Request, accepts staffCredential) (*interview.StaffPrincipal, error) {
 	if r.Header.Get("Authorization") != "" {
 		tok := bearer(r)
 		if !strings.HasPrefix(tok, StaffTokenPrefix) {
-			return nil, false
+			return nil, errNoCredential
 		}
-		p, err := s.svc.AuthenticateStaff(r.Context(), ids.Hash(tok))
-		return p, err == nil
+		return s.svc.AuthenticateStaff(r.Context(), ids.Hash(tok))
 	}
 	if accepts != bearerOrSession {
-		return nil, false
+		return nil, errNoCredential
 	}
-	tok, ok := staffSessionCookie(r)
+	tok, ok := cookieValue(r, StaffCookie)
 	if !ok {
-		return nil, false
+		return nil, errNoCredential
 	}
-	p, err := s.svc.AuthenticateStaffSession(r.Context(), ids.Hash(tok))
-	return p, err == nil
+	return s.svc.AuthenticateStaffSession(r.Context(), ids.Hash(tok))
 }
 
-// staffSessionCookie returns the staff session cookie when it is well formed.
-func staffSessionCookie(r *http.Request) (string, bool) {
-	c, err := r.Cookie(StaffCookie)
+// authCandidate authenticates the candidate cookie, failing like authStaff.
+func (s *Server) authCandidate(r *http.Request) (string, error) {
+	tok, ok := cookieValue(r, CandidateCookie)
+	if !ok {
+		return "", errNoCredential
+	}
+	return s.svc.AuthenticateCandidate(r.Context(), tok)
+}
+
+// authFailed answers a request that did not authenticate: 401 when it carried no valid credential,
+// and the logged 500 of writeError when authentication itself failed (for example the database),
+// so an outage is never mistaken for a signed-out user.
+func (s *Server) authFailed(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errNoCredential) || errors.Is(err, interview.ErrNotFound) {
+		unauthorized(w, r)
+		return
+	}
+	s.writeError(w, r, err)
+}
+
+// cookieValue returns an opaque session cookie (candidate or staff) when it is well formed.
+func cookieValue(r *http.Request, name string) (string, bool) {
+	c, err := r.Cookie(name)
 	if err != nil || len(c.Value) < 32 || len(c.Value) > 128 {
 		return "", false
 	}
 	return c.Value, true
 }
 
-// staffWith authenticates a staff member holding one of the roles.
-func (s *Server) staffWith(w http.ResponseWriter, r *http.Request, accepts staffCredential, roles ...string) (principal, bool) {
-	staff, ok := s.authStaff(r, accepts)
-	if !ok {
-		unauthorized(w, r)
-		return principal{}, false
-	}
-	if !slices.Contains(roles, staff.Role) {
-		httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeForbidden, "role not permitted")
+// apiCookie builds a session cookie of the public API: HttpOnly, SameSite=Strict, scoped to /api
+// and Secure outside dev and test (ADR-016, ADR-023). A negative maxAge deletes it.
+func (s *Server) apiCookie(name, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{Name: name, Value: value, Path: "/api", HttpOnly: true, Secure: s.cfg.SecureCookies(),
+		SameSite: http.SameSiteStrictMode, MaxAge: maxAge}
+}
+
+// staffPrincipal authenticates a staff member of any role.
+func (s *Server) staffPrincipal(w http.ResponseWriter, r *http.Request, accepts staffCredential) (principal, bool) {
+	staff, err := s.authStaff(r, accepts)
+	if err != nil {
+		s.authFailed(w, r, err)
 		return principal{}, false
 	}
 	return principal{kind: kindStaff, staff: staff}, true
 }
 
-// authCandidate authenticates the candidate cookie.
-func (s *Server) authCandidate(r *http.Request) (string, bool) {
-	c, err := r.Cookie(CandidateCookie)
-	if err != nil || len(c.Value) < 32 || len(c.Value) > 128 {
-		return "", false
+// staffWith authenticates a staff member holding one of the roles.
+func (s *Server) staffWith(w http.ResponseWriter, r *http.Request, accepts staffCredential, roles ...string) (principal, bool) {
+	p, ok := s.staffPrincipal(w, r, accepts)
+	if ok && !slices.Contains(roles, p.staff.Role) {
+		httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeForbidden, "role not permitted")
+		return principal{}, false
 	}
-	id, err := s.svc.AuthenticateCandidate(r.Context(), c.Value)
-	return id, err == nil
+	return p, ok
 }
 
 // authAgentService checks the Tier-1 service credential in constant time.
@@ -153,7 +180,7 @@ func actorFor(ctx context.Context, p principal) interview.Actor {
 			a.ID = p.lease.LeaseID
 		}
 	case kindStaff:
-		a.Type, a.ID = flow.ActorSystem, p.staff.TokenID
+		a.Type, a.ID, a.StaffSession = flow.ActorSystem, p.staff.TokenID, p.staff.SessionID
 	}
 	return a
 }

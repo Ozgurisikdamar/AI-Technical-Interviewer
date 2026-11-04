@@ -99,9 +99,15 @@ function mergeRanges(ranges: Range[]): Range[] {
   return out;
 }
 
+interface Cited {
+  readonly id: string;
+  /** Position in the transcript. */
+  readonly index: number;
+  readonly text: string;
+}
+
 export function locateQuotes(transcript: readonly TranscriptExcerpt[], evidence: readonly EvidenceItem[]): Highlights {
-  const order = new Map(transcript.map((s, i) => [s.segment_id, i] as const));
-  const texts = transcript.map(displayText);
+  const segments = new Map(transcript.map((s, index): [string, Cited] => [s.segment_id, { id: s.segment_id, index, text: displayText(s) }]));
   const found = new Map<string, Range[]>();
   const status: QuoteStatus[] = [];
 
@@ -111,64 +117,33 @@ export function locateQuotes(transcript: readonly TranscriptExcerpt[], evidence:
       status.push('no_quote');
       continue;
     }
-    const cited = item.transcript_segment_ids.map((id) => order.get(id));
-    if (cited.length === 0 || cited.some((i) => i === undefined)) {
+    const cited = item.transcript_segment_ids.map((id) => segments.get(id));
+    if (cited.length === 0 || cited.some((c) => c === undefined)) {
       status.push('not_located');
       continue;
     }
-    const indexes = [...new Set(cited as number[])].sort((a, b) => a - b);
-    // The joined text, and for each of its code units the segment and offset it came from (-1: the joining space).
-    let joined = '';
-    const owner: number[] = [];
-    const offset: number[] = [];
-    indexes.forEach((segment, k) => {
-      if (k > 0) {
-        joined += ' ';
-        owner.push(-1);
-        offset.push(-1);
-      }
-      const text = texts[segment] ?? '';
-      for (let j = 0; j < text.length; j++) {
-        owner.push(segment);
-        offset.push(j);
-      }
-      joined += text;
-    });
-    const haystack = collapseWhitespace(joined);
+    const parts = [...new Set(cited as Cited[])].sort((a, b) => a.index - b.index);
+    const haystack = collapseWhitespace(parts.map((p) => p.text).join(' '));
     const at = haystack.text.indexOf(quote);
     if (at < 0) {
       status.push('not_located');
       continue;
     }
     status.push('located');
+    // The match as a range of the joined text, then its part in each segment. Only the joining spaces fall outside.
     const from = haystack.source[at] ?? 0;
-    const to = haystack.source[at + quote.length - 1] ?? from;
-    let current: { segment: number; start: number; end: number } | null = null;
-    const flush = () => {
-      if (current === null) return;
-      const id = transcript[current.segment]?.segment_id;
-      if (id !== undefined) {
-        const list = found.get(id) ?? [];
-        list.push({ start: current.start, end: current.end });
-        found.set(id, list);
+    const to = (haystack.source[at + quote.length - 1] ?? from) + 1;
+    let start = 0;
+    for (const part of parts) {
+      const lo = Math.max(from, start);
+      const hi = Math.min(to, start + part.text.length);
+      if (lo < hi) {
+        const list = found.get(part.id) ?? [];
+        list.push({ start: lo - start, end: hi - start });
+        found.set(part.id, list);
       }
-      current = null;
-    };
-    for (let j = from; j <= to; j++) {
-      const segment = owner[j] ?? -1;
-      const off = offset[j] ?? -1;
-      if (segment < 0) {
-        flush();
-        continue;
-      }
-      if (current !== null && current.segment === segment && current.end === off) {
-        current.end = off + 1;
-      } else {
-        flush();
-        current = { segment, start: off, end: off + 1 };
-      }
+      start += part.text.length + 1;
     }
-    flush();
   }
 
   const ranges = new Map<string, readonly Range[]>();

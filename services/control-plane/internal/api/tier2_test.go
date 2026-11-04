@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -260,8 +261,15 @@ func TestReviewInTheBrowserSessionAndTheReportList(t *testing.T) {
 		}
 		return out
 	}
-	if all := queue(""); len(all) != 8 {
+	// Open answers: the interview waiting longest first, each interview's answers together.
+	all := queue("")
+	if len(all) != 8 {
 		t.Fatalf("both interviews are queued: %d", len(all))
+	}
+	for i, task := range all {
+		if want := []string{first, second}[i/4]; task["interview_id"] != want {
+			t.Fatalf("open queue entry %d: %v", i, task)
+		}
 	}
 	tasks := queue("?interview_id=" + first)
 	if len(tasks) != 4 {
@@ -306,8 +314,16 @@ func TestReviewInTheBrowserSessionAndTheReportList(t *testing.T) {
 		t.Fatalf("ai_draft_viewed is recorded only where a draft existed: %d of 4", n)
 	}
 	detail := e.do(req{method: "GET", url: e.public.URL + "/api/v1/review-tasks/" + tasks[0]["task_id"].(string), headers: asSession(reviewer)})
-	if detail.status != 200 || detail.body["outcome"].(map[string]any)["ai_draft_viewed"] != true {
+	if detail.status != 200 || detail.body["outcome"].(map[string]any)["ai_draft_viewed"] != true || detail.str("rubric_ref") != "rub_demo_postgres_mvcc@1" {
 		t.Fatalf("the recorded outcome: %d %s", detail.status, detail.raw)
+	}
+	// Every decision taken through the browser session names that session in its audit entry.
+	var sessionID string
+	if err := e.db.Owner.QueryRow(context.Background(), `SELECT id FROM ati.staff_sessions WHERE token_hash = $1`, ids.Hash(reviewer)).Scan(&sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(`SELECT count(*) FROM ati.audit_logs WHERE action = 'review.outcome' AND details->>'staff_session_id' = $1`, sessionID); n != 4 {
+		t.Fatalf("review audits naming the session: %d of 4", n)
 	}
 	list := e.do(req{method: "GET", url: e.public.URL + "/api/v1/reports", headers: asSession(recruiter)})
 	reports, _ := list.body["reports"].([]any)
@@ -341,7 +357,40 @@ func TestReviewInTheBrowserSessionAndTheReportList(t *testing.T) {
 	if r := e.do(req{method: "GET", url: e.public.URL + "/api/v1/reports?limit=201", headers: asSession(recruiter)}); r.status != 400 {
 		t.Fatalf("limit above 200: %d", r.status)
 	}
-	if left := queue("?interview_id=" + second); len(left) != 4 {
+	left := queue("?interview_id=" + second)
+	if len(left) != 4 {
 		t.Fatalf("the other interview is still queued: %d", len(left))
+	}
+	// A decision equal to the AI draft is audited as unchanged; one that differs, as changed.
+	agree := e.do(req{method: "POST", url: e.public.URL + "/api/v1/review-tasks/" + left[0]["task_id"].(string) + "/outcome", headers: asSession(reviewer), body: map[string]any{
+		"scores":    map[string]int{"technical_accuracy": 50, "architecture_maturity": 50, "edge_case_awareness": 50, "claim_support": 50},
+		"rationale": "Agrees with the draft on every dimension."}})
+	if agree.status != 201 {
+		t.Fatalf("decision equal to the draft: %d %s", agree.status, agree.raw)
+	}
+	for answer, want := range map[string]string{answers[0].ID: "true", left[0]["answer_id"].(string): "false"} {
+		if n := e.count(`SELECT count(*) FROM ati.audit_logs WHERE action = 'review.outcome' AND details->>'answer_id' = $1 AND details->>'changed_from_ai' = $2`, answer, want); n != 1 {
+			t.Errorf("changed_from_ai for %s: want %s", answer, want)
+		}
+	}
+	// Reviewed answers: the most recently decided interview first, each interview's answers in
+	// order. An answer of `second` decided after one of the newer `third` puts `second` first.
+	third, _ := e.inReview()
+	thirdTasks := queue("?interview_id=" + third)
+	for _, task := range []string{thirdTasks[0]["task_id"].(string), left[1]["task_id"].(string)} {
+		if r := decide(task, asSession(reviewer), false); r.status != 201 {
+			t.Fatalf("decision on %s: %d %s", task, r.status, r.raw)
+		}
+	}
+	want := []string{left[0]["task_id"].(string), left[1]["task_id"].(string), thirdTasks[0]["task_id"].(string)}
+	for _, task := range tasks {
+		want = append(want, task["task_id"].(string))
+	}
+	var got []string
+	for _, task := range queue("?status=completed") {
+		got = append(got, task["task_id"].(string))
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("completed queue:\n got %v\nwant %v", got, want)
 	}
 }

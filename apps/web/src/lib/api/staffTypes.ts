@@ -3,6 +3,10 @@
  * tags `review` and `staff`). Nothing here reaches a candidate's page. Scores are rubric scores
  * that a human reviewer records; AI evaluations are uncalibrated drafts (ADR-022, ADR-023).
  */
+import type { InterviewState } from './types';
+
+/** The largest page the list endpoints serve (the `limit` maximum of the queue and the report list). */
+export const PAGE_LIMIT = 200;
 
 export const STAFF_ROLES = ['admin', 'recruiter', 'reviewer'] as const;
 export type StaffRole = (typeof STAFF_ROLES)[number];
@@ -98,20 +102,27 @@ export interface AIDraft {
   readonly evidence: readonly EvidenceItem[];
 }
 
-export interface ReviewOutcome {
-  readonly outcome_id: string;
-  readonly reviewer_id: string;
+/** A reviewer's recorded decision, as a task's outcome and a report's answer both carry it. */
+export interface RecordedDecision {
   /** Null for an answer whose question has no rubric (reviewed with a rationale only). */
   readonly scores: DimensionScores | null;
   readonly weighted_score: number | null;
   readonly rationale: string;
-  readonly ai_draft_viewed: boolean;
+  readonly reviewer_id: string;
   readonly decided_at: string;
+}
+
+export interface ReviewOutcome extends RecordedDecision {
+  readonly outcome_id: string;
+  readonly ai_draft_viewed: boolean;
 }
 
 export interface ReviewTask extends ReviewTaskSummary {
   readonly language: string;
   readonly question: string;
+  /** rubric_id@version of the answer's question, or null when the question has no rubric. */
+  readonly rubric_ref: string | null;
+  /** Null when the question has no rubric, or when its rubric is not stored (the answer cannot be decided). */
   readonly rubric: Rubric | null;
   readonly transcript: readonly TranscriptExcerpt[];
   readonly ai_evaluation: AIDraft | null;
@@ -126,7 +137,7 @@ export interface ReviewDecision {
 
 export interface ReviewOutcomeResult {
   readonly outcome_id: string;
-  readonly interview_state: string;
+  readonly interview_state: InterviewState;
   readonly open_review_tasks: number;
 }
 
@@ -145,16 +156,8 @@ export interface ReportSummary {
   readonly answer_count: number;
 }
 
-export interface ReportAIPart {
-  readonly evaluation_id: string;
-  readonly evaluator_version: string;
-  readonly scores: DimensionScores;
-  readonly weighted_score: number;
-  readonly confidence: number;
-  readonly calibrated: boolean;
-  readonly routing_reasons: readonly string[];
-  readonly evidence: readonly EvidenceItem[];
-}
+/** The AI draft as a report keeps it: without the advisory step and the output risk. */
+export type ReportAIPart = Omit<AIDraft, 'advisory_next_step' | 'evaluator_output_risk'>;
 
 export interface ReportAnswer {
   readonly answer_id: string;
@@ -163,14 +166,9 @@ export interface ReportAnswer {
   /** rubric_id@version, or null when the question has no rubric. */
   readonly rubric: string | null;
   readonly rubric_synthetic: boolean | null;
-  readonly reviewed: {
-    readonly scores: DimensionScores | null;
-    readonly weighted_score: number | null;
-    readonly rationale: string;
+  readonly reviewed: RecordedDecision & {
     /** Null in reports written before the console recorded it. */
     readonly ai_draft_viewed: boolean | null;
-    readonly reviewer_id: string;
-    readonly decided_at: string;
   };
   readonly review_reasons: readonly string[];
   readonly ai_evaluation: ReportAIPart | null;

@@ -195,18 +195,18 @@ async def test_reviewer_decides_every_answer_in_the_browser(stack: dict[str, str
         sid,
     )
     mine = {"technical_accuracy": 60, "architecture_maturity": 50, "edge_case_awareness": 40, "claim_support": 30}
-    assert [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in outcomes] == [
-        (item, reviewer, mine, 4900, EXPECTED_SCORES[item], item != "q2") for item in EXPECTED_SCORES
-    ]
+    assert outcomes == [(item, reviewer, mine, 4900, EXPECTED_SCORES[item], item != "q2") for item in EXPECTED_SCORES]
     assert db.one("SELECT state FROM ati.interview_sessions WHERE id = %s", sid) == "REPORT_READY"
     last = db.one("SELECT transition_id FROM ati.session_events WHERE session_id = %s ORDER BY state_version DESC LIMIT 1", sid)
     assert last == "T17"
     assert db.one("SELECT count(*) FROM ati.reports WHERE session_id = %s", sid) == 1
 
-    # One browser session each, never longer than 8 hours, stored as the hash of the cookie; the
-    # reviewer's ended at sign-out, the recruiter's is still open. Each start and end is audited.
+    # Browser sessions, never longer than the stack's 8 hours, stored as the hash of the cookie: the
+    # reviewer's first ended when they signed out in another tab while deciding the last answer, the
+    # second (signed in again in a new tab) at the final sign-out; the recruiter's is still open.
+    # Each start and end is audited.
     cookies = [line for line in secrets.read_text().splitlines() if line]
-    assert len(cookies) == 2
+    assert len(cookies) == 3
     hashes = [hashlib.sha256(v.encode()).hexdigest() for v in cookies]
     sessions = {
         r[0]: r[1:]
@@ -216,7 +216,7 @@ async def test_reviewer_decides_every_answer_in_the_browser(stack: dict[str, str
             hashes,
         )
     }
-    for cookie_hash, token_id, ended in [(hashes[0], reviewer, True), (hashes[1], recruiter, False)]:
+    for cookie_hash, token_id, ended in [(hashes[0], reviewer, True), (hashes[1], reviewer, True), (hashes[2], recruiter, False)]:
         session_id, owner, bounded, revoked = sessions[cookie_hash]
         assert (owner, bounded, revoked) == (token_id, True, ended)
         actions = sorted(
@@ -228,6 +228,16 @@ async def test_reviewer_decides_every_answer_in_the_browser(stack: dict[str, str
             )
         )
         assert actions == (["staff.session.end", "staff.session.start"] if ended else ["staff.session.start"]), actions
+
+    # Each decision's audit names the reviewer and the browser session it was made through: the first
+    # three the first session, the last one the session signed in again. The refused attempt in
+    # between left no decision.
+    first, second = sessions[hashes[0]][0], sessions[hashes[1]][0]
+    decided = db.rows(
+        "SELECT actor_id, details->>'staff_session_id' FROM ati.audit_logs WHERE action = 'review.outcome' AND subject_id = %s ORDER BY id",
+        sid,
+    )
+    assert decided == [(reviewer, first)] * 3 + [(reviewer, second)], decided
 
     # No credential was written anywhere: not in the audit log, not in stored replays.
     for value in [reviewer_token, staff_token, *cookies]:

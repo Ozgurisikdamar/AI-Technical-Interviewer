@@ -16,9 +16,9 @@ import (
 
 // candidate authenticates the cookie and binds it to the interview in the path (404 otherwise).
 func (s *Server) candidate(w http.ResponseWriter, r *http.Request) (principal, bool) {
-	sid, ok := s.authCandidate(r)
-	if !ok {
-		unauthorized(w, r)
+	sid, err := s.authCandidate(r)
+	if err != nil {
+		s.authFailed(w, r, err)
 		return principal{}, false
 	}
 	if id := r.PathValue("interview_id"); id != "" && id != sid {
@@ -192,10 +192,7 @@ func (s *Server) exchangeInvitation(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: CandidateCookie, Value: ex.CandidateToken, Path: "/api", HttpOnly: true, Secure: s.cfg.SecureCookies(),
-		SameSite: http.SameSiteStrictMode, MaxAge: int(s.cfg.CandidateSessionTTL / time.Second),
-	})
+	http.SetCookie(w, s.apiCookie(CandidateCookie, ex.CandidateToken, int(s.cfg.CandidateSessionTTL/time.Second)))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"interview_id": ex.SessionID, "state": ex.State})
 }
 

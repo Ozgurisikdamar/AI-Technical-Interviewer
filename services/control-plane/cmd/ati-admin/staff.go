@@ -60,7 +60,8 @@ func revokeStaffToken(ctx context.Context, pool *pgxpool.Pool, id string) (int64
 				return err
 			}
 		}
-		t, err := tx.Exec(ctx, `UPDATE ati.staff_sessions SET revoked_at = now() WHERE staff_token_id = $1 AND revoked_at IS NULL`, id)
+		// Only live sessions: expired ones already ended, and stamping them would inflate the count.
+		t, err := tx.Exec(ctx, `UPDATE ati.staff_sessions SET revoked_at = now() WHERE staff_token_id = $1 AND revoked_at IS NULL AND expires_at > now()`, id)
 		if err != nil {
 			return err
 		}

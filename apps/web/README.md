@@ -25,10 +25,13 @@ Two route groups share the document shell (`src/app/layout.tsx`) and nothing els
 ## Review console (`/staff`, ADR-023)
 
 - **Sign-in:** a staff token from `ati-admin create-staff-token` is pasted once.
-  - The control plane exchanges it for a session cookie: HttpOnly, SameSite=Strict, `/api` only, at most 8 hours.
+  - The control plane exchanges it for a session cookie: HttpOnly, SameSite=Strict, `/api` only, 8 hours by default
+    and never longer than the token.
   - The page never stores the token. The field has no `name`, stays disabled until the page has hydrated, and is
     cleared after use.
   - Use short-lived tokens for the console (`--ttl`).
+  - Afterwards the console returns to the page that asked for a sign-in, but only if it is a console page the role
+    may open (`safeNext` in `src/lib/staff/nav.ts`); otherwise it opens the role's home.
 - **Queue:** the answers waiting for review, grouped by interview, with the reasons that concern the process.
 - **Answer:**
   - the question, the candidate's transcript and the rubric;
@@ -36,11 +39,14 @@ Two route groups share the document shell (`src/app/layout.tsx`) and nothing els
     (`src/lib/staff/highlight.ts`, tested with the validator's cases in `contracts/fixtures/quote-matching`);
   - the reviewer scores each dimension and writes a rationale;
   - the AI draft stays closed, and unrendered, until the reviewer opens it. It never prefills the form, and the
-    decision records whether it was opened.
+    decision records whether it was opened;
+  - if the session ends meanwhile, the form keeps what was typed and offers sign-in in a new tab.
 - **Reports:** the list holds no scores and no candidate details; a report shows the reviewers' decisions, with the AI
   parts folded.
+- Lists show the API's largest page (200) and say so when they may have been cut off.
 - Recruiters read reports; reviewers and administrators also review. The server enforces the roles. The console only
-  hides what a role cannot open.
+  hides what a role cannot open: `staff/review/layout.tsx` and `staff/reports/layout.tsx` require a session whose role
+  may open the section.
 
 ## Security
 

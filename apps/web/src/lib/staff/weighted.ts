@@ -21,12 +21,7 @@ export function weightedCenti(scores: Partial<Record<Dimension, number>>, weight
   return total;
 }
 
-/** 4900 → "49.00". */
-export function formatCenti(centi: number): string {
-  return (centi / 100).toFixed(2);
-}
-
-/** A score in points as the API reports it (two decimals at most) → "49.00". */
+/** A score in points as the API reports it (two decimals at most) → "49.00". Hundredths: formatPoints(centi / 100). */
 export function formatPoints(points: number): string {
   return points.toFixed(2);
 }

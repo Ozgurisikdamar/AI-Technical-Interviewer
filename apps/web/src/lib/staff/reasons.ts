@@ -25,12 +25,7 @@ export interface SplitReasons {
   readonly withDraft: readonly string[];
 }
 
+/** Splits reasons (each once, as the parser leaves them) into the two groups, keeping their order. */
 export function splitReasons(reasons: readonly string[]): SplitReasons {
-  const process: string[] = [];
-  const withDraft: string[] = [];
-  for (const r of reasons) {
-    const list = PROCESS_REASONS.has(r) ? process : withDraft;
-    if (!list.includes(r)) list.push(r);
-  }
-  return { process, withDraft };
+  return { process: reasons.filter((r) => PROCESS_REASONS.has(r)), withDraft: reasons.filter((r) => !PROCESS_REASONS.has(r)) };
 }

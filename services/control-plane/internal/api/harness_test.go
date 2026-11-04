@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/api"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/config"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
@@ -57,7 +59,8 @@ type env struct {
 	keys     atomic.Int64
 	svc      *interview.Service
 	rec      *fakeRecorder
-	client   *http.Client // nil: http.DefaultClient
+	client   *http.Client  // nil: http.DefaultClient
+	pool     *pgxpool.Pool // the control-plane pool the server uses (closing it simulates an outage)
 }
 
 // fakeRecorder records the calls the API makes to the recorder.
@@ -145,7 +148,7 @@ func newEnvPool(t *testing.T, overrides map[string]string, maxConns int32) *env 
 	rec := &fakeRecorder{}
 	srv := api.New(api.Deps{Config: cfg, Service: svc, Tier1: tier1ctx.New(tier1Pool, nil), Media: media, Pool: pool, Tier1Pool: tier1Pool, Log: log,
 		Recorder: rec})
-	e := &env{t: t, db: db, media: media, logs: logs, svc: svc, tenant: ids.New(ids.Tenant), rec: rec}
+	e := &env{t: t, db: db, media: media, logs: logs, svc: svc, tenant: ids.New(ids.Tenant), rec: rec, pool: pool}
 	e.public = httptest.NewServer(srv.PublicHandler())
 	e.internal = httptest.NewServer(srv.InternalHandler())
 	t.Cleanup(e.public.Close)

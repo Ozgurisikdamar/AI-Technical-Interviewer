@@ -6,7 +6,11 @@ export interface InterviewGroup {
   readonly tasks: readonly ReviewTaskSummary[];
 }
 
-/** Groups tasks by interview, keeping the queue's order (oldest interview first, answers in order). */
+/**
+ * Groups tasks by interview, keeping the queue's order: open answers oldest interview first,
+ * reviewed ones most recently decided interview first, each interview's answers in the order
+ * they were given.
+ */
 export function groupByInterview(tasks: readonly ReviewTaskSummary[]): InterviewGroup[] {
   const groups = new Map<string, ReviewTaskSummary[]>();
   for (const task of tasks) {

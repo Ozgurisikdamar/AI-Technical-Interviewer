@@ -1,5 +1,11 @@
 /* Review console styles. Colours come from the global tokens (WCAG 2.2 AA). */
 
+/* The console's chrome and pages share one wider content width; the box itself takes no space. */
+.console {
+  display: contents;
+  --content-width: 64rem;
+}
+
 .nav {
   display: flex;
   flex-wrap: wrap;
@@ -36,13 +42,6 @@
 
 .signOut {
   margin-left: auto;
-}
-
-.wide {
-  width: 100%;
-  max-width: 64rem;
-  margin: 0 auto;
-  padding: 1.5rem 1rem 3rem;
 }
 
 .meta {
@@ -274,22 +273,7 @@
   font-weight: 600;
 }
 
-.summaryList {
-  margin: 0;
-  padding-left: 1.25rem;
-}
 
-.linkButton {
-  font: inherit;
-  color: var(--color-error-text);
-  background: none;
-  border: none;
-  padding: 0.25rem 0;
-  text-decoration: underline;
-  text-underline-offset: 0.15em;
-  cursor: pointer;
-  text-align: left;
-}
 
 .disclosure {
   margin: 0;

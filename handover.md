@@ -1,8 +1,73 @@
 # HANDOVER — Latest Review & Implementation Instructions for Claude
 
-> **LATEST UPDATE — 2026-11-04 (UTC): Milestone D (reviewer web UI, ADR-023) implemented on `main`**
+> **LATEST UPDATE — 2026-11-04 (UTC): review pass of the review console (Milestone D) on `main`**
 >
-> Read this update first, then the Milestone B/C and Milestone A updates below it. The owner's review further down (based on `545983f`) remains the instruction baseline.
+> Read this update first, then the Milestone D, B/C and A updates below it. The owner's review further down (based on `545983f`) remains the instruction baseline.
+
+### Done in the review pass
+
+A correctness review (`/code-review`) and a simplification review (`/simplify`) of Milestone D found the defects
+below. Each is fixed with a test. [IMPLEMENTATION_STATUS.md](docs/status/IMPLEMENTATION_STATUS.md) lists them in full.
+
+- **Control plane:**
+  - a failure while checking a credential answered 401, which the console takes for a signed-out user. It now
+    answers 500;
+  - `changed_from_ai` was always true. It now compares the scores;
+  - the reviewed queue froze on the oldest 200 decisions. It now shows the most recently decided interviews first;
+  - the report list parsed every stored report;
+  - signing out with a bearer token cleared a valid browser session;
+  - a token with seconds left could start a session;
+  - `revoke-staff-token` counted expired sessions.
+- **Added in the control plane:**
+  - audits of actions taken through a session carry its id;
+  - review tasks state their `rubric_ref`;
+  - the shared quote cases run through the real validator;
+  - a test checks, route by route, that the cookie works exactly where OpenAPI declares `staffSession`.
+- **Console:**
+  - the parsers refused valid data (item ids that start with a digit, long transcripts, long non-BMP text). They now
+    use the server's limits;
+  - a decision could be sent twice;
+  - a session that ended while deciding discarded the reviewer's work. The form now keeps it and offers sign-in in a
+    new tab;
+  - a new filter could flash the previous list;
+  - codes like `constructor` could reach built-in members in message lookups;
+  - the report list stopped silently at 50.
+- **Added in the console:** sign-in returns to the page that asked for it, through an allow-list.
+- **Simplified:**
+  - one loader shell, one error summary and one error page;
+  - session guards per section layout;
+  - shared draft and decision views;
+  - one content width.
+- **Browser flow:** the reviewer signs out in another tab while deciding the last answer, keeps the typed decision,
+  signs in again in a new tab and records it. The database check confirms that this decision is audited under the
+  new session.
+
+### Verification at this revision
+
+Each command below ran on 2026-11-04 in this environment:
+
+| Command | Result |
+|---|---|
+| `make test` | pass in 1 min 49 s: repository checks and import boundaries; 145 contract tests; Go lint and 17 Go packages (race detector); 198 agent tests; 114 Tier-2 tests; web lint, typecheck, 299 unit tests, build and bundle scan |
+| `make e2e` | 31 passed from a fresh stack in 14 min 5 s (scripted engine, reference evaluator, loopback), 2026-11-04, including the extended review console flow |
+| `make audit` | ok in 19 s: no vulnerable symbol reached in the control plane (one advisory in a required module is not called by the code); no known vulnerabilities in any Python lockfile or in the web production dependencies |
+| `make provider-smoke` | BLOCKED (no key) |
+
+### Still open
+
+- Everything listed under Milestone D below, except that lists now say when they may have been cut off.
+- A correction to the Milestone D update below: a session lasts 8 hours by default and at most 24
+  (`ATI_STAFF_SESSION_TTL`), not at most 8.
+- `ai_draft_viewed` cannot tell "not opened" from "not reported by an API client". It needs an owner decision and a
+  migration before the automation-bias study.
+- No automated test covers the race between the silent session refresh and a sign-out. The refresh now changes only a
+  state that is still signed in.
+
+---
+
+> **UPDATE — 2026-11-04 (UTC): Milestone D (reviewer web UI, ADR-023) implemented on `main` (kept as written)**
+>
+> At that point it was read first, then the Milestone B/C and Milestone A updates below it. The owner's review further down (based on `545983f`) remains the instruction baseline.
 
 ### Done in Milestone D
 

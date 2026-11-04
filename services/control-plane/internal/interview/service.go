@@ -60,6 +60,9 @@ type Actor struct {
 	Type      flow.Actor
 	ID        string
 	RequestID string
+	// StaffSession is the browser session a staff member acted through (ADR-023); empty for a
+	// bearer token. Audits record it, so actions taken with a stolen cookie can be traced.
+	StaffSession string
 }
 
 // LeaseRef is the Tier-1 lease presented with an internal request (verified inside the transaction).
@@ -274,6 +277,9 @@ func commitThen(err error) error { return &committedError{err: err} }
 func (s *Service) audit(ctx context.Context, tx pgx.Tx, tenantID string, actor Actor, action, subjectType, subjectID, outcome string, details map[string]any) error {
 	if details == nil {
 		details = map[string]any{}
+	}
+	if actor.StaffSession != "" {
+		details["staff_session_id"] = actor.StaffSession
 	}
 	b, _ := json.Marshal(details)
 	_, err := tx.Exec(ctx, `INSERT INTO ati.audit_logs (tenant_id, actor_type, actor_id, action, subject_type, subject_id, outcome, request_id, details)

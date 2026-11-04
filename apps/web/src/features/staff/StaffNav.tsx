@@ -67,7 +67,7 @@ export function StaffNav() {
         ))}
       </ul>
       <p className={styles.who} data-testid="staff-who">
-        {t.staff.layout.signedInAs(session.label, t.staff.roles[session.role] ?? session.role)} ·{' '}
+        {t.staff.layout.signedInAs(session.label, t.staff.roles[session.role])} ·{' '}
         {t.staff.layout.sessionUntil(formatDateTime(session.expires_at))}
       </p>
       <button
@@ -80,7 +80,7 @@ export function StaffNav() {
       >
         {pending ? t.staff.layout.signingOut : t.staff.layout.signOut}
       </button>
-      {failure !== null ? <ErrorNotice error={failure} catalog={t.staff.errors} /> : null}
+      {failure !== null ? <ErrorNotice error={failure} /> : null}
     </nav>
   );
 }

@@ -2,9 +2,13 @@
  * English UI strings. Every candidate-facing and review-console string lives here so that another
  * language (e.g. `tr.ts` exporting `const tr: Messages`) can be added without touching components.
  * Parameterised strings are functions so translations can reorder words and handle plurals.
+ * Codes from the server are looked up with `label` (./label), never by indexing a map directly.
  */
+import type { StaffRole } from '@/lib/api/staffTypes';
 
 const plural = (n: number, one: string, other: string) => (n === 1 ? one : other);
+/** 4000 → "4,000". */
+const count = (n: number) => n.toLocaleString('en-GB');
 
 export const en = {
   meta: {
@@ -122,7 +126,7 @@ export const en = {
       legitimate_interest: 'Legitimate interest',
       legal_obligation: 'Legal obligation',
       to_be_determined_by_legal: 'Not yet determined (draft notice)',
-    } as Record<string, string>,
+    },
     unknownBasis: 'Not stated',
     dataCategory: {
       live_audio_stream: 'Live microphone audio',
@@ -130,7 +134,7 @@ export const en = {
       interaction_timing: 'Timing of the conversation',
       audio_recording: 'Recording of your microphone audio',
       assessment_output: 'Assessment notes for human reviewers',
-    } as Record<string, string>,
+    },
     unknownCategory: 'Other information',
     declineRequiredWarning: 'Declining this will cancel the interview.',
     declineVoiceNote: 'You will type your answers instead of speaking.',
@@ -335,11 +339,11 @@ export const en = {
       footer:
         'Decision support only. A person scores every answer; AI drafts are uncalibrated and may be wrong. Nothing here is a hiring decision or a ranking.',
     },
-    roles: { admin: 'administrator', recruiter: 'recruiter', reviewer: 'reviewer' } as Record<string, string>,
+    roles: { admin: 'administrator', recruiter: 'recruiter', reviewer: 'reviewer' } satisfies Record<StaffRole, string>,
     signIn: {
       heading: 'Sign in to the review console',
       intro:
-        'Paste the staff token an administrator gave you. It is exchanged for a session of at most 8 hours; the token itself is not kept in this browser.',
+        'Paste the staff token an administrator gave you. It is exchanged for a browser session (8 hours by default, never longer than the token); the token itself is not kept in this browser.',
       label: 'Staff token',
       hint: 'It starts with ati_st_. The field is cleared after you sign in.',
       submit: 'Sign in',
@@ -374,6 +378,8 @@ export const en = {
       reviewedAt: (time: string) => `Reviewed ${time}`,
       filteredTo: (id: string) => `Showing interview ${id} only.`,
       showAll: 'Show all interviews',
+      truncatedOpen: (n: number) => `Only the first ${count(n)} answers are listed. More appear as these are reviewed.`,
+      truncatedCompleted: (n: number) => `Only the first ${count(n)} answers are listed, most recently reviewed first.`,
     },
     task: {
       heading: (item: string) => `Review the answer to question ${item}`,
@@ -404,8 +410,8 @@ export const en = {
       scores: 'Scores',
       scoreHint: 'A whole number from 0 to 100.',
       rationale: 'Rationale',
-      rationaleHint: 'Between 10 and 4,000 characters: what in the answer supports your scores.',
-      rationaleCount: (n: number) => `${n} of 4,000 characters`,
+      rationaleHint: (min: number, max: number) => `Between ${min} and ${count(max)} characters: what in the answer supports your scores.`,
+      rationaleCount: (n: number, max: number) => `${count(n)} of ${count(max)} characters`,
       preview: (score: string) => `Weighted score: ${score} of 100`,
       previewPending: 'Weighted score: enter all four scores.',
       previewNote: 'A preview. The server recomputes the weighted score from your scores.',
@@ -416,27 +422,25 @@ export const en = {
         required: (field: string) => `${field}: enter a score.`,
         invalid: (field: string) => `${field}: enter a whole number from 0 to 100.`,
         rationaleRequired: 'Rationale: explain your decision.',
-        tooShort: 'Rationale: write at least 10 characters.',
-        tooLong: 'Rationale: shorten it to 4,000 characters or fewer.',
+        tooShort: (min: number) => `Rationale: write at least ${min} characters.`,
+        tooLong: (max: number) => `Rationale: shorten it to ${count(max)} characters or fewer.`,
       },
       fieldError: {
         required: 'Enter a score.',
         invalid: 'Enter a whole number from 0 to 100.',
         rationaleRequired: 'Explain your decision.',
-        tooShort: 'Write at least 10 characters.',
-        tooLong: 'Shorten it to 4,000 characters or fewer.',
+        tooShort: (min: number) => `Write at least ${min} characters.`,
+        tooLong: (max: number) => `Shorten it to ${count(max)} characters or fewer.`,
       },
       recorded: 'Decision recorded',
       recordedNext: 'Review the next answer of this interview',
       recordedReport: 'Every answer of this interview is reviewed. Read the report',
       recordedQueue: 'Back to the queue',
       alreadyDecided: 'This answer had already been reviewed. The recorded decision is shown below.',
+      sessionEnded:
+        'Your session has ended, so the decision was not recorded. Your scores and rationale are still here: sign in again in a new tab, then record the decision here.',
+      signInNewTab: 'Sign in in a new tab',
       outcome: 'Recorded decision',
-      outcomeBy: (reviewer: string, time: string) => `Recorded by ${reviewer} on ${time}.`,
-      outcomeNoScores: 'No scores: the question has no rubric.',
-      outcomeWeighted: (score: string) => `Weighted score: ${score} of 100`,
-      draftViewed: 'The AI draft was opened before this decision.',
-      draftNotViewed: 'The AI draft was not opened before this decision.',
       draftHeading: 'AI draft (uncalibrated)',
       draftNote:
         'An uncalibrated draft from the evaluator. It is not a decision and may be wrong: check every claim against the transcript.',
@@ -457,6 +461,7 @@ export const en = {
         'A report exists once every answer of an interview has been reviewed. The list holds no scores and no candidate details; it is not a ranking.',
       loading: 'Loading reports…',
       empty: 'No reports yet.',
+      truncated: (n: number) => `Only the ${count(n)} newest reports are listed.`,
       interview: (id: string) => `Interview ${id}`,
       generated: (time: string) => `Written ${time}`,
       answers: (n: number) => plural(n, '1 answer', `${n} answers`),
@@ -476,14 +481,18 @@ export const en = {
       rubricSynthetic: 'synthetic demo rubric',
       noRubric: 'No rubric: reviewed with a rationale only.',
       reviewed: 'Reviewer decision',
-      rationale: 'Rationale',
-      weighted: (score: string) => `Weighted score: ${score} of 100`,
-      decidedBy: (reviewer: string, time: string) => `Decided by ${reviewer} on ${time}.`,
-      draftViewed: 'The reviewer opened the AI draft before deciding.',
-      draftNotViewed: 'The reviewer did not open the AI draft before deciding.',
       reasons: 'Why it was reviewed',
       aiSummary: 'AI draft for this answer (uncalibrated)',
       noAi: 'There was no AI draft for this answer.',
+    },
+    /** A recorded decision, on its task and in the report. */
+    decision: {
+      noScores: 'No scores: the question has no rubric.',
+      weighted: (score: string) => `Weighted score: ${score} of 100`,
+      rationale: 'Rationale',
+      by: (reviewer: string, time: string) => `Decided by ${reviewer} on ${time}.`,
+      draftViewed: 'The AI draft was opened before this decision.',
+      draftNotViewed: 'The AI draft was not opened before this decision.',
     },
     dimensions: {
       technical_accuracy: 'Technical accuracy',
@@ -517,7 +526,7 @@ export const en = {
       unsupported_claims: 'The evaluator found unsupported claims',
       contradictions: 'The evaluator found contradictions',
       evaluator_disagreement: 'Two AI evaluations of this answer disagree',
-    } as Record<string, string>,
+    },
     notPermitted: {
       heading: 'Not available for your role',
       body: 'Your role cannot open this page.',

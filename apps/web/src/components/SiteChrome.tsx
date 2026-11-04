@@ -8,16 +8,14 @@ interface SiteHeaderProps {
   webEnvironment: string | undefined;
   /** Rendered at the end of the brand bar (the review console's navigation). */
   children?: ReactNode;
-  /** The review console's wider pages. */
-  wide?: boolean;
 }
 
-/** The page header: the pre-production banner (ADR-020) and the brand bar. */
-export function SiteHeader({ brand, webEnvironment, children, wide = false }: SiteHeaderProps) {
+/** The page header: the pre-production banner (ADR-020) and the brand bar, as wide as the content. */
+export function SiteHeader({ brand, webEnvironment, children }: SiteHeaderProps) {
   return (
     <header className={styles.header}>
       <PreProductionBanner webEnvironment={webEnvironment} />
-      <div className={wide ? `${styles.brandBar} ${styles.wide}` : styles.brandBar}>
+      <div className={styles.brandBar}>
         <p className={styles.brand}>{brand}</p>
         {children}
       </div>

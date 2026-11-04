@@ -3,7 +3,7 @@
 import { useId, useState } from 'react';
 import ui from '@/components/ui.module.css';
 import { useMessages } from '@/i18n/client';
-import { DIMENSIONS, type AIDraft, type EvidenceItem } from '@/lib/api/staffTypes';
+import { DIMENSIONS, type AIDraft, type DimensionScores, type EvidenceItem, type ReportAIPart } from '@/lib/api/staffTypes';
 import type { QuoteStatus } from '@/lib/staff/highlight';
 import { formatPoints } from '@/lib/staff/weighted';
 import { Reasons } from './Reasons';
@@ -47,29 +47,51 @@ export function AIDraftDisclosure({ draft, reasons, quoteStatus, language, onOpe
       </h2>
       {open ? (
         <div id={panelId} className={styles.panel} data-testid="ai-draft-panel">
-          <p className={ui.warning}>{t.staff.task.draftNote}</p>
-          <h3>{t.staff.task.draftScores}</h3>
-          <ScoresTable scores={draft.scores} testId="ai-draft-scores" />
-          <p>{t.staff.task.draftWeighted(formatPoints(draft.weighted_score))}</p>
-          <p className={styles.meta}>
-            {t.staff.task.draftConfidence(draft.confidence.toFixed(2))} · {t.staff.task.draftEvaluator(draft.evaluator_version)}
-          </p>
-          <p className={styles.meta}>{t.staff.task.draftAdvisory(draft.advisory_next_step)}</p>
-          {reasons.length > 0 ? (
-            <>
-              <h3>{t.staff.task.draftReasons}</h3>
-              <Reasons reasons={reasons} testId="ai-draft-reasons" />
-            </>
-          ) : null}
-          <h3>{t.staff.task.draftEvidence}</h3>
-          <EvidenceList evidence={draft.evidence} quoteStatus={quoteStatus} language={language} />
+          <DraftBody draft={draft} reasons={reasons} quoteStatus={quoteStatus} language={language} testId="ai-draft" />
         </div>
       ) : null}
     </section>
   );
 }
 
-export function ScoresTable({ scores, testId }: { scores: Readonly<Record<(typeof DIMENSIONS)[number], number>>; testId?: string }) {
+interface DraftBodyProps {
+  /** The task's draft, or the part of it a report keeps (no advisory step). */
+  draft: ReportAIPart & { readonly advisory_next_step?: string };
+  /** AI-derived and unknown review reasons: shown only with the draft. */
+  reasons: readonly string[];
+  /** Whether each quote was found in the transcript shown; absent where no transcript is shown. */
+  quoteStatus?: readonly QuoteStatus[];
+  language: string;
+  /** Prefix of the scores' and reasons' test ids. */
+  testId?: string;
+}
+
+/** What an AI draft says, always marked as an uncalibrated draft: on the task page and in the report. */
+export function DraftBody({ draft, reasons, quoteStatus, language, testId }: DraftBodyProps) {
+  const t = useMessages();
+  return (
+    <>
+      <p className={ui.warning}>{t.staff.task.draftNote}</p>
+      <h3>{t.staff.task.draftScores}</h3>
+      <ScoresTable scores={draft.scores} testId={testId === undefined ? undefined : `${testId}-scores`} />
+      <p>{t.staff.task.draftWeighted(formatPoints(draft.weighted_score))}</p>
+      <p className={styles.meta}>
+        {t.staff.task.draftConfidence(draft.confidence.toFixed(2))} · {t.staff.task.draftEvaluator(draft.evaluator_version)}
+      </p>
+      {draft.advisory_next_step !== undefined ? <p className={styles.meta}>{t.staff.task.draftAdvisory(draft.advisory_next_step)}</p> : null}
+      {reasons.length > 0 ? (
+        <>
+          <h3>{t.staff.task.draftReasons}</h3>
+          <Reasons reasons={reasons} testId={testId === undefined ? undefined : `${testId}-reasons`} />
+        </>
+      ) : null}
+      <h3>{t.staff.task.draftEvidence}</h3>
+      <EvidenceList evidence={draft.evidence} quoteStatus={quoteStatus} language={language} />
+    </>
+  );
+}
+
+export function ScoresTable({ scores, testId }: { scores: DimensionScores; testId?: string }) {
   const t = useMessages();
   return (
     <table className={styles.table} data-testid={testId}>
@@ -85,7 +107,7 @@ export function ScoresTable({ scores, testId }: { scores: Readonly<Record<(typeo
   );
 }
 
-export function EvidenceList({
+function EvidenceList({
   evidence,
   quoteStatus,
   language,

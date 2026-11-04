@@ -259,8 +259,14 @@ func TestRevokingAStaffTokenEndsItsBrowserSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	list := admin(t, "list-staff-tokens", noEnv, "--url", owner, "--tenant", tenant)
 	id := sess.Principal.TokenID
+	// A session that expired earlier is not live: it is neither counted nor stamped by the revocation.
+	expired := ids.New(ids.StaffSession)
+	if _, err := db.Owner.Exec(ctx, `INSERT INTO ati.staff_sessions (id, staff_token_id, token_hash, created_at, expires_at)
+		VALUES ($1, $2, $3, now() - interval '2 hours', now() - interval '1 hour')`, expired, id, ids.Hash(ids.Token())); err != nil {
+		t.Fatal(err)
+	}
+	list := admin(t, "list-staff-tokens", noEnv, "--url", owner, "--tenant", tenant)
 	if !strings.Contains(list, id) || !strings.Contains(list, "reviewer-a") || strings.Contains(list, token) || strings.Contains(list, ids.Hash(token)) {
 		t.Fatalf("token list: %q", list)
 	}
@@ -274,6 +280,10 @@ func TestRevokingAStaffTokenEndsItsBrowserSessions(t *testing.T) {
 	}
 	if out := admin(t, "revoke-staff-token", noEnv, "--url", owner, "--token-id", id); out != "revoked "+id+" and 1 browser session(s)" {
 		t.Fatalf("output: %q", out)
+	}
+	var stamped bool
+	if err := db.Owner.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM ati.staff_sessions WHERE id = $1`, expired).Scan(&stamped); err != nil || stamped {
+		t.Fatalf("the expired session was stamped as revoked: %v %v", stamped, err)
 	}
 	if _, err := svc.AuthenticateStaff(ctx, ids.Hash(token)); !errors.Is(err, interview.ErrNotFound) {
 		t.Fatalf("the revoked token still authenticates: %v", err)

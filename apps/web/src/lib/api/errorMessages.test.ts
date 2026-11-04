@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getMessages } from '@/i18n';
+import { label } from '@/i18n/label';
 import { errorMessage } from './errorMessages';
 import { ApiError } from './errors';
 
@@ -34,8 +35,9 @@ const SERVER_CODES = [
 describe('errorMessage', () => {
   it('has a specific friendly message for every candidate-facing problem code', () => {
     for (const code of SERVER_CODES) {
+      // Its own message, not a fallback by status.
+      expect(Object.hasOwn(t.errors.byCode, code), code).toBe(true);
       const message = errorMessage(t.errors, new ApiError(409, code));
-      expect(message, code).not.toBe(t.errors.generic);
       // Messages are written for people: no raw snake_case codes.
       if (code.includes('_')) expect(message, code).not.toContain(code);
     }
@@ -43,7 +45,7 @@ describe('errorMessage', () => {
 
   it('covers client-side failures', () => {
     for (const code of ['network_error', 'timeout', 'invalid_response']) {
-      expect(errorMessage(t.errors, new ApiError(0, code))).not.toBe(t.errors.generic);
+      expect(Object.hasOwn(t.errors.byCode, code), code).toBe(true);
     }
   });
 
@@ -55,6 +57,17 @@ describe('errorMessage', () => {
 
   it('cannot be tricked by prototype keys', () => {
     expect(errorMessage(t.errors, new ApiError(400, 'constructor'))).toBe(t.errors.byStatus[400]);
+    expect(errorMessage(t.errors, new ApiError(418, '__proto__'))).toBe(t.errors.generic);
+  });
+});
+
+describe('label', () => {
+  it('finds only the keys a catalog has itself', () => {
+    expect(label(t.staff.reasons, 'no_rubric')).toBe(t.staff.reasons.no_rubric);
+    for (const key of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'brand_new_reason']) {
+      expect(label(t.staff.reasons, key), key).toBeUndefined();
+      expect(label(t.consent.basis, key), key).toBeUndefined();
+    }
   });
 });
 
@@ -70,16 +83,18 @@ const STAFF_CODES = [
   'rate_limited',
   'origin_mismatch',
   'idempotency_key_required',
+  'idempotency_key_reused',
+  'unsupported_media_type',
   'payload_too_large',
   'unavailable',
   'internal_error',
 ];
 
 describe('errorMessage for the review console', () => {
-  it('has a specific message for every staff problem code', () => {
-    for (const code of STAFF_CODES) {
+  it('has a specific message for every staff problem code and client-side failure', () => {
+    for (const code of [...STAFF_CODES, 'network_error', 'timeout', 'invalid_response']) {
+      expect(Object.hasOwn(t.staff.errors.byCode, code), code).toBe(true);
       const message = errorMessage(t.staff.errors, new ApiError(409, code));
-      expect(message, code).not.toBe(t.staff.errors.generic);
       if (code.includes('_')) expect(message, code).not.toContain(code);
     }
   });

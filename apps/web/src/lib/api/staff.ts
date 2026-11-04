@@ -15,15 +15,16 @@ import {
   parseSessionEnded,
   parseStaffSession,
 } from './staffParse';
-import type {
-  Report,
-  ReportSummary,
-  ReviewDecision,
-  ReviewOutcomeResult,
-  ReviewStatus,
-  ReviewTask,
-  ReviewTaskSummary,
-  StaffSession,
+import {
+  PAGE_LIMIT,
+  type Report,
+  type ReportSummary,
+  type ReviewDecision,
+  type ReviewOutcomeResult,
+  type ReviewStatus,
+  type ReviewTask,
+  type ReviewTaskSummary,
+  type StaffSession,
 } from './staffTypes';
 
 function taskPath(taskId: string, suffix = ''): string {
@@ -48,14 +49,14 @@ export interface QueueFilter {
   readonly status: ReviewStatus;
   /** Only this interview's tasks. */
   readonly interviewId?: string;
-  readonly limit?: number;
 }
 
+/** Lists ask for the largest page; a list of PAGE_LIMIT entries may have been cut off. */
 export function listReviewTasks(filter: QueueFilter, options?: RequestOptions): Promise<ReviewTaskSummary[]> {
   if (filter.interviewId !== undefined && !isInterviewId(filter.interviewId)) throw new Error('Invalid interview identifier');
   return getJson('/api/v1/review-tasks', parseReviewTaskList, {
     ...options,
-    query: { status: filter.status, interview_id: filter.interviewId, limit: filter.limit },
+    query: { status: filter.status, interview_id: filter.interviewId, limit: PAGE_LIMIT },
   });
 }
 
@@ -68,7 +69,7 @@ export function submitReviewOutcome(taskId: string, decision: ReviewDecision, op
 }
 
 export function listReports(options?: RequestOptions): Promise<ReportSummary[]> {
-  return getJson('/api/v1/reports', parseReportList, options);
+  return getJson('/api/v1/reports', parseReportList, { ...options, query: { limit: PAGE_LIMIT } });
 }
 
 export function getReport(interviewId: string, options?: RequestOptions): Promise<Report> {

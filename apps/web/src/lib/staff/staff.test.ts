@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { ReviewTaskSummary, StaffRole } from '@/lib/api/staffTypes';
-import { checkDecision, decisionMode, parseScore, rationaleLength, rationaleProblem, validScores } from './decision';
-import { canReview, homeFor, queueHref, queueParams, reportHref, sectionsFor, taskHref } from './nav';
+import { checkDecision, decisionMode, parseScore, rationaleLength, rationaleProblem } from './decision';
+import { canReview, homeFor, queueHref, queueParams, reportHref, safeNext, sectionsFor, signInHref, taskHref } from './nav';
 import { groupByInterview, nextOpenTask } from './queue';
 import { PROCESS_REASONS, splitReasons } from './reasons';
 import { formatDateTime, formatOffset } from './time';
 import { cleanToken, isStaffTokenFormat } from './token';
-import { formatCenti, weightPercent, weightedCenti } from './weighted';
+import { formatPoints, weightPercent, weightedCenti } from './weighted';
 
 const WEIGHTS = { technical_accuracy: 0.4, architecture_maturity: 0.25, edge_case_awareness: 0.2, claim_support: 0.15 };
 const SES_A = 'ses_AAAAAAAAAAAAAAAAAAAAAA';
@@ -29,7 +29,8 @@ describe('weighted score', () => {
     expect([0.4, 0.25, 0.2, 0.15].map(weightPercent)).toEqual([40, 25, 20, 15]);
     const centi = weightedCenti({ technical_accuracy: 60, architecture_maturity: 50, edge_case_awareness: 40, claim_support: 30 }, WEIGHTS);
     expect(centi).toBe(4900);
-    expect(formatCenti(centi ?? 0)).toBe('49.00');
+    expect(formatPoints((centi ?? 0) / 100)).toBe('49.00');
+    expect(formatPoints(4_517 / 100)).toBe('45.17');
     expect(weightedCenti({ technical_accuracy: 100, architecture_maturity: 100, edge_case_awareness: 100, claim_support: 100 }, WEIGHTS)).toBe(10_000);
     expect(weightedCenti({ technical_accuracy: 33, architecture_maturity: 67, edge_case_awareness: 1, claim_support: 99 }, WEIGHTS)).toBe(4_500);
   });
@@ -58,9 +59,10 @@ describe('decision', () => {
   });
 
   it('decides with scores, with a rationale only, or not at all', () => {
-    expect(decisionMode({ rubric: {} as never, reasons: [] })).toBe('scored');
-    expect(decisionMode({ rubric: null, reasons: ['policy_all_reviewed', 'no_rubric'] })).toBe('rationale_only');
-    expect(decisionMode({ rubric: null, reasons: ['policy_all_reviewed'] })).toBe('blocked');
+    expect(decisionMode({ rubric: {} as never, rubric_ref: 'rub_demo_postgres_mvcc@1' })).toBe('scored');
+    expect(decisionMode({ rubric: null, rubric_ref: null })).toBe('rationale_only');
+    // The question has a rubric that is not stored: the server would refuse any decision.
+    expect(decisionMode({ rubric: null, rubric_ref: 'rub_demo_postgres_mvcc@1' })).toBe('blocked');
   });
 
   it('lists every problem in form order', () => {
@@ -74,25 +76,27 @@ describe('decision', () => {
 
   it('builds the request body', () => {
     const inputs = { technical_accuracy: '60', architecture_maturity: '50', edge_case_awareness: '40', claim_support: '30' };
+    const scores = { technical_accuracy: 60, architecture_maturity: 50, edge_case_awareness: 40, claim_support: 30 };
     expect(checkDecision('scored', inputs, '  Accurate but brief.  ', true)).toEqual({
+      values: scores,
       ok: true,
-      decision: {
-        scores: { technical_accuracy: 60, architecture_maturity: 50, edge_case_awareness: 40, claim_support: 30 },
-        rationale: 'Accurate but brief.',
-        ai_draft_viewed: true,
-      },
+      decision: { scores, rationale: 'Accurate but brief.', ai_draft_viewed: true },
     });
     expect(checkDecision('rationale_only', inputs, 'No rubric; the answer is on topic.', false)).toEqual({
+      values: {},
       ok: true,
       decision: { scores: null, rationale: 'No rubric; the answer is on topic.', ai_draft_viewed: false },
     });
-    expect(validScores({ technical_accuracy: '60', claim_support: 'x' })).toEqual({ technical_accuracy: 60 });
+  });
+
+  it('keeps the valid scores for the preview while there are problems', () => {
+    expect(checkDecision('scored', { technical_accuracy: '60', claim_support: 'x' }, '', false).values).toEqual({ technical_accuracy: 60 });
   });
 });
 
 describe('reasons', () => {
   it('shows process reasons and keeps AI-derived and unknown ones for the draft', () => {
-    expect(splitReasons(['policy_all_reviewed', 'low_confidence', 'no_rubric', 'brand_new_reason', 'low_confidence'])).toEqual({
+    expect(splitReasons(['policy_all_reviewed', 'low_confidence', 'no_rubric', 'brand_new_reason'])).toEqual({
       process: ['policy_all_reviewed', 'no_rubric'],
       withDraft: ['low_confidence', 'brand_new_reason'],
     });
@@ -137,6 +141,51 @@ describe('navigation', () => {
     expect(queueParams({})).toEqual({ status: 'open', interviewId: undefined });
     expect(queueParams({ status: 'completed', interview: SES_A })).toEqual({ status: 'completed', interviewId: SES_A });
     expect(queueParams({ status: ['completed'], interview: 'ses_bad' })).toEqual({ status: 'open', interviewId: undefined });
+  });
+
+  it('returns after sign-in only to a console page the role may open', () => {
+    const task = taskHref('rvt_1111111111111111');
+    const filtered = queueHref('completed', SES_A);
+    for (const next of ['/staff/review', filtered, task, '/staff/reports', reportHref(SES_A)]) {
+      expect(safeNext(next, 'reviewer'), next).toBe(next);
+    }
+    expect(signInHref(filtered)).toBe(`/staff?next=${encodeURIComponent(filtered)}`);
+    // A recruiter only reads reports.
+    expect(safeNext(task, 'recruiter')).toBeNull();
+    expect(safeNext(reportHref(SES_A), 'recruiter')).toBe(reportHref(SES_A));
+    expect(safeNext(undefined, 'admin')).toBeNull();
+  });
+
+  it('never returns anywhere else after sign-in', () => {
+    for (const next of [
+      '',
+      '/staff',
+      '/staff/',
+      '//evil.example',
+      '///evil.example',
+      'https://evil.example/staff/review',
+      'javascript:alert(1)',
+      '/\\evil.example',
+      '\\\\evil.example',
+      '/staff/review/../reports',
+      '/staff/../staff/review',
+      '/staff/review/rvt_1111111111111111/',
+      '/staff/review/rvt_1111111111111111?x=1',
+      '/staff/review/rvt_1111111111111111#x',
+      '/staff/review/%72vt_1111111111111111',
+      '/staff/review/rvt_1111111111111111%2F..',
+      '/staff/review?status=completed&next=//evil.example',
+      '/staff/review?interview=ses_bad',
+      '/staff/review?status=open',
+      '/staff/review?a?b',
+      '/staff/reports\t',
+      '/staff/reports\n',
+      ' /staff/reports',
+      '/STAFF/reports',
+      `/staff/reports/${SES_A}/x`,
+    ]) {
+      expect(safeNext(next, 'admin'), JSON.stringify(next)).toBeNull();
+    }
   });
 });
 

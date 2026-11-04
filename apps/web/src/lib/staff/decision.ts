@@ -4,7 +4,7 @@
  * characters. An answer whose question has no rubric is reviewed with a rationale only; a rubric
  * that should exist but is missing blocks the decision (the server would refuse it).
  */
-import { DIMENSIONS, type Dimension, type ReviewDecision, type ReviewTask } from '@/lib/api/staffTypes';
+import { DIMENSIONS, type Dimension, type DimensionScores, type ReviewDecision, type ReviewTask } from '@/lib/api/staffTypes';
 
 export const RATIONALE_MIN = 10;
 export const RATIONALE_MAX = 4_000;
@@ -17,9 +17,10 @@ export type RationaleProblem = 'required' | 'too_short' | 'too_long';
 /** How the task can be decided: with scores, with a rationale only, or not here at all. */
 export type DecisionMode = 'scored' | 'rationale_only' | 'blocked';
 
-export function decisionMode(task: Pick<ReviewTask, 'rubric' | 'reasons'>): DecisionMode {
+/** A rubric means scores; no rubric_ref means the question has none; a rubric_ref without a rubric is not stored. */
+export function decisionMode(task: Pick<ReviewTask, 'rubric' | 'rubric_ref'>): DecisionMode {
   if (task.rubric !== null) return 'scored';
-  return task.reasons.includes('no_rubric') ? 'rationale_only' : 'blocked';
+  return task.rubric_ref === null ? 'rationale_only' : 'blocked';
 }
 
 /** The score a reviewer typed, or the problem with it. */
@@ -52,9 +53,13 @@ export interface DecisionProblems {
 /** The fields with a problem, in the order the form shows them (for the error summary). */
 export type ProblemField = Dimension | 'rationale';
 
-export type DecisionCheck =
+export type DecisionCheck = {
+  /** The scores typed so far that are valid, for the weighted preview. */
+  readonly values: Readonly<Partial<Record<Dimension, number>>>;
+} & (
   | { readonly ok: true; readonly decision: ReviewDecision }
-  | { readonly ok: false; readonly problems: DecisionProblems; readonly fields: readonly ProblemField[] };
+  | { readonly ok: false; readonly problems: DecisionProblems; readonly fields: readonly ProblemField[] }
+);
 
 export function checkDecision(
   mode: Exclude<DecisionMode, 'blocked'>,
@@ -63,7 +68,7 @@ export function checkDecision(
   aiDraftViewed: boolean,
 ): DecisionCheck {
   const scores: Partial<Record<Dimension, ScoreProblem>> = {};
-  const values = {} as Record<Dimension, number>;
+  const values: Partial<Record<Dimension, number>> = {};
   const fields: ProblemField[] = [];
   if (mode === 'scored') {
     for (const d of DIMENSIONS) {
@@ -78,19 +83,11 @@ export function checkDecision(
   }
   const problem = rationaleProblem(rationale);
   if (problem !== null) fields.push('rationale');
-  if (fields.length > 0) return { ok: false, problems: { scores, rationale: problem }, fields };
+  if (fields.length > 0) return { values, ok: false, problems: { scores, rationale: problem }, fields };
   return {
+    values,
     ok: true,
-    decision: { scores: mode === 'scored' ? values : null, rationale: rationale.trim(), ai_draft_viewed: aiDraftViewed },
+    // Every dimension has a valid score here, so `values` is complete.
+    decision: { scores: mode === 'scored' ? (values as DimensionScores) : null, rationale: rationale.trim(), ai_draft_viewed: aiDraftViewed },
   };
-}
-
-/** The scores typed so far that are valid, for the weighted preview. */
-export function validScores(inputs: ScoreInputs): Partial<Record<Dimension, number>> {
-  const out: Partial<Record<Dimension, number>> = {};
-  for (const d of DIMENSIONS) {
-    const parsed = parseScore(inputs[d]);
-    if (typeof parsed === 'number') out[d] = parsed;
-  }
-  return out;
 }
