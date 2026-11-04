@@ -27,7 +27,8 @@ Recorded by [ADR-019](./adr/ADR-019-repository-layout-and-contract-locations.md)
 │   │                                evaluation validator (internal/evaluation), review and report service (internal/interview)
 │   ├── tier1-voice-agent/           Python: LiveKit Agents Tier-1 interviewer
 │   └── tier2-evaluator/             Python: Tier-2 evaluation worker (Redis Streams consumer, read-only evidence loader,
-│                                    reference / OpenAI / Anthropic evaluators; ADR-022)
+│                                    reference / OpenAI / Anthropic evaluators; ADR-022); bench/ holds versioned
+│                                    benchmark datasets for the offline harness (DATA_AND_ML_LIFECYCLE.md)
 ├── apps/web/                        Next.js candidate UI
 ├── tests/e2e/                       cross-service E2E (media over real WebRTC, browser flows, Tier-2 pipeline)
 ├── tools/

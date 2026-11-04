@@ -11,6 +11,8 @@ This directory contains the initial architecture package for AI-Technical-Interv
 | [STACK_AND_BENCHMARK.md](./STACK_AND_BENCHMARK.md) | Technology comparisons and reproducible benchmark protocol |
 | [adr/](./adr/README.md) | ADR-011 onward (Proposed): Phase 0/1 decisions where the documents above are silent or in conflict |
 | [THREAT_MODEL_ADDENDUM_PHASE1.md](./THREAT_MODEL_ADDENDUM_PHASE1.md) | Additional trust boundaries, threats and controls introduced by the Phase 1 design |
+| [DATA_INVENTORY_AND_FLOWS.md](./DATA_INVENTORY_AND_FLOWS.md) | Data flows, table inventory (content, readers, retention, deletion) and privacy gaps |
+| [DATA_AND_ML_LIFECYCLE.md](./DATA_AND_ML_LIFECYCLE.md) | Evaluator lineage, datasets and splits, labelling protocol, metrics, fairness review, change governance |
 | [DIRECTORY_MAP.md](./DIRECTORY_MAP.md) | Repository layout |
 
 These documents describe an architecture proposal, not an implemented or benchmarked product. Performance budgets, weights, and confidence thresholds are hypotheses until validated.

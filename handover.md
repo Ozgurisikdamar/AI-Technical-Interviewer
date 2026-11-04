@@ -1,8 +1,26 @@
 # HANDOVER — Latest Review & Implementation Instructions for Claude
 
-> **LATEST UPDATE — 2026-11-04 (UTC): Milestone B (Tier-2 evaluation MVP, ADR-022) implemented on `main`**
+> **LATEST UPDATE — 2026-11-04 (UTC): Milestones B (Tier-2 evaluation MVP, ADR-022) and C (data and ML foundations) implemented on `main`**
 >
 > Read this update first, then the Milestone A update below it. The owner's review further down (based on `545983f`) remains the instruction baseline.
+
+### Done in Milestone C
+
+- **Lifecycle.** [docs/architecture/DATA_AND_ML_LIFECYCLE.md](docs/architecture/DATA_AND_ML_LIFECYCLE.md) covers:
+  - lineage from report to speech;
+  - dataset rules: session-level splits, TR/EN strata, no tuning on the test set, minimisation;
+  - the labelling protocol: two blind raters, adjudication above 20 points, quadratic-weighted kappa and Krippendorff's alpha;
+  - metrics and a fairness review;
+  - what a registry promotion, a prompt change, a threshold change or retrieval requires.
+- **Harness.** `make tier2-bench` builds `ati-admin` and runs `python -m tier2_evaluator.bench`:
+  - `ati-admin validate-evaluations` is new; it applies the control plane's validator offline;
+  - it checks the dataset manifest and refuses a session spanning splits;
+  - it runs the reference evaluator, validates every attempt with the Go validator, and reports validity, abstention and agreement.
+- **Data.** `synthetic-v1` holds 15 synthetic TR/EN answers with **synthetic labels**. It measures the mechanics, not quality.
+- **Verification (2026-11-04).**
+  - `make test` passed in 56 s, now with 114 Tier-2 tests, 8 of them for the harness.
+  - `make tier2-bench` passed: the Go validator accepted all 14 reference attempts, and the evaluator abstained on the 1 answer with no speech.
+  - `make e2e` was not rerun for Milestone C. It changes nothing the stack runs: it adds an offline `ati-admin` command, a benchmark package and docs.
 
 ### Done in Milestone B
 
@@ -73,22 +91,14 @@ The live voice path, the live evaluator models, real networks and container imag
   - a transcript-revision workflow;
   - worker metrics and health.
 
-### Next: Milestone C (data and ML foundations)
+### Next
 
-`docs/architecture/DATA_AND_ML_LIFECYCLE.md` should cover:
-- lineage;
-- a labelling protocol: two independent reviewers, adjudication, weighted kappa and Krippendorff's α;
-- session-level splits;
-- TR/EN strata;
-- fairness rules.
+1. **Live evaluator runs.** These need provider keys as environment secrets. Run the worker with `ATI_TIER2_EVALUATOR=anthropic` or `openai` against synthetic interviews, then put `make tier2-bench` behind a model evaluator.
+2. **A labelled dataset** under the lifecycle's protocol. This needs reviewers and a lawful basis.
+3. **Milestone D: the reviewer web UI.** It needs a queue, a task view with evidence highlighted in the transcript, an outcome form and a report view, plus Playwright and axe coverage.
+4. **Purge jobs** for evaluation records (data inventory G1).
 
-An offline benchmark harness on a dataset labelled as synthetic would measure:
-- evidence validity;
-- abstention rate;
-- criterion agreement;
-- latency and cost.
-
-Only the reference evaluator can run without keys, so the harness would prove the mechanics, not model quality. Qdrant, embeddings and fine-tuning stay out until a benchmark justifies them and an ADR records the decision.
+Qdrant, embeddings and fine-tuning stay out until a benchmark justifies them and an ADR records the decision.
 
 ---
 

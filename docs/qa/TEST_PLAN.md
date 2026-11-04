@@ -174,6 +174,9 @@ Tier-2 rows are verified with the deterministic **reference** evaluator and with
 | T2-10 | Pinned prompt and packaged contracts | T2: `tests/test_prompt.py` (sha256 pin, drift against `contracts/`, provider schema keywords) | Verified |
 | T2-11 | The closing remark after the interview moved on to review | G: `TestTheClosingRemarkIsStoredAfterTheInterviewMovedOnToReview`; E: `test_turkish_interview_uses_each_questions_turn_profile` (closing remark stored) | Verified |
 | T2-12 | Framework log extras marked as personal data | A: `test_framework_pii_extras_are_redacted` (`lk.pii.*`); E: post-run log scan | Verified |
+| T2-13 | Benchmark metrics | T2: `test_quadratic_weighted_kappa_matches_a_hand_computed_value`, `test_krippendorff_alpha_matches_the_published_example`, `test_bands_and_summaries` | Verified |
+| T2-14 | Benchmark dataset integrity and session-level splits | T2: `test_the_dataset_matches_its_manifest_and_never_splits_a_session`, `test_a_tampered_or_leaking_dataset_is_refused`, `test_a_session_spanning_splits_is_refused` | Verified |
+| T2-15 | Evidence validity measured by the production validator | G: `TestValidateEvaluationsAppliesTheControlPlaneValidatorOffline`, `TestValidateEvaluationsRefusesMalformedInput`; T2: `test_report_counts_validity_abstention_and_agreement`; `make tier2-bench --require-valid` | Verified (synthetic data; no evaluator-quality claim) |
 
 ## Phase-0 contract tests (all Verified, `make contracts-test`, 144 tests)
 

@@ -84,6 +84,24 @@ tools/dev/sync-tier2-contracts.sh
 
 Refreshes the packaged copies of the prompt, schemas and model registry; a drift test compares them with `contracts/`.
 
+## Offline benchmark
+
+```bash
+make tier2-bench
+```
+
+This runs the harness of [DATA_AND_ML_LIFECYCLE.md](../../docs/architecture/DATA_AND_ML_LIFECYCLE.md), `python -m tier2_evaluator.bench`:
+1. It evaluates every item of a versioned dataset (`bench/synthetic-v1`) with the reference evaluator.
+2. It validates every attempt with the control plane's own validator (`ati-admin validate-evaluations`).
+3. It reports:
+   - evidence validity and abstention;
+   - per-dimension agreement with the reference labels (MAE, share within 10 points, quadratic-weighted kappa on
+     20-point bands), next to agreement between raters (kappa, and Krippendorff's alpha with the interval metric);
+   - latency and tokens.
+
+The dataset's labels are synthetic, so the run checks the harness and the validator, not evaluation quality.
+`--require-valid` fails the run if the validator rejects any attempt.
+
 ## Not done yet
 
 - No live-provider verification and no benchmark against human labels (Milestone C). Agreement with reviewers is

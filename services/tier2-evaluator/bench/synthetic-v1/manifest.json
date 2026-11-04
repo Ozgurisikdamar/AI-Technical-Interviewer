@@ -1,0 +1,69 @@
+{
+ "dataset": "synthetic-v1",
+ "version": 1,
+ "synthetic": true,
+ "description": "Synthetic answers in English and Turkish to the demo plan questions, with synthetic labels written for the benchmark harness. Not a measure of evaluator quality.",
+ "labels": "rater_a and rater_b are synthetic; reference is their mean (half up) where they are within 20 points, otherwise the adjudicated score",
+ "items": [
+  {
+   "item_id": "syn-v1-01",
+   "sha256": "f5befed400c3eb4eac5d64296428a1bd7631361a0d50af329c801481a6fe2ca0"
+  },
+  {
+   "item_id": "syn-v1-02",
+   "sha256": "cb33e6e63d5b70357245e82da9430c24e5b51ad9ac70654a7381c7bd7b4ef48e"
+  },
+  {
+   "item_id": "syn-v1-03",
+   "sha256": "a25837811b02c979d340c29216fe4aa9c7d89a178c6414e6930b2563155463dd"
+  },
+  {
+   "item_id": "syn-v1-04",
+   "sha256": "0aed8d6b4c27e6f326bee14524e590bf2ad3566519842680a85f760e080895bf"
+  },
+  {
+   "item_id": "syn-v1-05",
+   "sha256": "35bf0b4dba767dcf3fd097dcf58686f90e4ad4ec1d52c793eb6b3bf5655e3e95"
+  },
+  {
+   "item_id": "syn-v1-06",
+   "sha256": "5c60ebdaa4341662a28cc34320d8eb0216ed2ef9722ed4e685cdaf98c8a408c7"
+  },
+  {
+   "item_id": "syn-v1-07",
+   "sha256": "3f6ac902ab116356b013a24223eda3bf5201fd5ccb6bea37bda4e66d1c1a724b"
+  },
+  {
+   "item_id": "syn-v1-08",
+   "sha256": "4ad24b8cdedc3a07c0930ba9f6b911e8fa351267f816948e55c7f0276fc29083"
+  },
+  {
+   "item_id": "syn-v1-09",
+   "sha256": "a07d996fcef5cbfe0e2bc7769999e81dad7986eb1dde5a52665fa3a7e137aa93"
+  },
+  {
+   "item_id": "syn-v1-10",
+   "sha256": "928979a31c7eca35a42b42bb700f5c46c5611e0fa2483bbc5225fca36e25f651"
+  },
+  {
+   "item_id": "syn-v1-11",
+   "sha256": "68474fa30c5622c52818d49305cc269e3fbd2476a3a73ad3f8fdd829f8873cef"
+  },
+  {
+   "item_id": "syn-v1-12",
+   "sha256": "4233e0cdec92b2b4903e7ccc0b36515b98d70b9efa5447ba31d1b2c18ca8e4a2"
+  },
+  {
+   "item_id": "syn-v1-13",
+   "sha256": "8036e256af2d115f25711d355f017404de858bbb70389905b9e836815bdc1b8b"
+  },
+  {
+   "item_id": "syn-v1-14",
+   "sha256": "1c8625c4359f735fd68ba3d9476de61c1444616b638500f77e7072b6b2b18f32"
+  },
+  {
+   "item_id": "syn-v1-15",
+   "sha256": "11232f064587dc4e8c68bb775eb19309192c6af3dbed44c9ced1655163537c55"
+  }
+ ]
+}

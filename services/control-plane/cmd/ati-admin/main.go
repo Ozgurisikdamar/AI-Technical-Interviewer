@@ -35,6 +35,8 @@ commands:
                                                       leaving audited tombstones
   purge-operational   --url URL [--older-than 24h]    delete webhook dedupe and idempotency records older
                                                       than the window (audited; replays hold response bodies)
+  validate-evaluations --input FILE                   apply the evaluation validator to JSON lines of
+                                                      {answer, rubric, output} (offline: no database)
 `
 
 var errUnknownCommand = errors.New("unknown command")
@@ -66,10 +68,16 @@ func run(ctx context.Context, cmd string, args []string, out io.Writer, getenv f
 	ttl := fs.Duration("ttl", 30*24*time.Hour, "token lifetime")
 	allowed := fs.Bool("allowed", false, "tenant-recording: whether the tenant allows consented recordings")
 	olderThan := fs.Duration("older-than", 24*time.Hour, "purge-operational: keep records younger than this")
+	input := fs.String("input", "", "validate-evaluations: JSON lines of {answer, rubric, output}")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	switch cmd {
+	case "validate-evaluations":
+		if *input == "" {
+			return fmt.Errorf("--input is required")
+		}
+		return validateEvaluations(*input, out)
 	case "bootstrap-roles":
 		return store.BootstrapRoles(ctx, *adminURL)
 	case "migrate":

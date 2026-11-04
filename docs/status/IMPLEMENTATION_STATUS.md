@@ -1,6 +1,6 @@
 # Implementation status and repository audit
 
-**Last updated:** 2026-11-04 (Milestone B: Tier-2 evaluation MVP, ADR-022; earlier the same day, Milestone A: Phase 1 audit closure, see [PHASE1_AUDIT.md](../qa/PHASE1_AUDIT.md); 2026-11-03: Phase 0 and Phase 1 milestones M1–M9 and a completion pass)
+**Last updated:** 2026-11-04 (Milestone C: data and ML lifecycle, offline benchmark harness; Milestone B: Tier-2 evaluation MVP, ADR-022; earlier the same day, Milestone A: Phase 1 audit closure, see [PHASE1_AUDIT.md](../qa/PHASE1_AUDIT.md); 2026-11-03: Phase 0 and Phase 1 milestones M1–M9 and a completion pass)
 **Rule:** a capability counts as implemented only when its code, tests and integration are verified. Status labels:
 
 | Label | Meaning |
@@ -56,6 +56,22 @@ Integrating the pipeline found and fixed four defects, each with a regression te
 - the Tier-1 agent's logs could carry the candidate's words in livekit-agents warnings. The framework marks such
   extras `lk.pii.*`, and those are now redacted. The E2E log scan caught this one.
 
+**Milestone C (2026-11-04).** [DATA_AND_ML_LIFECYCLE.md](../architecture/DATA_AND_ML_LIFECYCLE.md) sets out how evaluator quality is to be measured and governed:
+- lineage;
+- dataset rules: session-level splits, TR/EN strata, minimisation;
+- the labelling protocol: two blind raters, adjudication above 20 points, kappa and Krippendorff's alpha;
+- metrics and a fairness review;
+- change governance: what a registry status change, a prompt change or retrieval requires.
+
+The offline harness (`make tier2-bench`) runs in three steps:
+1. It checks each item of a versioned dataset against the manifest's sha256 and refuses a session spanning splits.
+2. It evaluates the items with the reference evaluator.
+3. It validates every attempt with the control plane's own validator (`ati-admin validate-evaluations`) and reports
+   validity, abstention and agreement.
+
+The only dataset, `synthetic-v1`, has synthetic labels, so the run proves the mechanics and that the validator
+accepts every reference attempt. It measures no model quality. No human labels exist.
+
 ## 1. Baseline audit (repository state before implementation)
 
 The repository contained architecture documents only: `README.md`, `LICENSE` (Apache-2.0) and six files in `docs/architecture/` (about 1,500 lines). There were no source files, build files, tests, CI or infrastructure definitions.
@@ -76,6 +92,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | M8 — Web UI | Next.js 16 / React 19 candidate UI (`apps/web`): fragment-only invitation exchanged on click, purpose-level DRAFT consent, device check (a blocked microphone is explained as blocked), live room (mic-only publishing, unpublished while paused, captions from interviewer transcription, ARIA live status), pause/resume/finish/withdraw from `allowed_actions`, refresh rejoin, device-loss pause; per-request CSP nonce, strict security headers, lint guardrails, bundle secret scan | **Verified (local)**: `make web-test` (eslint, tsc, 229 unit tests, production build, bundle scan). **Verified (scripted, loopback)** in Chromium against the real stack, 7 flows (`tests/e2e/test_browser.py`): voice to completion; keyboard, device loss and withdrawal; text mode; consent refusal with the document security headers; refused microphone; no microphone device; leaving and returning to the room. axe-core audits every screen against WCAG 2.1 A/AA: no violations |
 | A — Phase 1 audit closure (2026-11-04) | Webhook body bound and processing-aware dedupe; dispatch without a second pool connection; bounded media calls and idle-transaction limit; drained shutdown and recording reconciliation; sweepers that continue past a failing session; bounded metric labels; indexes (migration 00006); audited purge of operational records; session-first lock order; idempotency takeover of stale claims; IPv6 /64 rate limiting with a bounded table; loopback listeners by default; model registry, required model IDs and pinned endpoint (ADR-021); no chained tool calls; provider smoke harness; dependency scans; data inventory | **Verified (local)**: the regression test of each finding ([TEST_PLAN.md](../qa/TEST_PLAN.md#phase-1-audit-regressions-phase1_auditmd)), `make test`, `make e2e` and `make audit` (section 9). The live provider run is **Blocked** (no credentials) |
 | B — Tier-2 evaluation MVP (2026-11-04) | ADR-022; state machine v1.2 (T17 in Phase 2); rubric contract and synthetic demo rubrics; migration 00007 (rubrics, raw attempts, canonical evaluations, review tasks and outcomes, reports; evaluator LOGIN with narrow views; `reviewer` role); outbox relay to Redis Streams; deterministic validator; internal Tier-2 API; reviewer queue, task, outcome and report endpoints; `services/tier2-evaluator` (consumer, evidence loader, reference/OpenAI/Anthropic adapters, configuration refusals); stack integration | **Verified (local)**: G (validator, relay with a real redis-server, service, API, store grants, architecture), T2 (`make tier2-test`: config, prompt pin and drift, reference evaluator, adapters against recorded shapes, consumer against a real redis-server, worker flow, redaction), E (`test_tier2.py`; synthetic voice answers abstained in `test_voice_interview.py`). Model evaluators **Implemented — unverified** (no credentials) |
+| C — Data and ML foundations (2026-11-04) | Data and ML lifecycle document; offline benchmark harness (`tier2_evaluator.bench`: dataset manifest and leakage checks, quadratic-weighted kappa, Krippendorff's alpha, MAE, within-10, percentiles); `ati-admin validate-evaluations` (the Go validator offline); synthetic TR/EN dataset `synthetic-v1` | **Verified (local)**: metrics against hand-computed values and Krippendorff's published example, dataset integrity and leakage refusal (T2), the offline validator (G), `make tier2-bench` (every reference attempt accepted). **No benchmark of evaluator quality**: the labels are synthetic |
 | M9 — Text mode | `POST /text-responses` (text mode only, activation-bound, refused during a pending completion; control-plane-written `candidate_text` segments; audit without text); Tier-1 view of the open question's text answers; agent passes each once as user input; text-mode greeting; UI offers text mode without a microphone | **Verified (local)**: G API tests (binding, mode, length, ordering, contract-valid context, manifest-free confirmation, no text in logs), A tests (user input only, once, other activations ignored). **Verified (scripted, loopback)** in Chromium with the microphone refused (`text_flow.mjs`): captions, no published track, completion |
 
 ## 3. Gap analysis (requirement → status)
@@ -198,11 +215,12 @@ The repository does not use GitHub Actions (repository convention, enforced by `
 | `make contracts-test` | schema meta-validation and fixtures, state-machine structure, doc drift, isolation, OpenAPI, model registry, rubrics | 144 passed |
 | `make go-lint` / `make go-test` | gofmt, vet, staticcheck; Go tests with the race detector against PostgreSQL 16 | pass (17 packages with tests, 0 skipped, including the Phase 1 audit regressions and the Tier-2 validator, relay, service, API and grant tests) |
 | `make agent-test` | ruff, mypy (strict), pytest for the Tier-1 agent | 197 passed |
-| `make tier2-test` | ruff, mypy (strict), pytest for the Tier-2 worker (consumer tests against a throwaway redis-server) | 106 passed |
+| `make tier2-test` | ruff, mypy (strict), pytest for the Tier-2 worker (consumer tests against a throwaway redis-server) and the benchmark harness | 114 passed |
 | `make web-test` | eslint, tsc, vitest, production build, bundle secret scan | 229 passed; build and scan pass |
 | `make e2e` | local stack (with Redis and the Tier-2 worker); synthetic WebRTC candidate (voice interview, failure injection and signals, recording, media security) and typed interviews through Tier-2; Chromium flows (each screen audited with axe-core); log and audio-file scans | 30 passed from a fresh stack in 13 min 44 s (scripted engine, reference evaluator, loopback), 2026-11-04 |
 | `make audit` | govulncheck v1.9.0 (control plane), pip-audit 2.9.0 (every uv lockfile, including the Tier-2 worker's), pnpm audit (web, production) | ok: no vulnerable symbol reached (one advisory in a required module is not called by the code); no known vulnerabilities in the Python or web lockfiles |
 | `make provider-smoke` | opt-in live OpenAI check (ADR-021) | BLOCKED: no `OPENAI_API_KEY` in this environment |
+| `make tier2-bench` | offline benchmark on `synthetic-v1` with the reference evaluator and the Go validator (DATA_AND_ML_LIFECYCLE.md) | pass: 14/14 reference attempts accepted by the Go validator, 1 abstention (no candidate speech); agreement figures are on synthetic labels and say nothing about quality |
 
 ## 10. Known gaps and follow-ups
 
