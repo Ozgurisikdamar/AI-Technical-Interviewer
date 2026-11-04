@@ -24,7 +24,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 
 | Milestone | Scope | Status |
 |---|---|---|
-| Phase 0 — contracts | State machine v1.1, schemas, prompts, content, fixtures, ADR-011–020, threat-model addendum, OpenAPI, test plan, hygiene checks, CI | **Verified (local)**: `make checks`, `make contracts-test` (120 tests). Human review pending |
+| Phase 0 — contracts | State machine v1.1, schemas, prompts, content, fixtures, ADR-011–020, threat-model addendum, OpenAPI, test plan, hygiene checks | **Verified (local)**: `make checks`, `make contracts-test` (120 tests). Human review pending |
 | M2 — Go engine, config, logging | Pure flow engine from the embedded contract; ADR-020 config refusals; redacting logger; HTTP plumbing; architecture tests | **Verified (local)**: `make go-lint` (vet + staticcheck), `make go-test` (model-based walk over 3,000 seeds: 208 completions / 2,792 cancellations with every invariant checked; fuzzing; refusal matrix; log sentinels) |
 | M3 — Schema, roles, transition service | Phase-1 schema with DB-enforced INV-1/INV-9, append-only triggers, least-privilege roles; transactional transition service (row lock + `state_version`, per-step events and audit, outbox with contract validation); ingestion with speech-time attribution; completion protocol; leases with fencing | **Verified (local)**: `make go-test` against PostgreSQL 16 as the real application role (privilege matrix, lifecycle, button/deadline paths, pause/resume, withdrawal, expiry, consent, attribution, concurrency storms, compromised-agent suite) |
 | M4 — Auth, API, LiveKit, ingestion, completion | Two listeners; staff/candidate/agent authentication; idempotency keys (credentials never stored for replays); invitation rate limit; staff invitation revocation (pauses a live interview and deletes its room); LiveKit rooms, mic-only tokens, server-side dispatch with nonce-only metadata, claim verification, signed and deduplicated webhooks, removal of participants the control plane did not mint (including a second agent while one holds the lease); Tier-1 context via restricted views; metrics; sweepers; binaries | **Verified (local)** against PostgreSQL with a fake media layer: HTTP flow to completion, cross-candidate/tenant isolation, CSRF, listener separation, idempotency replay/reuse and concurrent creation, staff token expiry and revocation, invitation revocation, claim attacks and expired nonces, fencing, webhook trust (decoded dedicated-key signatures), decoded candidate token grants, rate limiting, security headers and environment marker on every response, telemetry to `/metrics`, outbox negatives, log sentinels, OpenAPI route parity, ADR-020 refusals isolated per gate, startup smoke tests of the binary, `ati-admin` commands. Real LiveKit wiring: see M7 |
@@ -64,7 +64,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | G24 | Text/non-audio fallback (TM §4–5) | **Verified (local; browser: scripted, loopback)**: text response mode end to end | A fully text interviewer (no audio output) and a broader accommodations process are Phase 5–6 |
 | G25 | Threat model for new boundaries | Document written ([addendum](../architecture/THREAT_MODEL_ADDENDUM_PHASE1.md)) | Human review pending |
 | G26 | Cost model usage capture (STACK §5) | Per-session usage recorded (**Verified (scripted, loopback)**: engine and audio durations) | Provider token counts need the live engine |
-| G27 | Repository conventions | **Verified (local)** | `tools/checks/*`, ADR immutability pin test |
+| G27 | Repository conventions | **Verified (local)** | `tools/checks/*` (including: no GitHub Actions workflows), ADR immutability pin test |
 | G28 | MVP acceptance criteria and production gates | Phase-1 criteria 1–4 and 10–12 verified (1–3 with the scripted engine, loopback only); 5–9 belong to Phases 2 and 5; production gates 0/5 | See section 4 |
 
 ## 4. MVP acceptance criteria (DECISIONS_AND_ROADMAP)
@@ -137,19 +137,19 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | Blocker | Affects | Unblock |
 |---|---|---|
 | No OpenAI or LiveKit Cloud credentials | Live voice path, live-model injection suite, provider latency, usage numbers | Provide `OPENAI_API_KEY` (and optionally `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`) as environment secrets |
-| No Docker daemon | Container images, compose | CI or a Docker-enabled environment |
+| No Docker daemon | Container images, compose | A Docker-enabled environment |
 | No egress service | Real recording | Egress deployment (Docker) |
-| No `tc` / netem | Packet loss, jitter, TURN chaos | Lab or CI runner with NET_ADMIN |
+| No `tc` / netem | Packet loss, jitter, TURN chaos | A lab machine with NET_ADMIN |
 | Human review required | Phase 0 gate, legal notice approval, benchmarks, production gates | Architecture, legal and qualified reviewers |
-| GitHub Actions jobs are never assigned a runner | CI results (`ci.yml` defines checks, contracts, control-plane, Tier-1 agent and web jobs) | Repository or account Actions settings and billing; until then `make test` and `make e2e` are the evidence |
 
 ## 9. How to verify
+
+The repository does not use GitHub Actions (repository convention, enforced by `make checks`); these local commands are the verification of record.
 
 | Command | What it runs | Result at this revision |
 |---|---|---|
 | `make checks` | repository hygiene (secrets, media files, PII patterns), Python import boundaries, generated state diagram | pass |
 | `make contracts-test` | schema meta-validation and fixtures, state-machine structure, doc drift, isolation, OpenAPI | 120 passed |
-| `make workflow-lint` | actionlint v1.7.7 on `.github/workflows/ci.yml` | pass |
 | `make go-lint` / `make go-test` | gofmt, vet, staticcheck; Go tests with the race detector against PostgreSQL 16 | pass (15 packages with tests) |
 | `make agent-test` | ruff, mypy (strict), pytest for the Tier-1 agent | 176 passed |
 | `make web-test` | eslint, tsc, vitest, production build, bundle secret scan | 229 passed; build and scan pass |

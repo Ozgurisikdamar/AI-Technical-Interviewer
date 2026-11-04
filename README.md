@@ -48,3 +48,5 @@ make e2e             # local stack (PostgreSQL, LiveKit OSS, control plane, scri
 ```
 
 `make stack-up` starts the same local stack for manual use (`tools/dev/stack.sh`, development placeholders only). Each service has its own README.
+
+This repository does not use GitHub Actions (see the [repository conventions](./docs/architecture/DECISIONS_AND_ROADMAP.md#repository-implementation-conventions)); `make test` and `make e2e` are the verification of record.

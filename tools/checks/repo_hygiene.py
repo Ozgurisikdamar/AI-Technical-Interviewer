@@ -6,7 +6,9 @@ Fails if tracked or untracked-but-not-ignored files contain:
 - private keys, cloud/provider tokens, JWTs, or credential assignments whose value is not an
   obvious development placeholder (development secrets must start with "ati-dev-"),
 - email addresses outside reserved example domains,
-- unexpectedly large files.
+- unexpectedly large files,
+- GitHub Actions workflows or actions: the repository does not use GitHub Actions; verification runs
+  locally with `make test` and `make e2e` (DECISIONS_AND_ROADMAP, repository conventions).
 
 Standard library only, so it runs before any dependency is installed.
 """
@@ -24,6 +26,7 @@ MEDIA_SUFFIXES = {".wav", ".ogg", ".opus", ".mp3", ".m4a", ".flac", ".webm", ".m
 SKIP_SCAN_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".lock"}
 SKIP_SCAN_NAMES = {"pnpm-lock.yaml", "uv.lock", "go.sum", "package-lock.json"}
 SELF = Path(__file__).resolve()
+NO_ACTIONS_DIRS = (".github/workflows/", ".github/actions/")
 
 SECRET_PATTERNS = [
     ("private key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----")),
@@ -53,6 +56,8 @@ def candidate_files() -> list[Path]:
 def scan(path: Path) -> list[str]:
     rel = path.relative_to(ROOT)
     problems: list[str] = []
+    if rel.as_posix().startswith(NO_ACTIONS_DIRS):
+        problems.append(f"{rel}: GitHub Actions is not used in this repository; verify locally with make test and make e2e")
     if path.suffix.lower() in MEDIA_SUFFIXES:
         return [f"{rel}: media file in repository (real audio/video must never be committed)"]
     if path.stat().st_size > MAX_BYTES:

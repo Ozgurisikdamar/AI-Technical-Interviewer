@@ -5,9 +5,8 @@ CP := services/control-plane
 AGENT := services/tier1-voice-agent
 WEB := apps/web
 STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.2
-ACTIONLINT := github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
 
-.PHONY: help checks contracts-test sync-contracts go-lint go-test agent-test web-test workflow-lint e2e stack-up stack-down pg-start pg-stop test
+.PHONY: help checks contracts-test sync-contracts go-lint go-test agent-test web-test e2e stack-up stack-down pg-start pg-stop test
 
 help:
 	@echo "make checks          repository hygiene, Python import boundaries, generated diagram"
@@ -17,7 +16,6 @@ help:
 	@echo "make go-test         control-plane tests (race detector; starts a local PostgreSQL)"
 	@echo "make agent-test      Tier-1 agent: ruff, mypy (strict), pytest"
 	@echo "make web-test        web UI: lint, typecheck, unit tests, production build, bundle scan"
-	@echo "make workflow-lint   check the GitHub Actions workflow (actionlint, pinned)"
 	@echo "make e2e             media E2E over real WebRTC (starts the local stack; scripted engine, loopback)"
 	@echo "make stack-up|stack-down  local stack: PostgreSQL, LiveKit, control plane, scripted agent"
 	@echo "make pg-start|pg-stop ephemeral PostgreSQL 16 for tests"
@@ -57,9 +55,6 @@ agent-test:
 web-test:
 	cd $(WEB) && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm scan-bundle
 
-workflow-lint:
-	go run $(ACTIONLINT) .github/workflows/ci.yml
-
 stack-up:
 	tools/dev/stack.sh up
 
@@ -69,4 +64,4 @@ stack-down:
 e2e:
 	cd tests/e2e && uv run --frozen pytest -q
 
-test: checks contracts-test workflow-lint go-lint go-test agent-test web-test
+test: checks contracts-test go-lint go-test agent-test web-test

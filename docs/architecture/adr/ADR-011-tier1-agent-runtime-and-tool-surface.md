@@ -31,4 +31,4 @@ The blueprint places the realtime voice agent in the realtime plane and assigns 
 
 ## Verification
 
-Agent unit tests cover session settings, tool schema (no parameters), prompt pin, context rendering and failure injection. Dependency and import-boundary checks run in CI. E2E with the scripted engine runs over real WebRTC.
+Agent unit tests cover session settings, tool schema (no parameters), prompt pin, context rendering and failure injection. Dependency and import-boundary checks run in `make checks`. E2E with the scripted engine runs over real WebRTC.

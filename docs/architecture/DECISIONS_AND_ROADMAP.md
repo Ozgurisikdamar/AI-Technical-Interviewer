@@ -143,3 +143,4 @@
 - Keep prompts and JSON Schemas versioned alongside tests.
 - Store no secrets, candidate PII, or real audio samples in Git.
 - Add architecture diagrams as Mermaid source for reviewability.
+- Do not use GitHub Actions: no files under `.github/workflows/` or `.github/actions/` (enforced by `make checks`). Verification runs locally with `make test` and `make e2e`; adopting any CI service needs a new ADR.

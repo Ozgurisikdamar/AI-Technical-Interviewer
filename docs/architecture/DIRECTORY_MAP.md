@@ -27,7 +27,6 @@ Recorded by [ADR-019](./adr/ADR-019-repository-layout-and-contract-locations.md)
 ├── tools/
 │   ├── checks/                      dependency-free repository checks (hygiene, import boundaries)
 │   └── dev/                         local stack scripts (PostgreSQL, LiveKit OSS) (planned → Phase 1)
-└── .github/workflows/ci.yml         CI
 ```
 
 Tier-2 evaluation workers (`services/tier2-*`) arrive in Phase 2 as a separate deployable with their own lockfile, database role and provider credentials. The import-boundary check already enforces their isolation rules.
