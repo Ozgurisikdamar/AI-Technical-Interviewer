@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/accesscode"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/httpx"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/interview"
@@ -96,12 +97,14 @@ func (s *Server) createInterview(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, r, err)
 			return
 		}
-		// A replay confirms the interview but never repeats the invitation: the token is shown once
-		// and stored only as a hash. A caller that lost it revokes the invitation and creates anew.
-		replayBody(w, map[string]any{"interview": view, "invitation_url": nil, "invitation_expires_at": created.InvitationExpiresAt})
+		// A replay confirms the interview but never repeats the invitation: the token and the access
+		// code are shown once and stored only as hashes. A caller that lost them revokes the
+		// invitation and creates anew. The application number is not a secret and is in the view.
+		replayBody(w, map[string]any{"interview": view, "invitation_url": nil, "access_code": nil, "invitation_expires_at": created.InvitationExpiresAt})
 		httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 			"interview":             view,
 			"invitation_url":        s.cfg.PublicOrigin.String() + "/i#token=" + created.InvitationToken,
+			"access_code":           accesscode.FormatCode(created.AccessCode),
 			"invitation_expires_at": created.InvitationExpiresAt,
 		})
 	})
@@ -188,6 +191,38 @@ func (s *Server) exchangeInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ex, err := s.svc.ExchangeInvitation(r.Context(), interview.Actor{Type: flow.ActorCandidate, RequestID: httpx.RequestIDFrom(r.Context())}, req.Token)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	http.SetCookie(w, s.apiCookie(CandidateCookie, ex.CandidateToken, int(s.cfg.CandidateSessionTTL/time.Second)))
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"interview_id": ex.SessionID, "state": ex.State})
+}
+
+// startCandidateSession signs a candidate in with the application number and access code
+// (ADR-024): the same session and cookie as an invitation exchange. Every refusal gets the same
+// 401. The body carries no bearer token, so the same-origin guard applies, which also refuses
+// login CSRF.
+func (s *Server) startCandidateSession(w http.ResponseWriter, r *http.Request) {
+	ip := httpx.ClientIP(r, s.cfg.TrustedProxies)
+	if !s.candidateLimiter.allow(ip, s.now()) {
+		httpx.WriteProblem(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many attempts; wait and try again")
+		return
+	}
+	if !requireIdempotencyKey(w, r) {
+		return
+	}
+	// Not replayed from storage, as with the invitation exchange: a replay would store a session token.
+	var req struct {
+		ApplicationNumber string `json:"application_number"`
+		AccessCode        string `json:"access_code"`
+	}
+	if err := httpx.DecodeJSON(w, r, &req, maxPublicBody); err != nil {
+		httpx.WriteDecodeError(w, r, err)
+		return
+	}
+	ex, err := s.svc.SignInCandidate(r.Context(), interview.Actor{Type: flow.ActorCandidate, RequestID: httpx.RequestIDFrom(r.Context())},
+		req.ApplicationNumber, req.AccessCode)
 	if err != nil {
 		s.writeError(w, r, err)
 		return

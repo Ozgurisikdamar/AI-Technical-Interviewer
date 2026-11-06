@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/accesscode"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/config"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/ids"
@@ -69,7 +70,7 @@ func newHarness(t *testing.T) *harness {
 		CompletionDeadline: 8 * time.Second, PauseTimeout: 30 * time.Minute, InvitationTTL: 72 * time.Hour,
 		CandidateSessionTTL: 4 * time.Hour, LeaseTTL: 15 * time.Second,
 		Retention: config.Retention{TranscriptDays: 30, SessionEventsDays: 30, AssessmentOutputDays: 30},
-		NoticeID:  "notice_default", NoticeVersion: "2026-11-draft.1",
+		NoticeID:  "notice_default", NoticeVersion: "2026-11-draft.1", AccessCode: accesscode.Cheap,
 	}, eff, slog.New(slog.NewJSONHandler(io.Discard, nil)), c.Now)
 	if err != nil {
 		t.Fatal(err)

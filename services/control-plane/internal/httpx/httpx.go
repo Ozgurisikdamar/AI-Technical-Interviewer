@@ -46,6 +46,7 @@ const (
 	CodeSegmentRejected        = "segment_rejected"
 	CodeManifestIncomplete     = "manifest_incomplete"
 	CodeNonceInvalid           = "claim_nonce_invalid"
+	CodeSignInFailed           = "sign_in_failed"
 	CodeConflict               = "conflict"
 )
 

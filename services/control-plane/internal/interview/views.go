@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/accesscode"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
 )
 
@@ -38,6 +39,12 @@ type CandidateView struct {
 	RecordingActive   bool              `json:"recording_active"`
 	AllowedActions    []string          `json:"allowed_actions"`
 	Environment       string            `json:"environment"`
+	// The candidate's application, as the sign-in matched it (ADR-024): the number as shown
+	// (XXXX-XXXX, null for interviews created before it), the interview's title, and the language
+	// the interview is held in, which can differ from the page's.
+	ApplicationNumber *string `json:"application_number"`
+	InterviewTitle    string  `json:"interview_title"`
+	Language          string  `json:"language"`
 }
 
 // StaffView is the staff projection (OpenAPI InterviewStaffView).
@@ -46,7 +53,9 @@ type StaffView struct {
 	State        flow.State `json:"state"`
 	StateVersion int64      `json:"state_version"`
 	CandidateRef string     `json:"candidate_ref"`
-	Plan         struct {
+	// ApplicationNumber is the number the candidate signs in with, as shown (ADR-024).
+	ApplicationNumber *string `json:"application_number"`
+	Plan              struct {
 		PlanID    string `json:"plan_id"`
 		Version   int    `json:"version"`
 		Synthetic bool   `json:"synthetic"`
@@ -90,7 +99,13 @@ func (s *Service) CandidateView(ctx context.Context, sessionID, env string) (*Ca
 	if err != nil {
 		return nil, err
 	}
-	v := &CandidateView{ID: sess.ID, State: sess.State, StateVersion: sess.StateVersion, InputMode: sess.InputMode, PausedFrom: sess.PausedFrom, Environment: env}
+	v := &CandidateView{ID: sess.ID, State: sess.State, StateVersion: sess.StateVersion, InputMode: sess.InputMode, PausedFrom: sess.PausedFrom, Environment: env,
+		ApplicationNumber: shownNumber(sess.ApplicationNumber)}
+	plan, err := s.plans.load(ctx, s.pool, sess.PlanID, sess.PlanVersion)
+	if err != nil {
+		return nil, err
+	}
+	v.InterviewTitle, v.Language = plan.Title, plan.Language
 	if v.Progress, err = s.progress(ctx, sess); err != nil {
 		return nil, err
 	}
@@ -147,6 +162,15 @@ func (s *Service) candidateActions(sess *sessionRow, pending bool) []string {
 	return out
 }
 
+// shownNumber is an application number as people see it (XXXX-XXXX); nil stays nil.
+func shownNumber(canonical *string) *string {
+	if canonical == nil {
+		return nil
+	}
+	shown := accesscode.FormatNumber(*canonical)
+	return &shown
+}
+
 // StaffView builds the staff projection, scoped to the caller's tenant (404 otherwise).
 func (s *Service) StaffView(ctx context.Context, sessionID, tenantID string) (*StaffView, error) {
 	sess, err := s.getSession(ctx, s.pool, sessionID)
@@ -156,7 +180,7 @@ func (s *Service) StaffView(ctx context.Context, sessionID, tenantID string) (*S
 	if sess.TenantID != tenantID {
 		return nil, ErrNotFound
 	}
-	v := &StaffView{ID: sess.ID, State: sess.State, StateVersion: sess.StateVersion, InputMode: sess.InputMode}
+	v := &StaffView{ID: sess.ID, State: sess.State, StateVersion: sess.StateVersion, InputMode: sess.InputMode, ApplicationNumber: shownNumber(sess.ApplicationNumber)}
 	plan, err := s.plans.load(ctx, s.pool, sess.PlanID, sess.PlanVersion)
 	if err != nil {
 		return nil, err

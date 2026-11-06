@@ -19,6 +19,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/accesscode"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/config"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/ids"
@@ -78,7 +79,7 @@ func newEnv(t *testing.T, o options) *env {
 	e.svc, err = interview.New(db.CP, m, interview.Settings{
 		CompletionDeadline: 8 * time.Second, PauseTimeout: 30 * time.Minute, InvitationTTL: time.Hour, CandidateSessionTTL: time.Hour, LeaseTTL: time.Hour,
 		Retention:        config.Retention{TranscriptDays: 30, SessionEventsDays: 30, AssessmentOutputDays: 30, AudioRecordingDays: o.retentionDays},
-		RecordingEnabled: o.deployEnabled, RecordingAttested: o.deployAttested, NoticeID: "notice_default", NoticeVersion: "2026-11-draft.1",
+		RecordingEnabled: o.deployEnabled, RecordingAttested: o.deployAttested, NoticeID: "notice_default", NoticeVersion: "2026-11-draft.1", AccessCode: accesscode.Cheap,
 	}, effects{rec: e.rec}, log, nil)
 	if err != nil {
 		t.Fatal(err)

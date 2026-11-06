@@ -88,7 +88,9 @@ type Config struct {
 	// Staff browser sessions (ADR-023): their lifetime and the per-client sign-in rate.
 	StaffSessionTTL       time.Duration
 	StaffSignInsPerMinute int
-	TrustedProxies        []netip.Prefix
+	// CandidateSignInsPerMinute is the per-client rate of candidate sign-ins (ADR-024).
+	CandidateSignInsPerMinute int
+	TrustedProxies            []netip.Prefix
 
 	NoticeID            string
 	NoticeVersion       string
@@ -277,6 +279,11 @@ func Load(get Getenv) (*Config, error) {
 		errs = append(errs, errors.New("ATI_STAFF_SIGNINS_PER_MINUTE must be between 1 and 1000"))
 	}
 	c.StaffSignInsPerMinute = signIns
+	candidateSignIns, err := strconv.Atoi(opt("ATI_CANDIDATE_SIGNINS_PER_MINUTE", "10"))
+	if err != nil || candidateSignIns < 1 || candidateSignIns > 1000 {
+		errs = append(errs, errors.New("ATI_CANDIDATE_SIGNINS_PER_MINUTE must be between 1 and 1000"))
+	}
+	c.CandidateSignInsPerMinute = candidateSignIns
 	defProxies := ""
 	if c.IsDevLike() {
 		defProxies = "127.0.0.1/32,::1/128"

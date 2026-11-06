@@ -57,11 +57,13 @@ type Server struct {
 	metrics   *Metrics
 	now       func() time.Time
 	limiter   *ipLimiter // invitation exchanges
-	// staffLimiter bounds staff sign-ins per client. Behind a proxy, ATI_TRUSTED_PROXY_CIDRS
-	// must name it, or every client shares the proxy's budget (ADR-023).
-	staffLimiter *ipLimiter
-	rec          Recorder
-	relay        Relay
+	// staffLimiter bounds staff sign-ins per client, and candidateLimiter candidate sign-ins. Behind
+	// a proxy, ATI_TRUSTED_PROXY_CIDRS must name it, or every client shares the proxy's budget
+	// (ADR-023, ADR-024).
+	staffLimiter     *ipLimiter
+	candidateLimiter *ipLimiter
+	rec              Recorder
+	relay            Relay
 }
 
 // New builds the server.
@@ -74,7 +76,8 @@ func New(d Deps) *Server {
 	}
 	return &Server{cfg: d.Config, svc: d.Service, tier1: d.Tier1, media: d.Media, pool: d.Pool, tier1Pool: d.Tier1Pool,
 		log: d.Log, metrics: d.Metrics, now: d.Now, limiter: newIPLimiter(d.Config.InvitationExchangesPerMinute),
-		staffLimiter: newIPLimiter(d.Config.StaffSignInsPerMinute), rec: d.Recorder, relay: d.Relay}
+		staffLimiter: newIPLimiter(d.Config.StaffSignInsPerMinute), candidateLimiter: newIPLimiter(d.Config.CandidateSignInsPerMinute),
+		rec: d.Recorder, relay: d.Relay}
 }
 
 // Route is one registered endpoint.
@@ -89,6 +92,7 @@ var publicRoutes = []Route{
 	{"GET", "/api/v1/interviews/{interview_id}", (*Server).getInterview},
 	{"POST", "/api/v1/interviews/{interview_id}/invitation/revoke", (*Server).revokeInvitation},
 	{"POST", "/api/v1/invitations/exchange", (*Server).exchangeInvitation},
+	{"POST", "/api/v1/candidate/session", (*Server).startCandidateSession},
 	{"GET", "/api/v1/interviews/{interview_id}/consent-notice", (*Server).getConsentNotice},
 	{"POST", "/api/v1/interviews/{interview_id}/consent", (*Server).submitConsent},
 	{"POST", "/api/v1/interviews/{interview_id}/start", (*Server).start},

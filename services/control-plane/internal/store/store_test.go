@@ -173,6 +173,7 @@ func TestTier2EvaluatorRoleReadsOnlyEvidenceAndNarrowViews(t *testing.T) {
 		`SELECT * FROM ati.review_outcomes`,
 		`SELECT * FROM ati.reports`,
 		`SELECT * FROM ati.staff_sessions`,
+		`SELECT access_code_hash FROM ati.invitations`,
 		`SELECT * FROM ati.consent_records`,
 		`SELECT * FROM ati.audio_recordings`,
 		`INSERT INTO ati.evaluations (id) VALUES ('evl_x')`,
@@ -251,7 +252,7 @@ func TestTier1ContextRoleHasNoTableAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tier1.Close()
-	for _, table := range []string{"interview_sessions", "transcript_segments", "interview_questions", "candidate_answers", "candidates", "consent_records"} {
+	for _, table := range []string{"interview_sessions", "invitations", "transcript_segments", "interview_questions", "candidate_answers", "candidates", "consent_records"} {
 		if _, err := tier1.Exec(ctx, `SELECT 1 FROM ati.`+table+` LIMIT 1`); err == nil || !strings.Contains(err.Error(), "permission denied") {
 			t.Errorf("tier1_ctx role reads %s: %v", table, err)
 		}

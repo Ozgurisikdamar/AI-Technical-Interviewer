@@ -97,7 +97,8 @@ paths:
       operationId: revokeInvitation
       summary: Revoke the interview's invitation and every candidate session (ADR-016).
       description: |
-        The invitation can no longer be exchanged and any candidate session cookie stops working. A live interview
+        The invitation can no longer be exchanged, its access code no longer signs in (ADR-024), and any candidate
+        session cookie stops working. A live interview
         is paused with reason `access_revoked` and its media room is deleted at once (self-hosted LiveKit cannot
         revoke a connected participant's token); nobody can resume it, so the pause expires to CANCELLED. Contract
         v1.1 has no staff cancellation, so other states are left unchanged. Repeating the request changes nothing.
@@ -145,6 +146,45 @@ paths:
         '400': {$ref: '#/components/responses/Problem'}
         '410': {$ref: '#/components/responses/Problem'}
         '429': {$ref: '#/components/responses/Problem'}
+
+  /api/v1/candidate/session:
+    post:
+      tags: [candidate]
+      operationId: startCandidateSession
+      summary: Sign in with the application number and access code (ADR-024).
+      description: |
+        The other way into an interview, next to the invitation link: the access code is a second credential of the
+        same invitation, so it works until the invitation expires or is revoked, and a sign-in behaves exactly like
+        an exchange (a fresh session cookie, any earlier candidate session revoked, CREATED moves to
+        CONSENT_PENDING). Both values are read case-insensitively, with spaces and hyphens ignored, O read as 0 and
+        I or L as 1. Every refusal is the same 401 `sign_in_failed`: unknown number, wrong code, expired or revoked
+        invitation, or a lock. Five wrong codes in a row lock code sign-in for that interview for 15 minutes; the
+        lock does not extend while it lasts, and the invitation link keeps working. Rate-limited per client
+        address. As with the exchange, the Idempotency-Key header is required but responses are never replayed.
+      security: []
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CandidateSignInRequest'}
+      responses:
+        '200':
+          description: Session established; any earlier candidate session for this interview is revoked.
+          headers:
+            Set-Cookie:
+              description: '`ati_cs` session cookie (HttpOnly; Secure outside dev; SameSite=Strict; Path=/api).'
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InvitationExchangeResponse'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '401': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '413': {$ref: '#/components/responses/Problem'}
+        '415': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
 
   /api/v1/interviews/{interview_id}/consent-notice:
     get:
@@ -933,7 +973,7 @@ components:
     CreateInterviewResponse:
       type: object
       additionalProperties: false
-      required: [interview, invitation_url, invitation_expires_at]
+      required: [interview, invitation_url, access_code, invitation_expires_at]
       properties:
         interview: {$ref: '#/components/schemas/InterviewStaffView'}
         invitation_url:
@@ -942,6 +982,12 @@ components:
             Public origin + /i#token=… (fragment-borne token). Returned exactly once: an idempotent replay returns
             null because the token is stored only as a hash. A caller that lost it revokes the invitation and creates
             a new interview.
+        access_code:
+          type: [string, 'null']
+          pattern: '^[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}$'
+          description: |
+            With the application number (in `interview`), signs the candidate in without the link (ADR-024). Returned
+            exactly once, like `invitation_url`, and null in a replay: it is stored only as an argon2id hash.
         invitation_expires_at: {type: string, format: date-time}
 
     Progress:
@@ -955,12 +1001,16 @@ components:
     InterviewStaffView:
       type: object
       additionalProperties: false
-      required: [id, state, state_version, candidate_ref, plan, input_mode, recording, progress, created_at, updated_at]
+      required: [id, state, state_version, candidate_ref, application_number, plan, input_mode, recording, progress, created_at, updated_at]
       properties:
         id: {type: string}
         state: {$ref: '#/components/schemas/StateEnum'}
         state_version: {type: integer, minimum: 1}
         candidate_ref: {type: string}
+        application_number:
+          type: [string, 'null']
+          pattern: '^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$'
+          description: The number the candidate signs in with (ADR-024); not a secret. Null for interviews created before it.
         plan:
           type: object
           additionalProperties: false
@@ -984,7 +1034,8 @@ components:
     InterviewCandidateView:
       type: object
       additionalProperties: false
-      required: [id, state, state_version, progress, input_mode, active_prompt, paused_from, pending_completion, recording_active, allowed_actions, environment]
+      required: [id, state, state_version, progress, input_mode, active_prompt, paused_from, pending_completion, recording_active, allowed_actions, environment,
+        application_number, interview_title, language]
       properties:
         id: {type: string}
         state: {$ref: '#/components/schemas/StateEnum'}
@@ -1008,6 +1059,12 @@ components:
           type: array
           items: {enum: [consent, start, begin, pause, resume, finish_answer, withdraw, text_response, join_media]}
         environment: {enum: [dev, test, staging, production]}
+        application_number:
+          type: [string, 'null']
+          pattern: '^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$'
+          description: The candidate's application number (ADR-024); null for interviews created before it.
+        interview_title: {type: string, maxLength: 200, description: "The interview's name (the plan's title)."}
+        language: {enum: [en, tr], description: "The language the interview is held in; the page's may differ."}
 
     RevokeInvitationResponse:
       type: object
@@ -1031,6 +1088,14 @@ components:
       required: [token]
       properties:
         token: {type: string, minLength: 32, maxLength: 128}
+
+    CandidateSignInRequest:
+      type: object
+      additionalProperties: false
+      required: [application_number, access_code]
+      properties:
+        application_number: {type: string, maxLength: 32, description: 'XXXX-XXXX as given; case, spaces and hyphens do not matter.'}
+        access_code: {type: string, maxLength: 32, description: 'XXXXX-XXXXX as given; case, spaces and hyphens do not matter.'}
 
     InvitationExchangeResponse:
       type: object

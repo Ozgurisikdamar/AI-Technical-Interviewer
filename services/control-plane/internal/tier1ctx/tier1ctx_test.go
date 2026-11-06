@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/accesscode"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/config"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/ids"
@@ -39,7 +40,7 @@ func setup(t *testing.T) *env {
 	svc, err := interview.New(db.CP, m, interview.Settings{
 		CompletionDeadline: 8 * time.Second, PauseTimeout: 30 * time.Minute, InvitationTTL: time.Hour, CandidateSessionTTL: time.Hour, LeaseTTL: time.Hour,
 		Retention: config.Retention{TranscriptDays: 30, SessionEventsDays: 30, AssessmentOutputDays: 30},
-		NoticeID:  "notice_default", NoticeVersion: "2026-11-draft.1",
+		NoticeID:  "notice_default", NoticeVersion: "2026-11-draft.1", AccessCode: accesscode.Cheap,
 	}, nil, slog.New(slog.NewJSONHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatal(err)

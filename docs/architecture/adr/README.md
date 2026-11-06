@@ -19,5 +19,6 @@ The records below are **Proposed**. They capture decisions needed to implement P
 | [ADR-021](./ADR-021-model-registry-endpoint-pinning-and-duplex-assessment.md) | Provider model registry, endpoint pinning and the full-duplex assessment | Proposed |
 | [ADR-022](./ADR-022-tier2-evaluation-pipeline-mvp.md) | Tier-2 evaluation pipeline MVP: outbox relay, Redis Streams, deterministic validation, mandatory human review (amends ADR-012: contract v1.2) | Proposed |
 | [ADR-023](./ADR-023-review-console-staff-sessions.md) | Review console: staff browser sessions and independent-first review (amends ADR-016) | Proposed (owner-approved direction) |
+| [ADR-024](./ADR-024-candidate-sign-in.md) | Candidate sign-in with an application number and an access code (amends ADR-016) | Proposed (owner-approved direction) |
 
 "Owner-approved direction" means the project owner chose the option when it was raised as a conflict between documents; the full record still needs architecture review.

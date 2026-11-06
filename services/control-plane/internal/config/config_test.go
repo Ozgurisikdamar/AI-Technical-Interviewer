@@ -346,3 +346,20 @@ func TestStaffSessionSettingsAreBounded(t *testing.T) {
 		t.Fatalf("explicit settings: %+v %v", c, err)
 	}
 }
+
+// Candidate sign-ins (ADR-024) have their own per-client budget, bounded like the others.
+func TestCandidateSignInRateIsBounded(t *testing.T) {
+	c, err := Load(getter(devEnv()))
+	if err != nil || c.CandidateSignInsPerMinute != 10 {
+		t.Fatalf("default: %+v %v", c, err)
+	}
+	for _, bad := range []string{"0", "1001", "many", "-3"} {
+		if _, err := Load(getter(with(devEnv(), "ATI_CANDIDATE_SIGNINS_PER_MINUTE", bad))); err == nil || !strings.Contains(err.Error(), "ATI_CANDIDATE_SIGNINS_PER_MINUTE") {
+			t.Errorf("ATI_CANDIDATE_SIGNINS_PER_MINUTE=%s must be refused: %v", bad, err)
+		}
+	}
+	c, err = Load(getter(with(devEnv(), "ATI_CANDIDATE_SIGNINS_PER_MINUTE", "4")))
+	if err != nil || c.CandidateSignInsPerMinute != 4 || c.StaffSignInsPerMinute != 10 {
+		t.Fatalf("explicit setting: %+v %v", c, err)
+	}
+}

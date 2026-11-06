@@ -334,7 +334,7 @@ func TestOnlyOperationsDeclaringStaffSessionAcceptTheCookie(t *testing.T) {
 		}
 		counts[map[bool]string{true: "accepted", false: "refused"}[accepted]]++
 	}
-	if counts["accepted"] != 7 || counts["refused"] != 14 || counts["skipped"] != 2 {
+	if counts["accepted"] != 7 || counts["refused"] != 14 || counts["skipped"] != 3 {
 		t.Fatalf("operations: %v", counts)
 	}
 }

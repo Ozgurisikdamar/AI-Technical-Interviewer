@@ -26,6 +26,10 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeStaleStateVersion, "the interview changed; refresh and retry")
 	case errors.Is(err, interview.ErrInvitationInvalid):
 		httpx.WriteProblem(w, r, http.StatusGone, httpx.CodeInvitationInvalid, "the invitation is invalid or has expired")
+	case errors.Is(err, interview.ErrSignInFailed):
+		httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeSignInFailed, "the application number or access code was not accepted")
+	case errors.Is(err, interview.ErrSignInBusy):
+		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "too many sign-ins at once; try again in a moment")
 	case errors.Is(err, interview.ErrRetentionMissing):
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeRetentionMissing, "interviews cannot be created until explicit retention periods are configured")
 	case errors.Is(err, interview.ErrPlanUnavailable):

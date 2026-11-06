@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/accesscode"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/api"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/config"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
@@ -135,7 +136,7 @@ func newEnvPool(t *testing.T, overrides map[string]string, maxConns int32) *env 
 	media := realtime.NewFake()
 	svc, err := interview.New(pool, m, interview.Settings{
 		CompletionDeadline: 8 * time.Second, PauseTimeout: 30 * time.Minute, InvitationTTL: time.Hour, CandidateSessionTTL: time.Hour,
-		LeaseTTL: 15 * time.Second, Retention: cfg.Retention, NoticeID: cfg.NoticeID, NoticeVersion: cfg.NoticeVersion,
+		LeaseTTL: 15 * time.Second, Retention: cfg.Retention, NoticeID: cfg.NoticeID, NoticeVersion: cfg.NoticeVersion, AccessCode: accesscode.Cheap,
 	}, api.Effects{Media: media, Log: log}, log, nil)
 	if err != nil {
 		t.Fatal(err)

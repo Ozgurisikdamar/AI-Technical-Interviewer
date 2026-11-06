@@ -32,8 +32,10 @@ type Plan struct {
 	Language      string
 	SeniorityBand string
 	Synthetic     bool
-	Items         []Item // ordered by ordinal
-	index         map[string]int
+	// Title is the plan's display title; the candidate sees it as the interview's name (ADR-024).
+	Title string
+	Items []Item // ordered by ordinal
+	index map[string]int
 }
 
 // First returns the first item.
@@ -98,8 +100,8 @@ func (c *planCache) load(ctx context.Context, q interface {
 		return v.(*Plan), nil
 	}
 	p := &Plan{ID: id, Version: version, index: map[string]int{}}
-	err := q.QueryRow(ctx, `SELECT language, seniority_band, synthetic FROM ati.interview_plans WHERE plan_id = $1 AND version = $2`, id, version).
-		Scan(&p.Language, &p.SeniorityBand, &p.Synthetic)
+	err := q.QueryRow(ctx, `SELECT language, seniority_band, synthetic, coalesce(content->>'title', '') FROM ati.interview_plans WHERE plan_id = $1 AND version = $2`, id, version).
+		Scan(&p.Language, &p.SeniorityBand, &p.Synthetic, &p.Title)
 	if err == pgx.ErrNoRows {
 		return nil, ErrPlanUnavailable
 	}

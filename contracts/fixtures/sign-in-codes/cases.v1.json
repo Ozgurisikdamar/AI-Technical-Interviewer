@@ -1,0 +1,26 @@
+{
+  "description": "How typed application numbers and access codes are read (ADR-024). The control plane (internal/accesscode) and the web app (src/lib/signin/codes.ts) both run every case. canonical null means the input is refused.",
+  "cases": [
+    {"name": "number as shown", "kind": "number", "input": "7K3Q-9XWD", "canonical": "7K3Q9XWD"},
+    {"name": "number without the hyphen", "kind": "number", "input": "7K3Q9XWD", "canonical": "7K3Q9XWD"},
+    {"name": "number in lower case with a space", "kind": "number", "input": "7k3q 9xwd", "canonical": "7K3Q9XWD"},
+    {"name": "number with surrounding spaces", "kind": "number", "input": "  7K3Q-9XWD  ", "canonical": "7K3Q9XWD"},
+    {"name": "O read as zero, I and L as one", "kind": "number", "input": "OoIi-LlA0", "canonical": "001111A0"},
+    {"name": "Turkish dotless and dotted i read as one", "kind": "number", "input": "ıİ2345AB", "canonical": "112345AB"},
+    {"name": "number with U refused", "kind": "number", "input": "7K3Q-9XWU", "canonical": null},
+    {"name": "number one symbol short", "kind": "number", "input": "7K3Q-9XW", "canonical": null},
+    {"name": "number one symbol long", "kind": "number", "input": "7K3Q-9XWDA", "canonical": null},
+    {"name": "number with an underscore", "kind": "number", "input": "7K3Q_9XWD", "canonical": null},
+    {"name": "number with an accented letter", "kind": "number", "input": "7K3Q-9XWÉ", "canonical": null},
+    {"name": "empty number", "kind": "number", "input": "", "canonical": null},
+    {"name": "code as shown", "kind": "code", "input": "ABCDE-FGHJK", "canonical": "ABCDEFGHJK"},
+    {"name": "code in lower case", "kind": "code", "input": "abcde-fghjk", "canonical": "ABCDEFGHJK"},
+    {"name": "code with spaces between groups", "kind": "code", "input": "ABCDE FGHJK", "canonical": "ABCDEFGHJK"},
+    {"name": "code with a non-breaking space", "kind": "code", "input": "ABCDE FGHJK", "canonical": "ABCDEFGHJK"},
+    {"name": "code with confusable letters", "kind": "code", "input": "o1lI0-MNPQR", "canonical": "01110MNPQR"},
+    {"name": "code with an en dash refused", "kind": "code", "input": "ABCDE–FGHJK", "canonical": null},
+    {"name": "code with U refused", "kind": "code", "input": "ABCDE-FGHJU", "canonical": null},
+    {"name": "code one symbol short", "kind": "code", "input": "ABCDE-FGHJ", "canonical": null},
+    {"name": "code too long to read", "kind": "code", "input": "ABCDE-FGHJK-ABCDE-FGHJK-ABCDE-FGH", "canonical": null}
+  ]
+}

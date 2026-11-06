@@ -11,11 +11,13 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/accesscode"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/config"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
 )
@@ -39,6 +41,8 @@ type Settings struct {
 	FutureToleranceMs int64
 	// PromptDeviationThreshold is an uncalibrated placeholder (ADR-014).
 	PromptDeviationThreshold float64
+	// AccessCode is the cost of hashing access codes (ADR-024); zero means accesscode.Default.
+	AccessCode accesscode.Params
 }
 
 // Effects are external side effects executed after a transaction commits.
@@ -84,6 +88,16 @@ type Service struct {
 	observer Observer
 
 	recordingActive func(ctx context.Context, sessionID string) bool
+
+	// Candidate sign-in (ADR-024): newNumber makes application numbers and verify checks access
+	// codes (both replaceable in tests); verifiers bounds concurrent argon2 verifications, and
+	// dummy is the hash verified for unknown application numbers, so they take as long as known ones.
+	newNumber    func() string
+	verify       func(code, phc string) bool
+	verifiers    chan struct{}
+	verifierWait time.Duration
+	dummyOnce    sync.Once
+	dummy        string
 }
 
 // New builds the service and verifies that every guard and effect of the contract is implemented.
@@ -103,6 +117,9 @@ func New(pool *pgxpool.Pool, machine *flow.Machine, settings Settings, effects E
 	if settings.AgentDispatchTimeout == 0 {
 		settings.AgentDispatchTimeout = 30 * time.Second
 	}
+	if settings.AccessCode == (accesscode.Params{}) {
+		settings.AccessCode = accesscode.Default
+	}
 	implemented := map[string]bool{}
 	for _, g := range implementedGuards {
 		implemented[g] = true
@@ -121,7 +138,8 @@ func New(pool *pgxpool.Pool, machine *flow.Machine, settings Settings, effects E
 	if err != nil {
 		return nil, err
 	}
-	return &Service{pool: pool, machine: machine, settings: settings, effects: effects, log: log, now: now, plans: newPlanCache(), notices: notices}, nil
+	return &Service{pool: pool, machine: machine, settings: settings, effects: effects, log: log, now: now, plans: newPlanCache(), notices: notices,
+		newNumber: accesscode.NewNumber, verify: accesscode.Verify, verifiers: make(chan struct{}, signInVerifiers), verifierWait: signInWait}, nil
 }
 
 // Machine exposes the loaded flow engine.
@@ -138,6 +156,10 @@ var (
 	ErrSegmentConflict    = errors.New("segment key reused with different content")
 	ErrManifestIncomplete = errors.New("flush manifest lists segments that were not received")
 	ErrNonceInvalid       = errors.New("claim nonce invalid, expired or already used")
+	// ErrSignInFailed is every refused candidate sign-in, whatever the reason (ADR-024).
+	ErrSignInFailed = errors.New("application number or access code not accepted")
+	// ErrSignInBusy means too many sign-ins are being verified at once.
+	ErrSignInBusy = errors.New("too many sign-ins in progress")
 )
 
 // TransitionRefusedError wraps a flow-engine refusal.
@@ -194,18 +216,20 @@ type sessionRow struct {
 	CompletedAt     *time.Time
 	CancelledAt     *time.Time
 	CancelReason    *string
+	// ApplicationNumber is canonical (no hyphen); nil for interviews created before ADR-024.
+	ApplicationNumber *string
 }
 
 const sessionColumns = `id, tenant_id, candidate_id, plan_id, plan_version, notice_id, notice_version, notice_language, state, state_version,
 	input_mode, paused_from, paused_at, timeline_epoch, room_name, segment_seq, lease_fencing, retention, recording_policy,
-	completed_at, cancelled_at, cancel_reason`
+	completed_at, cancelled_at, cancel_reason, application_number`
 
 func scanSession(row pgx.Row) (*sessionRow, error) {
 	var s sessionRow
 	var state string
 	err := row.Scan(&s.ID, &s.TenantID, &s.CandidateID, &s.PlanID, &s.PlanVersion, &s.NoticeID, &s.NoticeVersion, &s.NoticeLanguage,
 		&state, &s.StateVersion, &s.InputMode, &s.PausedFrom, &s.PausedAt, &s.TimelineEpoch, &s.RoomName, &s.SegmentSeq,
-		&s.LeaseFencing, &s.Retention, &s.RecordingPolicy, &s.CompletedAt, &s.CancelledAt, &s.CancelReason)
+		&s.LeaseFencing, &s.Retention, &s.RecordingPolicy, &s.CompletedAt, &s.CancelledAt, &s.CancelReason, &s.ApplicationNumber)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

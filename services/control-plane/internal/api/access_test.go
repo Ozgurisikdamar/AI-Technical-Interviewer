@@ -120,24 +120,46 @@ func TestConcurrentInterviewCreation(t *testing.T) {
 	}
 }
 
-// The invitation token and media tokens are credentials: they are returned once and never kept at
-// rest, not even for idempotent replays (THREAT_MODEL_ADDENDUM_PHASE1: hashed storage).
+// The invitation token, the access code and media tokens are credentials: they are returned once
+// and never kept at rest, not even for idempotent replays (THREAT_MODEL_ADDENDUM_PHASE1: hashed
+// storage; ADR-024).
 func TestCredentialsAreNeverStoredForReplays(t *testing.T) {
 	e := newEnv(t)
 	first := e.createInterview(e.staff, "create-key-00001", "ref-replay")
 	token := strings.TrimPrefix(first.str("invitation_url"), origin+"/i#token=")
-	if first.status != 201 || len(token) < 32 {
+	code := first.str("access_code")
+	if first.status != 201 || len(token) < 32 || len(code) != 11 {
 		t.Fatalf("create: %d %s", first.status, first.raw)
 	}
 	replay := e.createInterview(e.staff, "create-key-00001", "ref-replay")
 	if replay.status != 201 || replay.header.Get("Idempotent-Replayed") != "true" || replay.str("interview", "id") != first.str("interview", "id") {
 		t.Fatalf("replay: %d %s", replay.status, replay.raw)
 	}
-	if replay.body["invitation_url"] != nil || strings.Contains(string(replay.raw), token) {
-		t.Fatalf("a replay must not return the invitation again: %s", replay.raw)
+	if _, ok := replay.body["access_code"]; !ok || replay.body["access_code"] != nil || replay.body["invitation_url"] != nil ||
+		strings.Contains(string(replay.raw), token) || strings.Contains(string(replay.raw), code) {
+		t.Fatalf("a replay must not return the invitation or the access code again: %s", replay.raw)
+	}
+	if replay.str("interview", "application_number") != first.str("interview", "application_number") {
+		t.Fatalf("a replay names the same application: %s", replay.raw)
 	}
 	if n := e.count(`SELECT count(*) FROM ati.invitations WHERE token_hash = $1`, ids.Hash(token)); n != 1 {
 		t.Fatal("the invitation is stored by its hash")
+	}
+	if r := e.candidateSignIn(first.str("interview", "application_number"), code, nil); r.status != 200 {
+		t.Fatalf("sign-in: %d %s", r.status, r.raw)
+	}
+	// Both forms of the code: as shown, and as the service compares it.
+	bare := strings.ReplaceAll(code, "-", "")
+	for _, secret := range []string{code, bare} {
+		if n := e.count(`SELECT count(*) FROM ati.idempotency_records WHERE response::text LIKE '%' || $1 || '%'`, secret); n != 0 {
+			t.Fatal("the access code is stored in idempotency records")
+		}
+		if n := e.count(`SELECT count(*) FROM ati.audit_logs WHERE details::text LIKE '%' || $1 || '%'`, secret); n != 0 {
+			t.Fatal("the access code reached the audit log")
+		}
+		if n := e.count(`SELECT count(*) FROM ati.invitations i WHERE i::text LIKE '%' || $1 || '%'`, secret); n != 0 {
+			t.Fatal("the access code is stored in clear")
+		}
 	}
 	id, cookie := e.interviewToReady()
 	agent, _ := e.startAndClaim(id, cookie)
@@ -154,7 +176,7 @@ func TestCredentialsAreNeverStoredForReplays(t *testing.T) {
 			t.Fatalf("a credential reached the audit log (%s…)", secret[:8])
 		}
 	}
-	assertNoSecretsInLogs(t, e, token, rt.str("token"), cookie, agent.grant)
+	assertNoSecretsInLogs(t, e, token, code, bare, rt.str("token"), cookie, agent.grant)
 }
 
 func TestSessionCookieIsSecureOutsideDevAndTest(t *testing.T) {
@@ -173,6 +195,17 @@ func TestSessionCookieIsSecureOutsideDevAndTest(t *testing.T) {
 	}
 	if ex.status != 200 || !secure {
 		t.Fatalf("the session cookie must be Secure, HttpOnly and SameSite=Strict outside dev/test: %d %v", ex.status, ex.header.Values("Set-Cookie"))
+	}
+	// The same holds for the cookie a sign-in sets (ADR-024).
+	in := e.candidateSignIn(r.str("interview", "application_number"), r.str("access_code"), nil)
+	secure = false
+	for _, c := range (&http.Response{Header: in.header}).Cookies() {
+		if c.Name == api.CandidateCookie {
+			secure = c.Secure && c.HttpOnly && c.SameSite == http.SameSiteStrictMode
+		}
+	}
+	if in.status != 200 || !secure {
+		t.Fatalf("the sign-in cookie must be Secure, HttpOnly and SameSite=Strict outside dev/test: %d %v", in.status, in.header.Values("Set-Cookie"))
 	}
 }
 

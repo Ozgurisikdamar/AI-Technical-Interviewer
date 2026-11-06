@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/accesscode"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/flow"
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/ids"
 )
@@ -24,15 +26,22 @@ type CreateRequest struct {
 	InvitationTTL  time.Duration
 }
 
-// Created is returned once; the invitation token is never retrievable again.
+// Created is returned once. Neither the invitation token nor the access code can be retrieved again.
 type Created struct {
 	SessionID           string
 	InvitationToken     string
 	InvitationExpiresAt time.Time
+	// ApplicationNumber and AccessCode let the candidate sign in without the link (ADR-024). Both
+	// are in canonical form; the code is stored only as a hash.
+	ApplicationNumber string
+	AccessCode        string
 }
 
-// CreateInterview creates a session in CREATED with a one-time invitation. Refused without an
-// explicit retention policy (ADR-020).
+// applicationNumberKey is the unique constraint a new application number can, rarely, collide with.
+const applicationNumberKey = "interview_sessions_application_number_key"
+
+// CreateInterview creates a session in CREATED with a one-time invitation, an application number
+// and an access code. Refused without an explicit retention policy (ADR-020).
 func (s *Service) CreateInterview(ctx context.Context, actor Actor, req CreateRequest) (*Created, error) {
 	r := s.settings.Retention
 	if r.TranscriptDays <= 0 || r.SessionEventsDays <= 0 || r.AssessmentOutputDays <= 0 {
@@ -61,36 +70,51 @@ func (s *Service) CreateInterview(ctx context.Context, actor Actor, req CreateRe
 		"assessment_output_days": r.AssessmentOutputDays, "audio_recording_days": nilIfZero(r.AudioRecordingDays),
 	})
 	recording, _ := json.Marshal(map[string]bool{"enabled": s.settings.RecordingEnabled, "encryption_attested": s.settings.RecordingAttested})
-	out := &Created{SessionID: ids.New(ids.Session), InvitationToken: ids.Token()}
+	out := &Created{SessionID: ids.New(ids.Session), InvitationToken: ids.Token(), AccessCode: accesscode.NewCode()}
+	// Hashing is deliberately slow, so it happens before the transaction.
+	codeHash := accesscode.Hash(out.AccessCode, s.settings.AccessCode)
 	now := s.now().UTC()
 	out.InvitationExpiresAt = now.Add(ttl)
-	err = s.inTx(ctx, func(tx pgx.Tx, _ *[]func(context.Context)) error {
-		// INSERT ... DO NOTHING + SELECT keeps the role free of UPDATE on candidates (least privilege).
-		if _, err := tx.Exec(ctx, `INSERT INTO ati.candidates (id, tenant_id, external_ref) VALUES ($1,$2,$3)
-			ON CONFLICT (tenant_id, external_ref) DO NOTHING`, ids.New(ids.Candidate), req.TenantID, req.CandidateRef); err != nil {
-			return err
+	for attempt := 1; ; attempt++ {
+		out.ApplicationNumber = s.newNumber()
+		err = s.inTx(ctx, func(tx pgx.Tx, _ *[]func(context.Context)) error {
+			// INSERT ... DO NOTHING + SELECT keeps the role free of UPDATE on candidates (least privilege).
+			if _, err := tx.Exec(ctx, `INSERT INTO ati.candidates (id, tenant_id, external_ref) VALUES ($1,$2,$3)
+				ON CONFLICT (tenant_id, external_ref) DO NOTHING`, ids.New(ids.Candidate), req.TenantID, req.CandidateRef); err != nil {
+				return err
+			}
+			var candidateID string
+			if err := tx.QueryRow(ctx, `SELECT id FROM ati.candidates WHERE tenant_id = $1 AND external_ref = $2`, req.TenantID, req.CandidateRef).Scan(&candidateID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO ati.interview_sessions (id, tenant_id, candidate_id, plan_id, plan_version, notice_id, notice_version,
+				notice_language, state, room_name, retention, recording_policy, created_by, created_at, updated_at, application_number)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'CREATED',$9,$10,$11,$12,$13,$13,$14)`, out.SessionID, req.TenantID, candidateID, plan.ID, plan.Version,
+				s.settings.NoticeID, s.settings.NoticeVersion, lang, ids.New(ids.Room), retention, recording, req.StaffID, now, out.ApplicationNumber); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO ati.invitations (id, session_id, token_hash, created_at, expires_at, access_code_hash) VALUES ($1,$2,$3,$4,$5,$6)`,
+				ids.New(ids.Invitation), out.SessionID, ids.Hash(out.InvitationToken), now, out.InvitationExpiresAt, codeHash); err != nil {
+				return err
+			}
+			return s.audit(ctx, tx, req.TenantID, actor, "interview.create", "interview_session", out.SessionID, "allowed",
+				map[string]any{"plan_id": plan.ID, "plan_version": plan.Version, "synthetic_plan": plan.Synthetic})
+		})
+		// Application numbers are random, so a collision is rare; a new number resolves it.
+		if attempt < 3 && isUniqueViolation(err, applicationNumberKey) {
+			continue
 		}
-		var candidateID string
-		if err := tx.QueryRow(ctx, `SELECT id FROM ati.candidates WHERE tenant_id = $1 AND external_ref = $2`, req.TenantID, req.CandidateRef).Scan(&candidateID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO ati.interview_sessions (id, tenant_id, candidate_id, plan_id, plan_version, notice_id, notice_version,
-			notice_language, state, room_name, retention, recording_policy, created_by, created_at, updated_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'CREATED',$9,$10,$11,$12,$13,$13)`, out.SessionID, req.TenantID, candidateID, plan.ID, plan.Version,
-			s.settings.NoticeID, s.settings.NoticeVersion, lang, ids.New(ids.Room), retention, recording, req.StaffID, now); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO ati.invitations (id, session_id, token_hash, created_at, expires_at) VALUES ($1,$2,$3,$4,$5)`,
-			ids.New(ids.Invitation), out.SessionID, ids.Hash(out.InvitationToken), now, out.InvitationExpiresAt); err != nil {
-			return err
-		}
-		return s.audit(ctx, tx, req.TenantID, actor, "interview.create", "interview_session", out.SessionID, "allowed",
-			map[string]any{"plan_id": plan.ID, "plan_version": plan.Version, "synthetic_plan": plan.Synthetic})
-	})
+		break
+	}
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func isUniqueViolation(err error, constraint string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraint
 }
 
 func nilIfZero(v int) any {
@@ -137,36 +161,45 @@ func (s *Service) ExchangeInvitation(ctx context.Context, actor Actor, token str
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE ati.candidate_sessions SET revoked_at = $2 WHERE session_id = $1 AND revoked_at IS NULL`, sessionID, now); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO ati.candidate_sessions (id, session_id, token_hash, created_at, expires_at) VALUES ($1,$2,$3,$4,$5)`,
-			ids.New("csn"), sessionID, ids.Hash(out.CandidateToken), now, now.Add(s.settings.CandidateSessionTTL)); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE ati.invitations SET first_exchanged_at = coalesce(first_exchanged_at, $2) WHERE id = $1`, invID, now); err != nil {
-			return err
-		}
-		if err := s.audit(ctx, tx, sess.TenantID, actor, "invitation.exchange", "interview_session", sessionID, "allowed", nil); err != nil {
-			return err
-		}
-		if sess.State == flow.Created {
-			oc, err := s.newOp(ctx, tx, sess, Actor{Type: flow.ActorSystem, RequestID: actor.RequestID}, after)
-			if err != nil {
-				return err
-			}
-			oc.invitationValid, oc.cause = true, "invitation_exchanged"
-			if err := s.fire(ctx, oc, flow.EvInvitationExchanged); err != nil {
-				return err
-			}
-		}
-		out.SessionID, out.State = sessionID, sess.State
-		return nil
+		return s.openCandidateSession(ctx, tx, after, sess, invID, actor, now, out, "invitation.exchange", "invitation_exchanged")
 	})
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// openCandidateSession ends the interview's earlier candidate sessions and opens a new one, with
+// the token in out, through the given invitation; the first one performs T01. Both ways in (the
+// invitation link and sign-in) use it, so either ends a session the other opened. The caller
+// holds the session's lock, then the invitation's, in that order.
+func (s *Service) openCandidateSession(ctx context.Context, tx pgx.Tx, after *[]func(context.Context), sess *sessionRow, invitationID string,
+	actor Actor, now time.Time, out *Exchanged, action, cause string) error {
+	if _, err := tx.Exec(ctx, `UPDATE ati.candidate_sessions SET revoked_at = $2 WHERE session_id = $1 AND revoked_at IS NULL`, sess.ID, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO ati.candidate_sessions (id, session_id, token_hash, created_at, expires_at) VALUES ($1,$2,$3,$4,$5)`,
+		ids.New("csn"), sess.ID, ids.Hash(out.CandidateToken), now, now.Add(s.settings.CandidateSessionTTL)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE ati.invitations SET first_exchanged_at = coalesce(first_exchanged_at, $2) WHERE id = $1`, invitationID, now); err != nil {
+		return err
+	}
+	if err := s.audit(ctx, tx, sess.TenantID, actor, action, "interview_session", sess.ID, "allowed", nil); err != nil {
+		return err
+	}
+	if sess.State == flow.Created {
+		oc, err := s.newOp(ctx, tx, sess, Actor{Type: flow.ActorSystem, RequestID: actor.RequestID}, after)
+		if err != nil {
+			return err
+		}
+		oc.invitationValid, oc.cause = true, cause
+		if err := s.fire(ctx, oc, flow.EvInvitationExchanged); err != nil {
+			return err
+		}
+	}
+	out.SessionID, out.State = sess.ID, sess.State
+	return nil
 }
 
 // AuthenticateCandidate resolves an active candidate session token to its interview.

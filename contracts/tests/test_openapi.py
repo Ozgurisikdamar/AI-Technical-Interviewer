@@ -34,6 +34,7 @@ def test_spec_is_valid_openapi_3_1_with_resolvable_external_refs() -> None:
 
 UNAUTHENTICATED = {
     ("post", "/api/v1/invitations/exchange"),
+    ("post", "/api/v1/candidate/session"),  # sign-in: the body carries the application number and code (ADR-024)
     ("post", "/api/v1/staff/session"),  # sign-in: the body carries the staff token (ADR-023)
     ("get", "/healthz"),
     ("get", "/readyz"),
