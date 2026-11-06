@@ -1,6 +1,6 @@
 /**
- * English UI strings. Every candidate-facing and review-console string lives here so that another
- * language (e.g. `tr.ts` exporting `const tr: Messages`) can be added without touching components.
+ * English UI strings. Every candidate-facing and review-console string lives here and in `tr.ts`
+ * (the default language), which must hold the same keys: components never carry text of their own.
  * Parameterised strings are functions so translations can reorder words and handle plurals.
  * Codes from the server are looked up with `label` (./label), never by indexing a map directly.
  */
@@ -22,6 +22,7 @@ export const en = {
     skipToContent: 'Skip to main content',
     noscript: 'This interview needs JavaScript. Turn it on in your browser settings, then reload this page.',
     brand: 'Technical interview',
+    languageLabel: 'Language',
     footer:
       'This interview is structured and reviewed by people. No hiring decision is made automatically.',
   },
@@ -61,7 +62,7 @@ export const en = {
     intro: 'This link is personal to you. When you continue, this browser is signed in to your interview.',
     whatNext:
       'Next, you will read how your information is used and make your choices. Then you can check your microphone, or choose to type your answers.',
-    securityNote: 'For your security, the access code has been removed from the address bar.',
+    securityNote: 'For your security, the private part of the link has been removed from the address bar.',
     continue: 'Continue',
     continuing: 'Continuing…',
     missing: 'This page needs the full invitation link. Open the link from your invitation again.',
@@ -103,6 +104,7 @@ export const en = {
   },
 
   consent: {
+    draftLabel: 'DRAFT',
     draftBanner: 'Draft notice. This text has not been approved for use with real candidates.',
     loadingNotice: 'Loading the notice…',
     noticeError: 'We could not load the notice.',
@@ -283,6 +285,8 @@ export const en = {
         'We could not find this interview for your session. Open your invitation link again to continue.',
       invitation_invalid:
         'This invitation link is no longer valid. It may have expired or been replaced. Contact the person who invited you for a new link.',
+      sign_in_failed:
+        'The application number or the access code was not accepted. Check both and try again. If it keeps failing, use your invitation link or contact the person who invited you.',
       stale_state_version: 'The interview changed while you were acting. The page is up to date now; please try again.',
       transition_not_allowed: 'That action is not available right now. The page is up to date now.',
       conflict: 'That action is not available right now. The page is up to date now.',

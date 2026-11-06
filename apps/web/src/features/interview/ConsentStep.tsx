@@ -116,7 +116,7 @@ function ConsentForm({ view, actions, data, onSubmitted }: ConsentFormProps) {
     <form onSubmit={onSubmit} noValidate className={styles.form}>
       {notice.status === 'draft' ? (
         <div className={styles.draft} role="note" data-testid="draft-banner">
-          <strong className={styles.draftLabel}>DRAFT</strong> <span>{t.consent.draftBanner}</span>
+          <strong className={styles.draftLabel}>{t.consent.draftLabel}</strong> <span>{t.consent.draftBanner}</span>
         </div>
       ) : null}
 

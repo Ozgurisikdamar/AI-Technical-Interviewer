@@ -148,7 +148,7 @@ function Screens({ view, actions, realtime, voiceDeclined, onConsentSubmitted, o
         />
       );
     case 'completed':
-      return <CompletedStep focusOnMount={focusOnMount} realtime={realtime} />;
+      return <CompletedStep focusOnMount={focusOnMount} realtime={realtime} language={view.language} />;
     case 'cancelled':
       return <CancelledStep focusOnMount={focusOnMount} />;
     case 'waiting':

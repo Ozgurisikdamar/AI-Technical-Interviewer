@@ -12,7 +12,7 @@ import type { RealtimeApi } from './useRealtime';
  * human review and appeal exist. No scores or results are ever shown. If the room is still open,
  * the interviewer's closing remarks remain audible and captioned (the microphone is already off).
  */
-export function CompletedStep({ focusOnMount, realtime }: { focusOnMount: boolean; realtime: RealtimeApi }) {
+export function CompletedStep({ focusOnMount, realtime, language }: { focusOnMount: boolean; realtime: RealtimeApi; language: string | null }) {
   const t = useMessages();
   const headingRef = useFocusOnMount<HTMLHeadingElement>(focusOnMount);
   const { snapshot } = realtime;
@@ -39,7 +39,7 @@ export function CompletedStep({ focusOnMount, realtime }: { focusOnMount: boolea
               {t.room.enableAudio}
             </button>
           ) : null}
-          <Captions captions={snapshot.captions} interim={snapshot.interimCaption} />
+          <Captions captions={snapshot.captions} interim={snapshot.interimCaption} language={language} />
         </>
       ) : null}
     </section>

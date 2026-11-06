@@ -17,6 +17,7 @@ import {
   type ConsentNoticeView,
   type Environment,
   type InterviewCandidateView,
+  type InterviewLanguage,
   type InterviewState,
   type InvitationExchangeResponse,
   type NoticePurpose,
@@ -90,7 +91,27 @@ export function parseCandidateView(body: unknown): InterviewCandidateView {
     recording_active: boolean(obj, 'recording_active', 'view'),
     allowed_actions: allowedActions(obj.allowed_actions),
     environment: environment(obj.environment),
+    application_number: displayNumber(obj.application_number),
+    interview_title: displayTitle(obj.interview_title),
+    language: interviewLanguage(obj.language),
   };
+}
+
+const SHOWN_APPLICATION_NUMBER = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
+
+/** Display-only fields are read leniently: a missing or unexpected value is shown as nothing. */
+function displayNumber(value: unknown): string | null {
+  return typeof value === 'string' && SHOWN_APPLICATION_NUMBER.test(value) ? value : null;
+}
+
+function displayTitle(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const title = value.trim();
+  return title.length > 0 && title.length <= 200 ? title : null;
+}
+
+function interviewLanguage(value: unknown): InterviewLanguage | null {
+  return value === 'en' || value === 'tr' ? value : null;
 }
 
 const RETENTION_CATEGORIES: readonly RetentionCategory[] = ['transcript', 'audio_recording', 'session_events', 'assessment_output'];

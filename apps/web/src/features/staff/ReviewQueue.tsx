@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import ui from '@/components/ui.module.css';
-import { useMessages } from '@/i18n/client';
+import { useLocale, useMessages } from '@/i18n/client';
 import { listReviewTasks } from '@/lib/api/staff';
 import { PAGE_LIMIT, type ReviewStatus, type ReviewTaskSummary } from '@/lib/api/staffTypes';
 import { queueHref, taskHref } from '@/lib/staff/nav';
@@ -59,6 +59,7 @@ export function ReviewQueue({ status, interviewId }: QueueProps) {
 
 function QueueList({ tasks, status }: { tasks: readonly ReviewTaskSummary[]; status: ReviewStatus }) {
   const t = useMessages();
+  const locale = useLocale();
   if (tasks.length === 0) {
     return <p data-testid="queue-empty">{status === 'open' ? t.staff.queue.empty : t.staff.queue.emptyCompleted}</p>;
   }
@@ -83,8 +84,8 @@ function QueueList({ tasks, status }: { tasks: readonly ReviewTaskSummary[]; sta
                 <p className={styles.meta}>
                   {task.has_ai_evaluation ? t.staff.queue.aiDraft : t.staff.queue.noAiDraft} ·{' '}
                   {task.completed_at !== null
-                    ? t.staff.queue.reviewedAt(formatDateTime(task.completed_at))
-                    : t.staff.queue.waitingSince(formatDateTime(task.created_at))}
+                    ? t.staff.queue.reviewedAt(formatDateTime(task.completed_at, locale))
+                    : t.staff.queue.waitingSince(formatDateTime(task.created_at, locale))}
                 </p>
                 <Reasons reasons={splitReasons(task.reasons).process} testId="queue-reasons" />
                 <p>

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import ui from '@/components/ui.module.css';
-import { useMessages } from '@/i18n/client';
+import { useLocale, useMessages } from '@/i18n/client';
 import { getReport, listReports } from '@/lib/api/staff';
 import { PAGE_LIMIT, type ReportAnswer } from '@/lib/api/staffTypes';
 import { REPORTS_PATH, reportHref } from '@/lib/staff/nav';
@@ -18,6 +18,7 @@ import { useLoad } from './useLoad';
 /** The tenant's reports, newest first. No scores and no candidate details: it is not a ranking. */
 export function ReportList() {
   const t = useMessages();
+  const locale = useLocale();
   const [state, reload] = useLoad((signal) => listReports({ signal }), 'reports');
   const header = (
     <>
@@ -44,7 +45,7 @@ export function ReportList() {
                     <span className={styles.mono}>{t.staff.reports.interview(report.interview_id)}</span>
                   </h2>
                   <p className={styles.meta}>
-                    {t.staff.reports.generated(formatDateTime(report.generated_at))} · {t.staff.reports.answers(report.answer_count)} ·{' '}
+                    {t.staff.reports.generated(formatDateTime(report.generated_at, locale))} · {t.staff.reports.answers(report.answer_count)} ·{' '}
                     {t.staff.reports.plan(report.plan.plan_id, report.plan.version)}
                     {report.plan.synthetic ? ` · ${t.staff.reports.synthetic}` : ''}
                   </p>
@@ -66,6 +67,7 @@ export function ReportList() {
 /** A report: the reviewers' decisions with their evidence. The AI draft parts stay folded. */
 export function ReportView({ interviewId }: { interviewId: string }) {
   const t = useMessages();
+  const locale = useLocale();
   const [state, reload] = useLoad((signal) => getReport(interviewId, { signal }), interviewId);
   const header = (
     <>
@@ -91,7 +93,7 @@ export function ReportView({ interviewId }: { interviewId: string }) {
             <p>{report.notice}</p>
           </section>
           <p className={styles.meta}>
-            {t.staff.report.generated(formatDateTime(report.generated_at))} · {t.staff.reports.plan(report.plan.plan_id, report.plan.version)}
+            {t.staff.report.generated(formatDateTime(report.generated_at, locale))} · {t.staff.reports.plan(report.plan.plan_id, report.plan.version)}
             {report.plan.synthetic ? ` · ${t.staff.reports.synthetic}` : ''}
           </p>
           <ol className={styles.plainList}>

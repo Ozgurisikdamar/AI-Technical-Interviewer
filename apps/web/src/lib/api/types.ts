@@ -68,7 +68,18 @@ export interface InterviewCandidateView {
   allowed_actions: readonly CandidateAction[];
   /** 'unknown' when the server sent a value this build does not recognise (treated as non-production). */
   environment: Environment | 'unknown';
+  /**
+   * The application the interview belongs to (ADR-024), for display only: the number as shown
+   * (XXXX-XXXX), the interview's title and the language it is held in. Each is null when absent
+   * or not displayable; none of them ever blocks the interview.
+   */
+  application_number: string | null;
+  interview_title: string | null;
+  language: InterviewLanguage | null;
 }
+
+/** The languages an interview can be held in (the plan's language). */
+export type InterviewLanguage = 'en' | 'tr';
 
 export type RetentionCategory = 'transcript' | 'audio_recording' | 'session_events' | 'assessment_output';
 

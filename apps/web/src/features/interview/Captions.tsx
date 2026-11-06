@@ -8,13 +8,15 @@ import styles from './Captions.module.css';
 interface CaptionsProps {
   captions: readonly CaptionLine[];
   interim: CaptionLine | null;
+  /** The interview's language: what the interviewer says, which can differ from the page's. */
+  language: string | null;
 }
 
 /**
  * Interviewer captions. Finished lines are appended to a polite live region, so screen readers
  * announce each completed sentence once; the line still being spoken is shown visually only.
  */
-export function Captions({ captions, interim }: CaptionsProps) {
+export function Captions({ captions, interim, language }: CaptionsProps) {
   const t = useMessages();
   const boxRef = useRef<HTMLDivElement | null>(null);
 
@@ -30,7 +32,7 @@ export function Captions({ captions, interim }: CaptionsProps) {
       </h2>
       <div ref={boxRef} className={styles.box} role="region" aria-labelledby="captions-heading" tabIndex={0}>
         {captions.length === 0 && interim === null ? <p className={styles.empty}>{t.room.captionsEmpty}</p> : null}
-        <div role="log" aria-live="polite" aria-relevant="additions text" data-testid="captions">
+        <div role="log" aria-live="polite" aria-relevant="additions text" lang={language ?? undefined} data-testid="captions">
           {captions.map((line) => (
             <p key={line.id} className={styles.line}>
               {line.text}
@@ -38,7 +40,7 @@ export function Captions({ captions, interim }: CaptionsProps) {
           ))}
         </div>
         {interim !== null ? (
-          <p className={`${styles.line} ${styles.interim}`} aria-hidden="true">
+          <p className={`${styles.line} ${styles.interim}`} aria-hidden="true" lang={language ?? undefined}>
             {interim.text}
           </p>
         ) : null}

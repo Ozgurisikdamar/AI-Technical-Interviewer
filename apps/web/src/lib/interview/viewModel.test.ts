@@ -27,6 +27,9 @@ function view(state: InterviewState, actions: CandidateAction[], patch: Partial<
     recording_active: false,
     allowed_actions: actions,
     environment: 'dev',
+    application_number: null,
+    interview_title: null,
+    language: null,
     ...patch,
   };
 }

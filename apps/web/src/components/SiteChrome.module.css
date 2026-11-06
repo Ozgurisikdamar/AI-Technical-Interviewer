@@ -9,10 +9,47 @@
   padding: 0.85rem 1rem;
 }
 
+.brandRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
 .brand {
   margin: 0;
   font-weight: 700;
   font-size: 1.05rem;
+}
+
+.languages {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.language {
+  font: inherit;
+  font-size: 0.95rem;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.language[aria-pressed='true'] {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-weight: 600;
+}
+
+.language:disabled {
+  cursor: default;
 }
 
 .main {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMessages } from '@/i18n/client';
+import { useLocale, useMessages } from '@/i18n/client';
 import type { RecordedDecision } from '@/lib/api/staffTypes';
 import { formatDateTime } from '@/lib/staff/time';
 import { formatPoints } from '@/lib/staff/weighted';
@@ -20,6 +20,7 @@ interface DecisionSummaryProps {
 /** A recorded decision, read-only: on its task once decided, and in the report. */
 export function DecisionSummary({ decision, draftViewed, level, testId }: DecisionSummaryProps) {
   const t = useMessages();
+  const locale = useLocale();
   const Heading = level === 3 ? 'h3' : 'h4';
   return (
     <>
@@ -29,12 +30,12 @@ export function DecisionSummary({ decision, draftViewed, level, testId }: Decisi
         <p>{t.staff.decision.noScores}</p>
       )}
       {decision.weighted_score !== null ? (
-        <p data-testid={`${testId}-weighted`}>{t.staff.decision.weighted(formatPoints(decision.weighted_score))}</p>
+        <p data-testid={`${testId}-weighted`}>{t.staff.decision.weighted(formatPoints(decision.weighted_score, locale))}</p>
       ) : null}
       <Heading>{t.staff.decision.rationale}</Heading>
       <p className={styles.question}>{decision.rationale}</p>
       <p className={styles.meta}>
-        {t.staff.decision.by(decision.reviewer_id, formatDateTime(decision.decided_at))}
+        {t.staff.decision.by(decision.reviewer_id, formatDateTime(decision.decided_at, locale))}
         {draftViewed === null ? '' : ` ${draftViewed ? t.staff.decision.draftViewed : t.staff.decision.draftNotViewed}`}
       </p>
     </>

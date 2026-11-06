@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { LanguageSwitcher } from './LanguageSwitcher';
 import { PreProductionBanner } from './PreProductionBanner';
 import styles from './SiteChrome.module.css';
 
@@ -10,13 +11,19 @@ interface SiteHeaderProps {
   children?: ReactNode;
 }
 
-/** The page header: the pre-production banner (ADR-020) and the brand bar, as wide as the content. */
+/**
+ * The page header: the pre-production banner (ADR-020) and the brand bar, as wide as the content,
+ * with the language switch. It imports nothing server-only, so client error boundaries can use it.
+ */
 export function SiteHeader({ brand, webEnvironment, children }: SiteHeaderProps) {
   return (
     <header className={styles.header}>
       <PreProductionBanner webEnvironment={webEnvironment} />
       <div className={styles.brandBar}>
-        <p className={styles.brand}>{brand}</p>
+        <div className={styles.brandRow}>
+          <p className={styles.brand}>{brand}</p>
+          <LanguageSwitcher />
+        </div>
         {children}
       </div>
     </header>

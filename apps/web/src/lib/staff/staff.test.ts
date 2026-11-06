@@ -29,8 +29,13 @@ describe('weighted score', () => {
     expect([0.4, 0.25, 0.2, 0.15].map(weightPercent)).toEqual([40, 25, 20, 15]);
     const centi = weightedCenti({ technical_accuracy: 60, architecture_maturity: 50, edge_case_awareness: 40, claim_support: 30 }, WEIGHTS);
     expect(centi).toBe(4900);
-    expect(formatPoints((centi ?? 0) / 100)).toBe('49.00');
-    expect(formatPoints(4_517 / 100)).toBe('45.17');
+    expect(formatPoints((centi ?? 0) / 100, 'en')).toBe('49.00');
+    expect(formatPoints(4_517 / 100, 'en')).toBe('45.17');
+    // Turkish writes the decimal comma, and no grouping either way.
+    expect(formatPoints((centi ?? 0) / 100, 'tr')).toBe('49,00');
+    expect(formatPoints(4_517 / 100, 'tr')).toBe('45,17');
+    expect(formatPoints(0.7, 'tr')).toBe('0,70');
+    expect(formatPoints(1_234.5, 'en')).toBe('1234.50');
     expect(weightedCenti({ technical_accuracy: 100, architecture_maturity: 100, edge_case_awareness: 100, claim_support: 100 }, WEIGHTS)).toBe(10_000);
     expect(weightedCenti({ technical_accuracy: 33, architecture_maturity: 67, edge_case_awareness: 1, claim_support: 99 }, WEIGHTS)).toBe(4_500);
   });
@@ -190,10 +195,13 @@ describe('navigation', () => {
 });
 
 describe('time', () => {
-  it('formats in UTC and labels it', () => {
-    expect(formatDateTime('2026-11-04T13:13:52.411403Z')).toBe('4 Nov 2026, 13:13 UTC');
-    expect(formatDateTime('2026-11-04T23:30:00-02:00')).toBe('5 Nov 2026, 01:30 UTC');
-    expect(formatDateTime('not a time')).toBe('—');
+  it('formats in UTC and labels it, with the month as a name in both languages', () => {
+    expect(formatDateTime('2026-11-04T13:13:52.411403Z', 'en')).toBe('4 Nov 2026, 13:13 UTC');
+    expect(formatDateTime('2026-11-04T23:30:00-02:00', 'en')).toBe('5 Nov 2026, 01:30 UTC');
+    expect(formatDateTime('2026-11-04T13:13:52.411403Z', 'tr')).toBe('4 Kas 2026 13:13 UTC');
+    expect(formatDateTime('2026-05-14T09:05:00Z', 'tr')).toBe('14 May 2026 09:05 UTC');
+    expect(formatDateTime('not a time', 'en')).toBe('—');
+    expect(formatDateTime('not a time', 'tr')).toBe('—');
     expect([0, 999, 83_500, 600_000].map(formatOffset)).toEqual(['0:00', '0:00', '1:23', '10:00']);
   });
 });

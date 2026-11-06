@@ -106,12 +106,13 @@ export function InterviewRoom({ view, actions, realtime, focusOnMount, onAnnounc
         <h2 id="prompt-heading" className={styles.promptHeading}>
           {view.active_prompt?.kind === 'follow_up' ? t.room.followUpHeading : t.room.promptHeading}
         </h2>
-        <p className={styles.promptText} data-testid="prompt">
+        {/* The question is in the interview's language, which can differ from the page's. */}
+        <p className={styles.promptText} data-testid="prompt" lang={view.active_prompt !== null ? (view.language ?? undefined) : undefined}>
           {view.active_prompt?.text ?? t.room.promptWaiting}
         </p>
       </section>
 
-      <Captions captions={snapshot.captions} interim={snapshot.interimCaption} />
+      <Captions captions={snapshot.captions} interim={snapshot.interimCaption} language={view.language} />
 
       {controls.textInput.visible && view.active_prompt !== null ? (
         <TextAnswer key={view.active_prompt.activation_id} view={view} actions={actions} onSent={onAnnounce} />

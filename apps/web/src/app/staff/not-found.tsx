@@ -1,11 +1,12 @@
 import Link from 'next/link';
 import ui from '@/components/ui.module.css';
 import { getMessages } from '@/i18n';
+import { requestLocale } from '@/i18n/server';
 import { QUEUE_PATH, REPORTS_PATH } from '@/lib/staff/nav';
 
 /** A malformed task or interview identifier in a console address (notFound() in the pages). */
-export default function StaffNotFound() {
-  const t = getMessages();
+export default async function StaffNotFound() {
+  const t = getMessages(await requestLocale());
   return (
     <div className={ui.page}>
       <h1>{t.staff.notFound.heading}</h1>

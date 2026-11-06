@@ -12,6 +12,12 @@
   padding: 0 1rem;
 }
 
+.second {
+  margin: 1.5rem 0;
+  padding-top: 1rem;
+  border-top: 1px solid #c9ccd1;
+}
+
 .button {
   font: inherit;
   font-weight: 600;

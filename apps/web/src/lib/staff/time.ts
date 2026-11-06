@@ -1,21 +1,29 @@
+import { intlLocale, LOCALES, type Locale } from '@/i18n';
+
 /**
  * Times in the review console are shown in UTC, labelled as such, so server and client render
- * the same text and reviewers in different time zones read the same value.
+ * the same text and reviewers in different time zones read the same value. The month is a short
+ * name, never a number, so a date cannot be read in the wrong order.
  */
-const DATE_TIME = new Intl.DateTimeFormat('en-GB', {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-  timeZone: 'UTC',
-});
+const DATE_TIME = Object.fromEntries(
+  LOCALES.map((locale) => [
+    locale,
+    new Intl.DateTimeFormat(intlLocale(locale), {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+      timeZone: 'UTC',
+    }),
+  ]),
+) as Record<Locale, Intl.DateTimeFormat>;
 
-/** "4 Nov 2026, 13:13 UTC", or "—" for a value that is not a time. */
-export function formatDateTime(iso: string): string {
+/** "4 Nov 2026, 13:13 UTC" or "4 Kas 2026 13:13 UTC", or "—" for a value that is not a time. */
+export function formatDateTime(iso: string, locale: Locale): string {
   const at = Date.parse(iso);
-  return Number.isNaN(at) ? '—' : `${DATE_TIME.format(at)} UTC`;
+  return Number.isNaN(at) ? '—' : `${DATE_TIME[locale].format(at)} UTC`;
 }
 
 /** A transcript offset: 83_500 ms → "1:23". */

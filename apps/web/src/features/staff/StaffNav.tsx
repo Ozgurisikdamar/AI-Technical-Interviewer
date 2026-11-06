@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { ErrorNotice } from '@/components/ErrorNotice';
 import ui from '@/components/ui.module.css';
-import { useMessages } from '@/i18n/client';
+import { useLocale, useMessages } from '@/i18n/client';
 import { toApiError, type ApiError } from '@/lib/api/errors';
 import { signOut } from '@/lib/api/staff';
 import { QUEUE_PATH, REPORTS_PATH, SIGN_IN_PATH, sectionsFor } from '@/lib/staff/nav';
@@ -16,6 +16,7 @@ import { useStaffSession } from './StaffSession';
 /** The console's navigation, by role, with who is signed in and the sign-out button. */
 export function StaffNav() {
   const t = useMessages();
+  const locale = useLocale();
   const { state, signedOut, ended } = useStaffSession();
   const pathname = usePathname();
   const router = useRouter();
@@ -68,7 +69,7 @@ export function StaffNav() {
       </ul>
       <p className={styles.who} data-testid="staff-who">
         {t.staff.layout.signedInAs(session.label, t.staff.roles[session.role])} ·{' '}
-        {t.staff.layout.sessionUntil(formatDateTime(session.expires_at))}
+        {t.staff.layout.sessionUntil(formatDateTime(session.expires_at, locale))}
       </p>
       <button
         type="button"

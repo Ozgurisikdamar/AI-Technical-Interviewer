@@ -16,11 +16,32 @@ const base = {
   recording_active: false,
   allowed_actions: ['start', 'withdraw'],
   environment: 'test',
+  application_number: '7K3Q-9XW2',
+  interview_title: 'Backend engineering interview',
+  language: 'en',
 };
 
 describe('parseCandidateView', () => {
   it('accepts a contract-shaped view', () => {
     expect(parseCandidateView(base)).toEqual(base);
+  });
+
+  it('reads the matched application leniently: a value it cannot show becomes null, never an error', () => {
+    const older = parseCandidateView({ ...base, application_number: null });
+    expect(older.application_number).toBeNull();
+    const { application_number: _n, interview_title: _t, language: _l, ...withoutThem } = base;
+    expect(parseCandidateView(withoutThem)).toMatchObject({ application_number: null, interview_title: null, language: null });
+    for (const bad of ['7K3Q9XW2', '7k3q-9xw2', '7K3Q-9XWU', 7, { number: '7K3Q-9XW2' }, '<b>7K3Q-9XW2</b>']) {
+      expect(parseCandidateView({ ...base, application_number: bad }).application_number, String(bad)).toBeNull();
+    }
+    for (const bad of ['', '   ', 'x'.repeat(201), 42, null]) {
+      expect(parseCandidateView({ ...base, interview_title: bad }).interview_title, String(bad)).toBeNull();
+    }
+    expect(parseCandidateView({ ...base, interview_title: '  Arka uç mülakatı  ' }).interview_title).toBe('Arka uç mülakatı');
+    for (const bad of ['de', 'EN', 'tr-TR', '', 1]) {
+      expect(parseCandidateView({ ...base, language: bad }).language, String(bad)).toBeNull();
+    }
+    expect(parseCandidateView({ ...base, language: 'tr' }).language).toBe('tr');
   });
 
   it('maps states this build does not know to UNKNOWN instead of failing', () => {

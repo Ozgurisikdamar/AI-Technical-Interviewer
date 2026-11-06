@@ -3,6 +3,7 @@ import { connection } from 'next/server';
 import { SiteHeader, SiteMain } from '@/components/SiteChrome';
 import ui from '@/components/ui.module.css';
 import { getMessages } from '@/i18n';
+import { requestLocale } from '@/i18n/server';
 
 /**
  * Any address the app does not serve, for candidates and staff alike. It renders outside the route
@@ -10,7 +11,7 @@ import { getMessages } from '@/i18n';
  */
 export default async function NotFound() {
   await connection();
-  const t = getMessages();
+  const t = getMessages(await requestLocale());
   return (
     <>
       <SiteHeader brand={t.layout.brand} webEnvironment={process.env.APP_ENV} />

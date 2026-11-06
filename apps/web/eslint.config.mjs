@@ -39,6 +39,12 @@ const guardrails = [
   },
 ];
 
+/** Session cookies are HttpOnly and set by the server; script writes only the language choice. */
+const cookieGuardrail = {
+  selector: 'MemberExpression[object.name="document"][property.name="cookie"]',
+  message: 'Only src/i18n/preference.ts may use document.cookie (the language choice).',
+};
+
 const a11yRules = {
   'jsx-a11y/alt-text': 'error',
   'jsx-a11y/anchor-has-content': 'error',
@@ -98,12 +104,18 @@ export default defineConfig([
     name: 'ati/web/guardrails',
     files: ['src/**/*.{ts,tsx}'],
     rules: {
-      'no-restricted-syntax': ['error', ...guardrails],
+      'no-restricted-syntax': ['error', ...guardrails, cookieGuardrail],
       'no-restricted-globals': [
         'error',
         { name: 'fetch', message: 'Use the same-origin API client in src/lib/api/client.ts.' },
       ],
     },
+  },
+  {
+    name: 'ati/web/language-preference',
+    // The single place allowed to write a cookie from script: `ati_lang`, the language choice.
+    files: ['src/i18n/preference.ts'],
+    rules: { 'no-restricted-syntax': ['error', ...guardrails] },
   },
   {
     name: 'ati/web/api-client',

@@ -4,7 +4,7 @@ import { useId, useState, type FormEvent } from 'react';
 import { ErrorNotice } from '@/components/ErrorNotice';
 import { ErrorSummary } from '@/components/ErrorSummary';
 import ui from '@/components/ui.module.css';
-import { useMessages } from '@/i18n/client';
+import { useLocale, useMessages } from '@/i18n/client';
 import { toApiError, type ApiError } from '@/lib/api/errors';
 import { submitReviewOutcome } from '@/lib/api/staff';
 import { DIMENSIONS, type Dimension, type ReviewOutcomeResult, type ReviewTask } from '@/lib/api/staffTypes';
@@ -40,6 +40,7 @@ interface DecisionFormProps {
  */
 export function DecisionForm({ task, mode, draftViewed, onRecorded, onAlreadyDecided }: DecisionFormProps) {
   const t = useMessages();
+  const locale = useLocale();
   const { refresh } = useStaffSession();
   const id = useId();
   const [inputs, setInputs] = useState<ScoreInputs>({});
@@ -158,7 +159,7 @@ export function DecisionForm({ task, mode, draftViewed, onRecorded, onAlreadyDec
       {mode === 'scored' ? (
         <div>
           <p className={styles.preview} data-testid="decision-preview">
-            {centi !== null ? t.staff.task.preview(formatPoints(centi / 100)) : t.staff.task.previewPending}
+            {centi !== null ? t.staff.task.preview(formatPoints(centi / 100, locale)) : t.staff.task.previewPending}
           </p>
           <p className={styles.hint}>{t.staff.task.previewNote}</p>
         </div>

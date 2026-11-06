@@ -2,7 +2,7 @@
 
 import { useId, useState } from 'react';
 import ui from '@/components/ui.module.css';
-import { useMessages } from '@/i18n/client';
+import { useLocale, useMessages } from '@/i18n/client';
 import { DIMENSIONS, type AIDraft, type DimensionScores, type EvidenceItem, type ReportAIPart } from '@/lib/api/staffTypes';
 import type { QuoteStatus } from '@/lib/staff/highlight';
 import { formatPoints } from '@/lib/staff/weighted';
@@ -69,14 +69,15 @@ interface DraftBodyProps {
 /** What an AI draft says, always marked as an uncalibrated draft: on the task page and in the report. */
 export function DraftBody({ draft, reasons, quoteStatus, language, testId }: DraftBodyProps) {
   const t = useMessages();
+  const locale = useLocale();
   return (
     <>
       <p className={ui.warning}>{t.staff.task.draftNote}</p>
       <h3>{t.staff.task.draftScores}</h3>
       <ScoresTable scores={draft.scores} testId={testId === undefined ? undefined : `${testId}-scores`} />
-      <p>{t.staff.task.draftWeighted(formatPoints(draft.weighted_score))}</p>
+      <p>{t.staff.task.draftWeighted(formatPoints(draft.weighted_score, locale))}</p>
       <p className={styles.meta}>
-        {t.staff.task.draftConfidence(draft.confidence.toFixed(2))} · {t.staff.task.draftEvaluator(draft.evaluator_version)}
+        {t.staff.task.draftConfidence(formatPoints(draft.confidence, locale))} · {t.staff.task.draftEvaluator(draft.evaluator_version)}
       </p>
       {draft.advisory_next_step !== undefined ? <p className={styles.meta}>{t.staff.task.draftAdvisory(draft.advisory_next_step)}</p> : null}
       {reasons.length > 0 ? (

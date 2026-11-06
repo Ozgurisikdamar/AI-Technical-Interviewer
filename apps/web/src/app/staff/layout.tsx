@@ -6,13 +6,15 @@ import { StaffNav } from '@/features/staff/StaffNav';
 import { StaffSessionProvider } from '@/features/staff/StaffSession';
 import styles from '@/features/staff/staff.module.css';
 import { getMessages } from '@/i18n';
+import { requestLocale } from '@/i18n/server';
 
-const t = getMessages();
-
-export const metadata: Metadata = {
-  title: { default: t.staff.layout.brand, template: `%s · ${t.staff.layout.brand}` },
-  description: t.staff.layout.footer,
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = getMessages(await requestLocale());
+  return {
+    title: { default: t.staff.layout.brand, template: `%s · ${t.staff.layout.brand}` },
+    description: t.staff.layout.footer,
+  };
+}
 
 /**
  * The review console (ADR-023): staff only. Its pages fetch everything in the browser through the
@@ -22,6 +24,7 @@ export const metadata: Metadata = {
  */
 export default async function StaffLayout({ children }: { children: ReactNode }) {
   await connection();
+  const t = getMessages(await requestLocale());
   return (
     <StaffSessionProvider>
       <div className={styles.console}>

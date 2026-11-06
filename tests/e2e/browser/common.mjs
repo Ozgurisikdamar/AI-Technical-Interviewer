@@ -89,11 +89,21 @@ export async function createInvitation() {
 }
 
 /**
+ * The language cookie a browser starts with. The flows written before Turkish became the default
+ * assert English text, so they choose English as a person would; null starts without a choice
+ * (Turkish, the default).
+ */
+async function chooseLanguage(context, locale) {
+  if (locale !== null) await context.addCookies([{ name: 'ati_lang', value: locale, url: WEB, sameSite: 'Lax' }]);
+}
+
+/**
  * Chromium with a fake microphone that loops the pitch-coded WAV; records policy violations.
  * microphone: 'granted' (default) or 'denied' (the permission request is refused).
  * device: false runs without any (fake) capture device.
+ * locale: the language chosen beforehand, 'en' (default) or 'tr', or null for no choice.
  */
-export async function launch({ microphone = 'granted', device = true } = {}) {
+export async function launch({ microphone = 'granted', device = true, locale = 'en' } = {}) {
   const granted = microphone === 'granted';
   const browser = await chromium.launch({
     args: [
@@ -104,6 +114,7 @@ export async function launch({ microphone = 'granted', device = true } = {}) {
     ],
   });
   const context = await browser.newContext({ permissions: granted ? ['microphone'] : [] });
+  await chooseLanguage(context, locale);
   const page = await context.newPage();
   const seen = { violations: [], internalCalls: [], postsWithoutKey: [], pageErrors: [], a11y: [], audited: [] };
   current = seen;
@@ -112,8 +123,9 @@ export async function launch({ microphone = 'granted', device = true } = {}) {
 }
 
 /** A second browser context and page (another person), watched like the first. */
-export async function newPage(browser) {
+export async function newPage(browser, { locale = 'en' } = {}) {
   const context = await browser.newContext();
+  await chooseLanguage(context, locale);
   const page = await context.newPage();
   watch(page);
   return { context, page };

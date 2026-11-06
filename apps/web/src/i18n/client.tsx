@@ -1,15 +1,32 @@
 'use client';
 
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
 import { DEFAULT_LOCALE, getMessages, type Locale, type Messages } from './index';
 
-const MessagesContext = createContext<Messages>(getMessages(DEFAULT_LOCALE));
+interface LocaleValue {
+  readonly locale: Locale;
+  readonly messages: Messages;
+}
 
-/** Provides the catalog for a locale. Catalogs hold functions, so only the locale crosses the server boundary. */
+const LocaleContext = createContext<LocaleValue>({ locale: DEFAULT_LOCALE, messages: getMessages(DEFAULT_LOCALE) });
+
+/**
+ * Provides the catalog for a locale. Catalogs hold functions, so only the locale crosses the
+ * server boundary. When the language changes without a reload (router.refresh()), the document's
+ * `lang` follows it.
+ */
 export function MessagesProvider({ locale, children }: { locale: Locale; children: ReactNode }) {
-  return <MessagesContext.Provider value={getMessages(locale)}>{children}</MessagesContext.Provider>;
+  const value = useMemo(() => ({ locale, messages: getMessages(locale) }), [locale]);
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
+  return <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>;
 }
 
 export function useMessages(): Messages {
-  return useContext(MessagesContext);
+  return useContext(LocaleContext).messages;
+}
+
+export function useLocale(): Locale {
+  return useContext(LocaleContext).locale;
 }
