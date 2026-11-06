@@ -1,6 +1,7 @@
 package interview
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -310,5 +311,116 @@ func TestTheCandidateViewShowsTheMatchedApplication(t *testing.T) {
 	h.must(err)
 	if v.ApplicationNumber != nil {
 		t.Fatalf("number of an older interview: %v", *v.ApplicationNumber)
+	}
+}
+
+// Wrong codes count only while each comes within the lock period of the one before, so a
+// candidate's old typos never add up to a lock.
+func TestWrongCodesFarApartDoNotAddUp(t *testing.T) {
+	h := newHarness(t)
+	c := h.create("plan_demo_backend_en")
+	wrong := func() {
+		t.Helper()
+		if _, err := h.svc.SignInCandidate(ctx, candidate, c.ApplicationNumber, accesscode.NewCode()); !errors.Is(err, ErrSignInFailed) {
+			t.Fatal(err)
+		}
+	}
+	for range SignInMaxFailures - 1 {
+		wrong()
+	}
+	h.clock.Advance(SignInLockDuration + time.Second)
+	wrong()
+	if n := h.count(`SELECT access_failures FROM ati.invitations WHERE session_id = $1`, c.SessionID); n != 1 {
+		t.Fatalf("a wrong code after a long pause starts the count again: %d", n)
+	}
+	for range SignInMaxFailures - 2 {
+		wrong()
+	}
+	if _, err := h.svc.SignInCandidate(ctx, candidate, c.ApplicationNumber, c.AccessCode); err != nil {
+		t.Fatalf("four wrong codes in the new count must not lock: %v", err)
+	}
+	if n := h.count(`SELECT count(*) FROM ati.audit_logs WHERE action = 'candidate.sign_in.locked'`); n != 0 {
+		t.Fatalf("%d locks engaged", n)
+	}
+}
+
+// The attempt that engages the lock can carry the right code. If its session then cannot be opened
+// (here the client goes away), the candidate is not locked out for knowing the code.
+func TestARightCodeWhoseSessionCannotOpenIsNotHeldAgainstTheCandidate(t *testing.T) {
+	h := newHarness(t)
+	c := h.create("plan_demo_backend_en")
+	for range SignInMaxFailures - 1 {
+		if _, err := h.svc.SignInCandidate(ctx, candidate, c.ApplicationNumber, accesscode.NewCode()); !errors.Is(err, ErrSignInFailed) {
+			t.Fatal(err)
+		}
+	}
+	gone, leave := context.WithCancel(ctx)
+	h.svc.verify = func(code, phc string) bool {
+		ok := accesscode.Verify(code, phc)
+		leave()
+		return ok
+	}
+	if _, err := h.svc.SignInCandidate(gone, candidate, c.ApplicationNumber, c.AccessCode); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a sign-in whose client went away: %v", err)
+	}
+	h.svc.verify = accesscode.Verify
+	var failures int
+	var lockedUntil, failedAt *time.Time
+	h.must(h.db.Owner.QueryRow(ctx, `SELECT access_failures, access_locked_until, access_failed_at FROM ati.invitations WHERE session_id = $1`,
+		c.SessionID).Scan(&failures, &lockedUntil, &failedAt))
+	if failures != 0 || lockedUntil != nil || failedAt != nil {
+		t.Fatalf("after a right code: failures=%d locked_until=%v failed_at=%v", failures, lockedUntil, failedAt)
+	}
+	if _, err := h.svc.SignInCandidate(ctx, candidate, c.ApplicationNumber, c.AccessCode); err != nil {
+		t.Fatalf("signing in again: %v", err)
+	}
+}
+
+// Verification slots are held only while an attempt is counted and verified. Sign-ins waiting for
+// a session that another transaction has locked must not hold them, or every other candidate
+// would be refused as busy.
+func TestASessionLockedElsewhereHoldsNoVerificationSlot(t *testing.T) {
+	h := newHarness(t)
+	h.svc.verifierWait = 200 * time.Millisecond
+	busy := h.create("plan_demo_backend_en")
+	other := h.create("plan_demo_backend_en")
+	tx, err := h.db.Owner.Begin(ctx)
+	h.must(err)
+	var wg sync.WaitGroup
+	// However the test ends, the session is unlocked and the waiting sign-ins finish before the
+	// database is dropped.
+	t.Cleanup(func() {
+		_ = tx.Rollback(ctx)
+		wg.Wait()
+	})
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM ati.interview_sessions WHERE id = $1 FOR UPDATE`, busy.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, signInVerifiers)
+	for range signInVerifiers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := h.svc.SignInCandidate(ctx, candidate, busy.ApplicationNumber, busy.AccessCode)
+			errs <- err
+		}()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for h.count(`SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FROM ati.interview_sessions%'`) < signInVerifiers {
+		if time.Now().After(deadline) {
+			t.Fatal("the sign-ins never waited for the session")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, err := h.svc.SignInCandidate(ctx, candidate, other.ApplicationNumber, other.AccessCode); err != nil {
+		t.Fatalf("a sign-in while others wait for a locked session: %v", err)
+	}
+	h.must(tx.Rollback(ctx))
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("a sign-in that waited for the session: %v", err)
+		}
 	}
 }

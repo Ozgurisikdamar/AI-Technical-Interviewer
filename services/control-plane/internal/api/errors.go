@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -50,6 +51,11 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, invalid.Msg)
 	case errors.As(err, &rejected):
 		httpx.WriteProblem(w, r, http.StatusUnprocessableEntity, httpx.CodeSegmentRejected, rejected.Reason)
+	case errors.Is(err, context.Canceled) && r.Context().Err() != nil:
+		// The client went away (a closed tab, for example): nothing failed here, and no one reads the
+		// answer. 499 keeps it out of the server-error count, as nginx does.
+		s.log.Debug("request cancelled by the client", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("route", r.Pattern))
+		httpx.WriteProblem(w, r, httpx.StatusClientClosedRequest, httpx.CodeClientClosedRequest, "the client closed the request")
 	default:
 		s.log.Error("request failed", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("route", r.Pattern), slog.Any("error", err))
 		httpx.WriteProblem(w, r, http.StatusInternalServerError, httpx.CodeInternal, "internal error")

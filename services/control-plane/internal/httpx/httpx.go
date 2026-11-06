@@ -22,6 +22,10 @@ import (
 	"github.com/ozgurisikdamar/ai-technical-interviewer/services/control-plane/internal/ids"
 )
 
+// StatusClientClosedRequest is nginx's status for a request whose client went away before it was
+// answered. It keeps such requests out of the server-error count.
+const StatusClientClosedRequest = 499
+
 // Stable problem codes. Clients branch on these, never on titles or details.
 const (
 	CodeInvalidRequest         = "invalid_request"
@@ -36,18 +40,20 @@ const (
 	CodePayloadTooLarge        = "payload_too_large"
 	CodeUnsupportedMediaType   = "unsupported_media_type"
 	CodeOriginMismatch         = "origin_mismatch"
-	CodeInternal               = "internal_error"
-	CodeUnavailable            = "unavailable"
-	CodeInvitationInvalid      = "invitation_invalid"
-	CodeRetentionMissing       = "retention_policy_missing"
-	CodePlanUnavailable        = "plan_unavailable"
-	CodeLeaseStale             = "lease_stale"
-	CodeSegmentConflict        = "segment_conflict"
-	CodeSegmentRejected        = "segment_rejected"
-	CodeManifestIncomplete     = "manifest_incomplete"
-	CodeNonceInvalid           = "claim_nonce_invalid"
-	CodeSignInFailed           = "sign_in_failed"
-	CodeConflict               = "conflict"
+	// CodeClientClosedRequest answers a request whose client went away before it was handled.
+	CodeClientClosedRequest = "client_closed_request"
+	CodeInternal            = "internal_error"
+	CodeUnavailable         = "unavailable"
+	CodeInvitationInvalid   = "invitation_invalid"
+	CodeRetentionMissing    = "retention_policy_missing"
+	CodePlanUnavailable     = "plan_unavailable"
+	CodeLeaseStale          = "lease_stale"
+	CodeSegmentConflict     = "segment_conflict"
+	CodeSegmentRejected     = "segment_rejected"
+	CodeManifestIncomplete  = "manifest_incomplete"
+	CodeNonceInvalid        = "claim_nonce_invalid"
+	CodeSignInFailed        = "sign_in_failed"
+	CodeConflict            = "conflict"
 )
 
 // Problem is an RFC 9457 problem document.

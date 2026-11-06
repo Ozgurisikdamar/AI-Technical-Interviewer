@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -91,12 +90,12 @@ type Service struct {
 
 	// Candidate sign-in (ADR-024): newNumber makes application numbers and verify checks access
 	// codes (both replaceable in tests); verifiers bounds concurrent argon2 verifications, and
-	// dummy is the hash verified for unknown application numbers, so they take as long as known ones.
+	// dummy is the hash verified for unknown application numbers, so they cost as much as known
+	// ones. It is made once, here, so that no request pays for it.
 	newNumber    func() string
 	verify       func(code, phc string) bool
 	verifiers    chan struct{}
 	verifierWait time.Duration
-	dummyOnce    sync.Once
 	dummy        string
 }
 
@@ -139,7 +138,8 @@ func New(pool *pgxpool.Pool, machine *flow.Machine, settings Settings, effects E
 		return nil, err
 	}
 	return &Service{pool: pool, machine: machine, settings: settings, effects: effects, log: log, now: now, plans: newPlanCache(), notices: notices,
-		newNumber: accesscode.NewNumber, verify: accesscode.Verify, verifiers: make(chan struct{}, signInVerifiers), verifierWait: signInWait}, nil
+		newNumber: accesscode.NewNumber, verify: accesscode.Verify, verifiers: make(chan struct{}, signInVerifiers), verifierWait: signInWait,
+		dummy: accesscode.Hash(accesscode.NewCode(), settings.AccessCode)}, nil
 }
 
 // Machine exposes the loaded flow engine.

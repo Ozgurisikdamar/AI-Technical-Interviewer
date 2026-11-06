@@ -142,6 +142,7 @@ func prodEnv(t *testing.T) map[string]string {
 		"ATI_PRODUCTION_GATES_FILE", gates,
 		"ATI_PUBLIC_ADDR", "0.0.0.0:8080",
 		"ATI_INTERNAL_ADDR", "10.0.0.5:8081",
+		"ATI_TRUSTED_PROXY_CIDRS", "10.0.1.0/24",
 	)
 }
 
@@ -179,8 +180,8 @@ func TestApprovedProductionConfigurationIsAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a production configuration meeting every ADR-020 gate was refused: %v", err)
 	}
-	if !c.SecureCookies() || c.IsDevLike() || len(c.TrustedProxies) != 0 {
-		t.Fatalf("production defaults: secure=%v devlike=%v proxies=%v", c.SecureCookies(), c.IsDevLike(), c.TrustedProxies)
+	if !c.SecureCookies() || c.IsDevLike() || len(c.TrustedProxies) != 1 || c.TrustedProxies[0].String() != "10.0.1.0/24" {
+		t.Fatalf("production settings: secure=%v devlike=%v proxies=%v", c.SecureCookies(), c.IsDevLike(), c.TrustedProxies)
 	}
 }
 
@@ -216,6 +217,7 @@ func TestProductionRefusalReasons(t *testing.T) {
 		"ws livekit":          {kv: []string{"ATI_LIVEKIT_URL", "ws://media.example.com"}, want: "wss://"},
 		"no retention":        {kv: []string{"ATI_RETENTION_ASSESSMENT_OUTPUT_DAYS", ""}, want: "explicit retention"},
 		"no gates file":       {kv: []string{"ATI_PRODUCTION_GATES_FILE", ""}, want: "human sign-off"},
+		"no trusted proxy":    {kv: []string{"ATI_TRUSTED_PROXY_CIDRS", ""}, want: "ATI_TRUSTED_PROXY_CIDRS to name the web app's proxy"},
 		"unknown notice":      {kv: []string{"ATI_NOTICE_VERSION", "2099-01-x"}, want: "not found"},
 		"draft notice":        {kv: []string{"ATI_NOTICE_ID", "notice_default", "ATI_NOTICE_VERSION", "2026-11-draft.1"}, shipped: true, want: "legally approved notice"},
 		"undetermined basis":  {basis: "to_be_determined_by_legal", want: "undetermined lawful basis"},

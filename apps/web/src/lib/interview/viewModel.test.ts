@@ -220,15 +220,12 @@ describe('progressLabelValues', () => {
 });
 
 describe('steps', () => {
-  it('follow the screens, and none is shown before or after the interview', () => {
+  it('are shown on the notice and the setup only', () => {
     expect([...STEPS]).toEqual(['notice', 'setup', 'interview']);
     expect(stepForScreen(screenForState('CONSENT_PENDING'))).toBe(0);
     expect(stepForScreen(screenForState('CREATED'))).toBe(0);
     expect(stepForScreen(screenForState('READY'))).toBe(1);
-    for (const state of ['CALIBRATION', 'QUESTION_ACTIVE', 'CANDIDATE_SPEAKING', 'PAUSED'] as const) {
-      expect(stepForScreen(screenForState(state)), state).toBe(2);
-    }
-    for (const state of ['INTERVIEW_COMPLETED', 'REPORT_READY', 'CANCELLED', 'UNKNOWN'] as const) {
+    for (const state of ['CALIBRATION', 'QUESTION_ACTIVE', 'CANDIDATE_SPEAKING', 'PAUSED', 'INTERVIEW_COMPLETED', 'REPORT_READY', 'CANCELLED', 'UNKNOWN'] as const) {
       expect(stepForScreen(screenForState(state)), state).toBeNull();
     }
   });

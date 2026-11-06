@@ -7,19 +7,20 @@ import type { CandidateAction, InterviewCandidateView, InterviewState } from '@/
 
 export type Screen = 'consent' | 'setup' | 'room' | 'completed' | 'cancelled' | 'waiting';
 
-/** The candidate's steps: the notice and choices, the setup, the interview itself. */
+/**
+ * The candidate's steps: the notice and choices, the setup, the interview itself. They are shown
+ * before the interview starts, so the last one is only ever the step to come.
+ */
 export const STEPS = ['notice', 'setup', 'interview'] as const;
 export type Step = (typeof STEPS)[number];
 
-/** The index in STEPS of the step a screen belongs to; null where no steps are shown. */
+/** The index in STEPS of the step a screen shows as current; null where no steps are shown. */
 export function stepForScreen(screen: Screen): number | null {
   switch (screen) {
     case 'consent':
       return 0;
     case 'setup':
       return 1;
-    case 'room':
-      return 2;
     default:
       return null;
   }

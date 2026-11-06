@@ -353,6 +353,11 @@ func (c *Config) productionErrors() []error {
 	if c.RedisURL != "" && !strings.HasPrefix(c.RedisURL, "rediss://") {
 		errs = append(errs, errors.New("production requires TLS to Redis (rediss://)"))
 	}
+	// Browsers reach the public API through the web app's same-origin rewrite. Without the proxy's
+	// address, every client would share one budget of sign-ins and exchanges (ADR-023, ADR-024).
+	if len(c.TrustedProxies) == 0 {
+		errs = append(errs, errors.New("production requires ATI_TRUSTED_PROXY_CIDRS to name the web app's proxy; without it every client shares one sign-in budget"))
+	}
 	if err := c.checkNoticeApproved(); err != nil {
 		errs = append(errs, err)
 	}

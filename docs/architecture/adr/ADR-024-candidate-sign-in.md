@@ -65,17 +65,20 @@
      - an interview without a number;
      - a lock;
      - malformed input.
-   - Past the format check (the format is public), every attempt verifies exactly one argon2 hash. For an unknown number it verifies a dummy one, so the work done does not tell the reasons apart.
+   - Past the format check (the format is public), every attempt verifies exactly one argon2 hash. For an unknown number it verifies a dummy one, made when the service starts, so the costly work does not tell the reasons apart.
+   - One statement looks the number up and counts the attempt, so the database work differs only in that a known number's attempt is counted.
 5. **Guessing is bounded three ways.**
    - **Per invitation.**
-     - Five wrong codes in a row lock code sign-in for 15 minutes. The lock does not extend while it lasts, and the link keeps working.
+     - Five wrong codes in a row, each within 15 minutes of the one before, lock code sign-in for 15 minutes. Wrong codes further apart start the count again, so a candidate's old typos never add up. The lock does not extend while it lasts, and the link keeps working.
      - Each attempt is counted, in one atomic update, before its code is verified, so parallel guesses cannot exceed the limit. A success resets the count.
+     - If an attempt with the right code cannot open its session (a transient failure, or the client going away), what it counted is undone, so knowing the code never locks the candidate out.
      - When a lock engages, it is audited (`candidate.sign_in.locked`, outcome `denied`). Single failures are not audited, as with invitations.
      - There is no unlock command: the lock ends by itself.
-   - **Per client.** `ATI_CANDIDATE_SIGNINS_PER_MINUTE` (default 10) bounds the rate, separately from the other sign-ins. Behind a reverse proxy, `ATI_TRUSTED_PROXY_CIDRS` must name the proxy, or every client shares one budget.
+   - **Per client.** `ATI_CANDIDATE_SIGNINS_PER_MINUTE` (default 10) bounds the rate, separately from the other sign-ins. Browsers reach the API through the web app's proxy, so `ATI_TRUSTED_PROXY_CIDRS` must name it, or every client shares one budget; production refuses to start without it.
    - **Per process.**
      - At most 4 verifications run at once, each holding about 19 MiB.
      - A sign-in waits at most 3 seconds for a slot, then gets 503 `unavailable`. Such an attempt is not counted against the invitation.
+     - A slot is held only while the attempt is looked up, counted and verified, never while the session opens, so sign-ins waiting for a busy interview do not hold back the others.
 6. **What the candidate sees.**
    - The candidate's view of the interview adds:
      - `application_number`, as shown;
@@ -88,7 +91,7 @@
 - **Online guessing.** Five guesses per 15 minutes is at most 480 a day per invitation. Over the default 72-hour invitation lifetime that is 1,440 guesses against 2^50 codes, a chance of about 1 in 7.8 × 10^11.
 - **Offline guessing.** A copy of the database yields only argon2id hashes. Each guess costs 19 MiB of memory and two passes.
 - **Lockout as denial of service.** Anyone who knows a number can keep code sign-in locked, 15 minutes at a time. The link is not affected, and the lock never extends itself.
-- **Timing.** An unknown number skips the counting update, so whether a number exists may be measurable by timing. Numbers are identifiers, not secrets, and the code is still needed.
+- **Timing.** An unknown number skips the counting update (one statement either way), so whether a number exists may be measurable by timing. Numbers are identifiers, not secrets, and the code is still needed.
 - **Plan titles.** Titles become visible to candidates, so a plan's title must not carry internal notes.
 - **Memory.** The control plane needs about 76 MiB of headroom for concurrent verifications.
 - **Older interviews.** Interviews created before this change can be entered only through the link.
@@ -107,8 +110,10 @@
   - sign-in and the link end each other's sessions;
   - every refusal performs exactly one verification, and a malformed one none;
   - five wrong codes lock for 15 minutes, without extending, and the lock is audited once while the link still works;
+  - wrong codes further apart than the lock period do not add up;
   - twenty parallel wrong guesses engage exactly one lock;
-  - a busy refusal is not counted;
+  - a busy refusal is not counted, and sign-ins waiting for a locked interview hold no verification slot;
+  - a right code whose session cannot open leaves no count and no lock;
   - sign-in racing revocation never deadlocks, and no session survives the revocation;
   - collisions are retried;
   - the view fields are set.
@@ -126,5 +131,5 @@
   - the code is never returned on replay, stored, audited or logged;
   - recruiters see the number, and reviewers never do.
 - **Store tests:** neither the Tier-1 nor the Tier-2 database role can read invitations.
-- **Config and contract tests:** the new setting and its bounds; the unauthenticated operation and its schemas in OpenAPI.
+- **Config and contract tests:** the new setting and its bounds; production refused without trusted proxies; the unauthenticated operation and its schemas in OpenAPI.
 - **Browser end-to-end flow:** a candidate signs in with the number and code, sees the matched application, reads and answers the notice, and starts the interview.
