@@ -7,6 +7,24 @@ import type { CandidateAction, InterviewCandidateView, InterviewState } from '@/
 
 export type Screen = 'consent' | 'setup' | 'room' | 'completed' | 'cancelled' | 'waiting';
 
+/** The candidate's steps: the notice and choices, the setup, the interview itself. */
+export const STEPS = ['notice', 'setup', 'interview'] as const;
+export type Step = (typeof STEPS)[number];
+
+/** The index in STEPS of the step a screen belongs to; null where no steps are shown. */
+export function stepForScreen(screen: Screen): number | null {
+  switch (screen) {
+    case 'consent':
+      return 0;
+    case 'setup':
+      return 1;
+    case 'room':
+      return 2;
+    default:
+      return null;
+  }
+}
+
 const LIVE_STATES: ReadonlySet<InterviewState> = new Set(['CALIBRATION', 'QUESTION_ACTIVE', 'CANDIDATE_SPEAKING', 'PAUSED']);
 const COMPLETED_STATES: ReadonlySet<InterviewState> = new Set([
   'INTERVIEW_COMPLETED',

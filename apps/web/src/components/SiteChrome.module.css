@@ -72,7 +72,8 @@
   cursor: pointer;
 }
 
-.language:hover:not(:disabled) {
+/* Hover never applies to the chosen language: it would put navy text on navy. */
+.language:hover:not(:disabled):not([aria-pressed='true']) {
   background: var(--color-band-hover);
 }
 

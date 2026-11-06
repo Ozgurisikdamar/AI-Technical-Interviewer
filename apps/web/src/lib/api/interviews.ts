@@ -36,6 +36,14 @@ function requireActivationId(activationId: string): string {
   return activationId;
 }
 
+/**
+ * Signs in with the application number and the access code, both in canonical form (ADR-024);
+ * the server sets the same HttpOnly session cookie as for an invitation.
+ */
+export function signInCandidate(applicationNumber: string, accessCode: string): Promise<InvitationExchangeResponse> {
+  return postJson('/api/v1/candidate/session', { application_number: applicationNumber, access_code: accessCode }, parseExchangeResponse);
+}
+
 /** Exchanges the one-time invitation token; the server sets the HttpOnly session cookie. */
 export function exchangeInvitation(token: string, options?: RequestOptions): Promise<InvitationExchangeResponse> {
   return postJson('/api/v1/invitations/exchange', { token }, parseExchangeResponse, options);

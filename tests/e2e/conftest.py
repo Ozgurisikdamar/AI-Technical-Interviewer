@@ -13,7 +13,7 @@ from typing import Any
 import psycopg
 import pytest
 
-from candidate import SECRETS_SEEN, Candidate
+from candidate import SECRETS_SEEN, SHORT_SECRETS_SEEN, Candidate
 
 ROOT = Path(__file__).resolve().parents[2]
 STACK = ROOT / "tools" / "dev" / "stack.sh"
@@ -77,15 +77,19 @@ def _scan_audio(before: set[Path]) -> None:
 
 def _scan_logs(logs: Path) -> None:
     secrets = [s for s in SECRETS_SEEN if len(s) >= 16]
+    # Access codes are short, but random over 50 bits: an exact match is never chance (ADR-024).
+    secrets += [s for s in SHORT_SECRETS_SEEN if len(s) >= 10]
     for name in ("ATI_E2E_LIVEKIT_API_SECRET",):
         secrets.append(os.environ[name])
     secrets += ["ati-dev-agent-service-token", "ati-dev-livekit-webhook-secret", "ati-dev-tier2-service-token"]
     state = Path(os.environ["ATI_E2E_STATE_DIR"])
     for name in ("staff_token", "reviewer_token"):
         secrets.append((state / name).read_text().strip())
-    # Review console session cookies the browser flow received (ADR-023).
-    if (state / "browser_secrets").exists():
-        secrets += [line for line in (state / "browser_secrets").read_text().splitlines() if line]
+    # Session cookies the browser flows received: the review console's (ADR-023) and a candidate's
+    # after sign-in (ADR-024).
+    for name in ("browser_secrets", "browser_secrets_signin"):
+        if (state / name).exists():
+            secrets += [line for line in (state / name).read_text().splitlines() if line]
     problems = []
     for log in sorted(logs.glob("*.log")):
         text = log.read_text(errors="replace")

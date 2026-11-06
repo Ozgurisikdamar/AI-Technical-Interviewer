@@ -1,25 +1,17 @@
 // Review console (ADR-023): a reviewer signs in with a staff token, decides every answer of a
 // completed interview independently of the AI draft, reads the report and signs out; a recruiter
 // then reads the report but cannot review. The interview was prepared by test_browser.py.
-import { appendFileSync, mkdirSync } from 'node:fs';
-import path from 'node:path';
-import { WEB, activeTestId, audit, checkDocumentHeaders, env, newPage, run, secret, step, tabTo, until, watch } from './common.mjs';
+import { appendFileSync } from 'node:fs';
+import { WEB, activeTestId, audit, checkDocumentHeaders, env, newPage, run, secret, shot, step, tabTo, until, watch } from './common.mjs';
 
 const REVIEWER = env('ATI_E2E_REVIEWER_TOKEN');
 const RECRUITER = env('ATI_E2E_STAFF_TOKEN');
 const INTERVIEW = env('ATI_E2E_INTERVIEW_ID');
 const SECRETS = env('ATI_E2E_SECRETS_FILE');
-const SHOTS = process.env.ATI_E2E_SCREENSHOTS ?? '';
 const SCORES = { technical_accuracy: '60', architecture_maturity: '50', edge_case_awareness: '40', claim_support: '30' };
 const RATIONALE = 'Synthetic review recorded by the browser end-to-end test.';
 /** Reasons that come from the AI evaluation: never shown before the draft is opened. */
 const AI_REASONS = ['low_confidence', 'evaluator_requested_review', 'evaluator_output_risk', 'transcript_quality'];
-
-async function shot(page, name) {
-  if (!SHOTS) return;
-  mkdirSync(SHOTS, { recursive: true });
-  await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: true });
-}
 
 function consoleHeaders(response, label) {
   const h = response.headers();

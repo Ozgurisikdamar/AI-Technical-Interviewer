@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from candidate import DONE, LONG, PART, POST_INTERVIEW, SR
+from candidate import DONE, LONG, PART, POST_INTERVIEW, SR, create_application
 from conftest import ROOT, Db, release, stack_cmd
 from review_data import EXPECTED_SCORES, typed_interview, wait_db_state
 
@@ -166,6 +166,43 @@ def test_leaving_the_page_pauses_and_returning_resumes(stack: dict[str, str], st
     ]
     assert closes[0] == "paused" and len(closes) >= 2  # resumed as a new activation of the same question
     assert db.one("SELECT cancel_reason FROM ati.interview_sessions WHERE id = %s", sid) == "withdrawn"
+
+
+@requires_playwright
+async def test_candidate_signs_in_with_an_application_number_and_access_code(stack: dict[str, str], staff_token: str, db: Db) -> None:
+    """ADR-024: the sign-in matches the application to its interview, which starts after the notice."""
+    app = await create_application(staff_token, plan="plan_demo_backend_tr")
+    secrets = Path(stack["ATI_E2E_STATE_DIR"]) / "browser_secrets_signin"  # the session cookie, scanned for in the logs
+    secrets.unlink(missing_ok=True)
+    extra = {"ATI_E2E_APPLICATION_NUMBER": app.number, "ATI_E2E_ACCESS_CODE": app.code, "ATI_E2E_SECRETS_FILE": str(secrets)}
+    if os.environ.get("ATI_E2E_SCREENSHOTS"):
+        extra["ATI_E2E_SCREENSHOTS"] = os.environ["ATI_E2E_SCREENSHOTS"]
+    result = await asyncio.to_thread(run_flow, stack, staff_token, "signin_flow.mjs", extra)
+    sid = result["interview_id"]
+    assert sid == app.interview_id
+
+    # The sign-in opened the session, not the invitation link; T01 ran once, naming its cause.
+    def audited(action: str) -> int:
+        return int(db.one("SELECT count(*) FROM ati.audit_logs WHERE action = %s AND subject_id = %s", action, sid))
+
+    assert (audited("candidate.sign_in"), audited("invitation.exchange"), audited("candidate.sign_in.locked")) == (1, 0, 0)
+    causes = db.rows("SELECT cause FROM ati.session_events WHERE session_id = %s AND transition_id = 'T01'", sid)
+    assert causes == [("access_code_sign_in",)]
+    assert len(secrets.read_text().splitlines()) == 1
+
+    # The wrong code was counted, and the right one reset the count; only the argon2id hash is kept,
+    # with the stored parameters.
+    failures, locked, stored = db.rows(
+        "SELECT access_failures, access_locked_until, access_code_hash FROM ati.invitations WHERE session_id = %s", sid
+    )[0]
+    assert (failures, locked) == (0, None) and stored.startswith("$argon2id$v=19$m=19456,t=2,p=1$")
+    assert db.one("SELECT application_number FROM ati.interview_sessions WHERE id = %s", sid) == app.number.replace("-", "")
+    state, mode, reason = db.rows("SELECT state, input_mode, cancel_reason FROM ati.interview_sessions WHERE id = %s", sid)[0]
+    assert (state, mode, reason) == ("CANCELLED", "text", "withdrawn")
+    for form in (app.code, app.code.replace("-", "")):
+        assert db.one("SELECT count(*) FROM ati.audit_logs WHERE details::text LIKE %s", f"%{form}%") == 0
+        assert db.one("SELECT count(*) FROM ati.idempotency_records WHERE response::text LIKE %s", f"%{form}%") == 0
+        assert db.one("SELECT count(*) FROM ati.invitations i WHERE i::text LIKE %s", f"%{form}%") == 0
 
 
 @requires_playwright

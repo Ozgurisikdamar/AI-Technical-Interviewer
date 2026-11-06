@@ -10,6 +10,8 @@ import {
   screenForState,
   setupControls,
   shouldApplyView,
+  STEPS,
+  stepForScreen,
 } from './viewModel';
 
 const ACT = 'act_ABCDEFGHIJKLMNOPQRSTUV';
@@ -214,5 +216,20 @@ describe('progressLabelValues', () => {
       done: 3,
       total: 3,
     });
+  });
+});
+
+describe('steps', () => {
+  it('follow the screens, and none is shown before or after the interview', () => {
+    expect([...STEPS]).toEqual(['notice', 'setup', 'interview']);
+    expect(stepForScreen(screenForState('CONSENT_PENDING'))).toBe(0);
+    expect(stepForScreen(screenForState('CREATED'))).toBe(0);
+    expect(stepForScreen(screenForState('READY'))).toBe(1);
+    for (const state of ['CALIBRATION', 'QUESTION_ACTIVE', 'CANDIDATE_SPEAKING', 'PAUSED'] as const) {
+      expect(stepForScreen(screenForState(state)), state).toBe(2);
+    }
+    for (const state of ['INTERVIEW_COMPLETED', 'REPORT_READY', 'CANCELLED', 'UNKNOWN'] as const) {
+      expect(stepForScreen(screenForState(state)), state).toBeNull();
+    }
   });
 });

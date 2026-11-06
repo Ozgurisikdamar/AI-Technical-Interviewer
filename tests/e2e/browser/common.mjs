@@ -1,6 +1,6 @@
 // Shared helpers for the browser E2E flows (run by tests/e2e/test_browser.py).
 import { createHmac } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -214,15 +214,8 @@ export function checkDocumentHeaders(response, label, { microphone = 'self' } = 
   step(`${label}: Permissions-Policy ${expected}`, h['permissions-policy'] === expected, h['permissions-policy']);
 }
 
-/** Exchanges the invitation (user click) and answers every purpose of the notice. */
-export async function consent(page, token, { voice = true, transcript = true, ai = true, recording = false } = {}) {
-  const response = await page.goto(`${WEB}/i#token=${token}`);
-  await page.getByTestId('continue').waitFor();
-  await audit(page, 'invitation');
-  await page.getByTestId('continue').click();
-  await page.locator('#consent-heading').waitFor();
-  await audit(page, 'consent');
-  const id = new URL(page.url()).pathname.split('/').filter(Boolean).pop() ?? '';
+/** Answers every purpose of the notice. */
+export async function consentChoices(page, { voice = true, transcript = true, ai = true, recording = false } = {}) {
   for (const [purpose, yes] of [
     ['voice_interview_processing', voice],
     ['transcript_assessment_record', transcript],
@@ -231,8 +224,29 @@ export async function consent(page, token, { voice = true, transcript = true, ai
   ]) {
     await page.getByTestId(`consent-${purpose}-${yes ? 'yes' : 'no'}`).check();
   }
+}
+
+/** Exchanges the invitation (user click) and answers every purpose of the notice. */
+export async function consent(page, token, choices = {}) {
+  const response = await page.goto(`${WEB}/i#token=${token}`);
+  await page.getByTestId('continue').waitFor();
+  await audit(page, 'invitation');
+  await page.getByTestId('continue').click();
+  await page.locator('#consent-heading').waitFor();
+  await audit(page, 'consent');
+  const id = new URL(page.url()).pathname.split('/').filter(Boolean).pop() ?? '';
+  await consentChoices(page, choices);
   await page.getByTestId('consent-submit').click();
   return { id, response };
+}
+
+const SHOTS = process.env.ATI_E2E_SCREENSHOTS ?? '';
+
+/** A full-page screenshot when ATI_E2E_SCREENSHOTS names a directory (for review, not for assertions). */
+export async function shot(page, name) {
+  if (!SHOTS) return;
+  mkdirSync(SHOTS, { recursive: true });
+  await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: true });
 }
 
 /** Withdraws from the room (confirmation dialog) and waits for the cancelled screen. */
@@ -257,17 +271,21 @@ export function checkPolicies(seen) {
 const SECRET_ENV = ['ATI_E2E_STAFF_TOKEN', 'ATI_E2E_REVIEWER_TOKEN', 'ATI_E2E_LIVEKIT_API_SECRET'];
 const extraSecrets = [];
 
-/** Masks a value the flow learned at run time (a session cookie) in its output. */
+/**
+ * Masks a value the flow learned at run time in its output: a session cookie, or an access code
+ * (10 symbols, random over 50 bits, so an exact match is never chance).
+ */
 export function secret(value) {
-  if (value && value.length >= 16) extraSecrets.push(value);
+  if (value && value.length >= 10) extraSecrets.push(value);
   return value;
 }
 
 function redact(text) {
   let out = text;
-  for (const value of [...SECRET_ENV.map((name) => process.env[name]), ...extraSecrets]) {
+  for (const value of SECRET_ENV.map((name) => process.env[name])) {
     if (value && value.length >= 16) out = out.split(value).join('[redacted]');
   }
+  for (const value of extraSecrets) out = out.split(value).join('[redacted]');
   return out;
 }
 

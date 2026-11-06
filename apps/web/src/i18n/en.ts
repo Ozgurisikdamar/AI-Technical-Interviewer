@@ -32,8 +32,41 @@ export const en = {
   },
 
   home: {
-    heading: 'Technical interview',
-    body: 'To begin, open the invitation link you received. The link opens this site and asks you to confirm before anything happens.',
+    eyebrow: 'Candidate sign-in',
+    heading: 'Your technical interview',
+    body: 'Sign in with the application number and the access code you received. Before anything starts, you will read how your information is used and make your choices.',
+    linkNote: 'You can also open the invitation link you received: it opens the same interview.',
+  },
+
+  signIn: {
+    heading: 'Sign in',
+    intro: 'Enter both as you received them. Letter case, spaces and hyphens do not matter.',
+    numberLabel: 'Application number',
+    numberHint: '8 letters and digits, in the form XXXX-XXXX.',
+    codeLabel: 'Access code',
+    codeHint: '10 letters and digits, in the form XXXXX-XXXXX. You can paste it.',
+    showCode: 'Show the code',
+    submit: 'Sign in',
+    submitting: 'Signing in…',
+    numberRequired: 'Enter your application number.',
+    numberMalformed: 'An application number has 8 letters and digits, in the form XXXX-XXXX.',
+    codeRequired: 'Enter your access code.',
+    codeMalformed: 'An access code has 10 letters and digits, in the form XXXXX-XXXXX.',
+    refused: 'The application number or the access code was not accepted. Check both and try again.',
+    lockNote: 'After five wrong codes in a row, signing in with the code pauses for 15 minutes. Your invitation link keeps working.',
+  },
+
+  application: {
+    eyebrow: 'Your application',
+    number: (number: string) => `Application number: ${number}`,
+  },
+
+  steps: {
+    label: 'Steps of the interview',
+    notice: 'Notice and choices',
+    setup: 'Setup',
+    interview: 'Interview',
+    done: 'done',
   },
 
   notFound: {
@@ -77,7 +110,8 @@ export const en = {
     loading: 'Loading your interview…',
     sessionLostHeading: 'We could not open your interview',
     sessionLostBody:
-      'Your session may have ended, or the interview was opened in another browser or on another device. Open your invitation link again to continue.',
+      'Your session may have ended, or the interview was opened in another browser or on another device. To continue, open your invitation link again or sign in again.',
+    signInAgain: 'Sign in with your application number and access code',
     connectionProblem: 'We are having trouble reaching the interview service. We will keep trying.',
     waitingHeading: 'One moment',
     waitingBody: 'Your interview is being updated…',
@@ -280,9 +314,9 @@ export const en = {
       timeout: 'The interview service took too long to respond. Please try again.',
       invalid_response: 'We received an unexpected response. Please try again.',
       unauthorized:
-        'Your interview session has ended or is not valid in this browser. Open your invitation link again to continue.',
+        'Your interview session has ended or is not valid in this browser. To continue, open your invitation link again or sign in again.',
       not_found:
-        'We could not find this interview for your session. Open your invitation link again to continue.',
+        'We could not find this interview for your session. To continue, open your invitation link again or sign in again.',
       invitation_invalid:
         'This invitation link is no longer valid. It may have expired or been replaced. Contact the person who invited you for a new link.',
       sign_in_failed:
@@ -310,9 +344,9 @@ export const en = {
     } as Record<string, string>,
     byStatus: {
       400: 'That request could not be accepted. Check it and try again.',
-      401: 'Your interview session has ended or is not valid in this browser. Open your invitation link again to continue.',
+      401: 'Your interview session has ended or is not valid in this browser. To continue, open your invitation link again or sign in again.',
       403: 'This request was blocked. Reload the page and try again.',
-      404: 'We could not find this interview for your session. Open your invitation link again to continue.',
+      404: 'We could not find this interview for your session. To continue, open your invitation link again or sign in again.',
       409: 'That action is not available right now. The page is up to date now.',
       410: 'This invitation link is no longer valid. Contact the person who invited you for a new link.',
       413: 'That is too long to send. Shorten it and try again.',

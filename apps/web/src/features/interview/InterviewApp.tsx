@@ -1,11 +1,13 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import ui from '@/components/ui.module.css';
 import { useMessages } from '@/i18n/client';
 import type { Messages } from '@/i18n';
 import type { InterviewCandidateView } from '@/lib/api/types';
 import { progressLabelValues, screenForState, type Screen } from '@/lib/interview/viewModel';
+import { ApplicationSummary } from './ApplicationSummary';
 import { ConsentStep } from './ConsentStep';
 import { CancelledStep, CompletedStep } from './EndSteps';
 import { InterviewRoom } from './InterviewRoom';
@@ -91,6 +93,11 @@ export function InterviewApp({ interviewId }: { interviewId: string }) {
         <section aria-labelledby="lost-heading">
           <h1 id="lost-heading">{t.interview.sessionLostHeading}</h1>
           <p className={ui.lead}>{t.interview.sessionLostBody}</p>
+          <p>
+            <Link href="/" data-testid="sign-in-again">
+              {t.interview.signInAgain}
+            </Link>
+          </p>
         </section>
       ) : view === null ? (
         <section aria-labelledby="loading-heading">
@@ -134,9 +141,19 @@ function Screens({ view, actions, realtime, voiceDeclined, onConsentSubmitted, o
 
   switch (screen) {
     case 'consent':
-      return <ConsentStep view={view} actions={actions} focusOnMount={focusOnMount} onSubmitted={onConsentSubmitted} />;
+      return (
+        <>
+          <ApplicationSummary view={view} screen={screen} />
+          <ConsentStep view={view} actions={actions} focusOnMount={focusOnMount} onSubmitted={onConsentSubmitted} />
+        </>
+      );
     case 'setup':
-      return <SetupStep view={view} actions={actions} focusOnMount={focusOnMount} voiceDeclined={voiceDeclined} />;
+      return (
+        <>
+          <ApplicationSummary view={view} screen={screen} />
+          <SetupStep view={view} actions={actions} focusOnMount={focusOnMount} voiceDeclined={voiceDeclined} />
+        </>
+      );
     case 'room':
       return (
         <InterviewRoom

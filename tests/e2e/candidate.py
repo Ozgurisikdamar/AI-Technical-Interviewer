@@ -59,6 +59,38 @@ def env(name: str) -> str:
 
 # Credentials observed during the run; the log scan asserts none of them appears in any log.
 SECRETS_SEEN: list[str] = []
+# Access codes (ADR-024) are shorter than the scan's floor for SECRETS_SEEN, so they are kept apart
+# and looked for in both forms: as shown (XXXXX-XXXXX) and as the service reads them.
+SHORT_SECRETS_SEEN: list[str] = []
+
+
+def remember_access_code(code: str) -> None:
+    SHORT_SECRETS_SEEN.extend([code, code.replace("-", "")])
+
+
+@dataclass(frozen=True)
+class Application:
+    """What the hiring team receives for a candidate: the interview, its number and its access code."""
+
+    interview_id: str
+    number: str
+    code: str
+
+
+async def create_application(staff_token: str, *, plan: str = "plan_demo_backend_en") -> Application:
+    """Creates an interview as staff, as a hiring system would, and keeps its credentials for the log scan."""
+    async with httpx.AsyncClient(base_url=env("ATI_E2E_PUBLIC_URL"), trust_env=False, timeout=10.0) as http:
+        resp = await http.post(
+            "/api/v1/interviews",
+            json={"candidate_ref": f"ref_{uuid.uuid4().hex[:12]}", "plan_id": plan, "plan_version": 1},
+            headers={"Authorization": f"Bearer {staff_token}", "Idempotency-Key": f"e2e-{uuid.uuid4().hex}"},
+        )
+    if resp.status_code != 201:
+        raise ApiError(resp.status_code, resp.text)
+    body = resp.json()
+    SECRETS_SEEN.append(body["invitation_url"].split("#token=", 1)[1])
+    remember_access_code(body["access_code"])
+    return Application(body["interview"]["id"], body["interview"]["application_number"], body["access_code"])
 
 
 class ApiError(Exception):
@@ -132,6 +164,7 @@ class Candidate:
             raise ApiError(resp.status_code, resp.text)
         token = resp.json()["invitation_url"].split("#token=", 1)[1]
         SECRETS_SEEN.append(token)
+        remember_access_code(resp.json()["access_code"])
         ex = await self._call("POST", "/api/v1/invitations/exchange", {"token": token})
         SECRETS_SEEN.extend(c.value for c in self.http.cookies.jar if c.value)
         self.interview_id = ex["interview_id"]

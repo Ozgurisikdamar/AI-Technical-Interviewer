@@ -34,8 +34,41 @@ export const tr: Messages = {
   },
 
   home: {
-    heading: 'Teknik mülakat',
-    body: 'Başlamak için size gönderilen davet bağlantısını açın. Bağlantı bu siteyi açar ve herhangi bir işlem yapılmadan önce onayınızı ister.',
+    eyebrow: 'Aday girişi',
+    heading: 'Teknik mülakatınız',
+    body: 'Size verilen başvuru numarası ve erişim koduyla giriş yapın. Hiçbir şey başlamadan önce bilgilerinizin nasıl kullanıldığını okuyacak ve tercihlerinizi belirleyeceksiniz.',
+    linkNote: 'Size gönderilen davet bağlantısını da açabilirsiniz: aynı mülakatı açar.',
+  },
+
+  signIn: {
+    heading: 'Giriş yapın',
+    intro: 'İkisini de size verildiği gibi girin. Büyük-küçük harf, boşluk ve kısa çizgi fark etmez.',
+    numberLabel: 'Başvuru numarası',
+    numberHint: '8 harf ve rakam, XXXX-XXXX biçiminde.',
+    codeLabel: 'Erişim kodu',
+    codeHint: '10 harf ve rakam, XXXXX-XXXXX biçiminde. Yapıştırabilirsiniz.',
+    showCode: 'Kodu göster',
+    submit: 'Giriş yap',
+    submitting: 'Giriş yapılıyor…',
+    numberRequired: 'Başvuru numaranızı girin.',
+    numberMalformed: 'Başvuru numarası XXXX-XXXX biçiminde 8 harf ve rakamdan oluşur.',
+    codeRequired: 'Erişim kodunuzu girin.',
+    codeMalformed: 'Erişim kodu XXXXX-XXXXX biçiminde 10 harf ve rakamdan oluşur.',
+    refused: 'Başvuru numarası veya erişim kodu kabul edilmedi. İkisini de kontrol edip yeniden deneyin.',
+    lockNote: 'Art arda beş yanlış koddan sonra kodla giriş 15 dakika durdurulur. Davet bağlantınız çalışmaya devam eder.',
+  },
+
+  application: {
+    eyebrow: 'Başvurunuz',
+    number: (number: string) => `Başvuru numarası: ${number}`,
+  },
+
+  steps: {
+    label: 'Mülakat adımları',
+    notice: 'Bilgilendirme ve tercihler',
+    setup: 'Kurulum',
+    interview: 'Mülakat',
+    done: 'tamamlandı',
   },
 
   notFound: {
@@ -78,7 +111,8 @@ export const tr: Messages = {
     loading: 'Mülakatınız yükleniyor…',
     sessionLostHeading: 'Mülakatınızı açamadık',
     sessionLostBody:
-      'Oturumunuz sona ermiş olabilir ya da mülakat başka bir tarayıcıda veya cihazda açılmış olabilir. Devam etmek için davet bağlantınızı yeniden açın.',
+      'Oturumunuz sona ermiş olabilir ya da mülakat başka bir tarayıcıda veya cihazda açılmış olabilir. Devam etmek için davet bağlantınızı yeniden açın ya da yeniden giriş yapın.',
+    signInAgain: 'Başvuru numaranız ve erişim kodunuzla giriş yapın',
     connectionProblem: 'Mülakat hizmetine ulaşmakta sorun yaşıyoruz. Denemeye devam edeceğiz.',
     waitingHeading: 'Bir dakika',
     waitingBody: 'Mülakatınız güncelleniyor…',
@@ -281,8 +315,8 @@ export const tr: Messages = {
       timeout: 'Mülakat hizmetinin yanıt vermesi çok uzun sürdü. Lütfen yeniden deneyin.',
       invalid_response: 'Beklenmeyen bir yanıt aldık. Lütfen yeniden deneyin.',
       unauthorized:
-        'Mülakat oturumunuz sona erdi ya da bu tarayıcıda geçerli değil. Devam etmek için davet bağlantınızı yeniden açın.',
-      not_found: 'Oturumunuza ait bu mülakatı bulamadık. Devam etmek için davet bağlantınızı yeniden açın.',
+        'Mülakat oturumunuz sona erdi ya da bu tarayıcıda geçerli değil. Devam etmek için davet bağlantınızı yeniden açın ya da yeniden giriş yapın.',
+      not_found: 'Oturumunuza ait bu mülakatı bulamadık. Devam etmek için davet bağlantınızı yeniden açın ya da yeniden giriş yapın.',
       invitation_invalid:
         'Bu davet bağlantısı artık geçerli değil. Süresi dolmuş ya da yenisiyle değiştirilmiş olabilir. Yeni bir bağlantı için sizi davet eden kişiyle iletişime geçin.',
       sign_in_failed:
@@ -310,9 +344,9 @@ export const tr: Messages = {
     } as Record<string, string>,
     byStatus: {
       400: 'Bu istek kabul edilemedi. Kontrol edip yeniden deneyin.',
-      401: 'Mülakat oturumunuz sona erdi ya da bu tarayıcıda geçerli değil. Devam etmek için davet bağlantınızı yeniden açın.',
+      401: 'Mülakat oturumunuz sona erdi ya da bu tarayıcıda geçerli değil. Devam etmek için davet bağlantınızı yeniden açın ya da yeniden giriş yapın.',
       403: 'Bu istek engellendi. Sayfayı yeniden yükleyip tekrar deneyin.',
-      404: 'Oturumunuza ait bu mülakatı bulamadık. Devam etmek için davet bağlantınızı yeniden açın.',
+      404: 'Oturumunuza ait bu mülakatı bulamadık. Devam etmek için davet bağlantınızı yeniden açın ya da yeniden giriş yapın.',
       409: 'Bu işlem şu anda kullanılamıyor. Sayfa artık güncel.',
       410: 'Bu davet bağlantısı artık geçerli değil. Yeni bir bağlantı için sizi davet eden kişiyle iletişime geçin.',
       413: 'Gönderilemeyecek kadar uzun. Kısaltıp yeniden deneyin.',
