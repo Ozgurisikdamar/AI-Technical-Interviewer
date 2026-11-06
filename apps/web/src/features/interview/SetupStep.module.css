@@ -1,5 +1,11 @@
+/* Each way of answering is a card. */
 .option {
   margin: 1.25rem 0;
+  padding: 1.1rem 1.35rem 1.25rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-sm);
 }
 
 .meterRow {

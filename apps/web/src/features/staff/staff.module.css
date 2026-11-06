@@ -6,12 +6,15 @@
   --content-width: 64rem;
 }
 
+/* The console's navigation sits in the navy band. */
 .nav {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem 1rem;
-  margin-top: 0.5rem;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--color-band-hover);
 }
 
 .navList {
@@ -25,23 +28,42 @@
 
 .navLink {
   display: inline-block;
-  padding: 0.35rem 0.1rem;
+  padding: 0.55rem 0.1rem;
   font-weight: 600;
+  text-decoration: none;
 }
 
+.navLink:hover {
+  text-decoration: underline;
+}
+
+/* The current page: a gold underline. */
 .navLink[aria-current='page'] {
-  color: var(--color-text);
+  text-decoration: underline;
+  text-decoration-color: var(--color-band-accent);
   text-decoration-thickness: 3px;
+  text-underline-offset: 0.4em;
 }
 
 .who {
   margin: 0;
-  color: var(--color-text-muted);
+  color: var(--color-on-band-muted);
   font-size: 0.9rem;
 }
 
+/* An outlined button on the band. */
 .signOut {
   margin-left: auto;
+}
+
+.nav .signOut:not(:disabled) {
+  background: var(--color-band);
+  color: var(--color-on-band);
+  border-color: var(--color-band-border);
+}
+
+.nav .signOut:hover:not(:disabled) {
+  background: var(--color-band-hover);
 }
 
 .meta {
@@ -79,9 +101,9 @@
 
 .group {
   margin: 1.5rem 0;
-  padding: 1rem 1.25rem;
+  padding: 1.1rem 1.35rem;
   border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   background: var(--color-surface);
 }
 
@@ -309,9 +331,10 @@
 
 .panel {
   margin-top: 1rem;
-  padding: 1rem 1.25rem;
+  padding: 1.1rem 1.35rem;
   border: 2px dashed var(--color-border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
+  background: var(--color-bg);
 }
 
 .table {
@@ -323,8 +346,14 @@
 .table th,
 .table td {
   text-align: left;
-  padding: 0.35rem 0.75rem 0.35rem 0;
+  padding: 0.45rem 0.9rem 0.45rem 0.5rem;
   border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.table thead th {
+  background: var(--color-surface);
+  color: var(--color-heading);
+  font-size: 0.9rem;
 }
 
 .table td {
@@ -341,6 +370,7 @@
   margin: 0.75rem 0;
   padding: 0.75rem 1rem;
   border-left: 4px solid var(--color-border);
+  border-radius: 0 var(--radius) var(--radius) 0;
   background: var(--color-surface);
 }
 
@@ -355,9 +385,10 @@
 }
 
 .recorded {
-  padding: 1rem 1.25rem;
+  padding: 1.1rem 1.35rem;
   border: 2px solid var(--color-success-text);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
+  background: var(--color-success-bg);
 }
 
 .recorded h2 {
@@ -366,9 +397,10 @@
 
 .report {
   margin: 1.5rem 0;
-  padding: 1rem 1.25rem;
+  padding: 1.1rem 1.35rem;
   border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-sm);
 }
 
 .details summary {

@@ -1,35 +1,62 @@
 /*
  * Global tokens and base styles. Component styles live in CSS modules.
- * Colours are chosen for WCAG 2.2 AA: text >= 4.5:1, UI boundaries and focus rings >= 3:1.
- * No external fonts or CDNs: the system font stack only.
+ * Navy and gold, checked against WCAG 2.2 AA: text >= 4.5:1, UI boundaries and focus rings >= 3:1.
+ * Gold is an accent: the rule under the header, small eyebrow labels, the focus ring and the
+ * chosen language. `--color-gold-rule` never carries text on a light surface, and
+ * `--color-gold-text` never sits on `--color-surface-strong`. Every text sits on a solid colour,
+ * so its contrast can be measured. No external fonts or CDNs: the system font stack only.
  */
 :root {
   color-scheme: light;
+  /* Surfaces: the page canvas, cards and controls, and two tints. */
+  --color-canvas: #f4f6fa;
   --color-bg: #ffffff;
-  --color-surface: #f4f5f7;
-  --color-surface-strong: #e8eaee;
-  --color-text: #1b1d21;
-  --color-text-muted: #4a4f57;
-  --color-border: #767b84;
-  --color-border-subtle: #c9ccd1;
-  --color-primary: #1d4ed8;
-  --color-primary-hover: #1e40af;
+  --color-surface: #f1f4f9;
+  --color-surface-strong: #e3e8f0;
+  /* Text: 14.8:1 on the canvas; muted 7.0:1 on the canvas, 6.2:1 on the strong tint. */
+  --color-text: #1a2133;
+  --color-heading: #0f1e3d;
+  --color-text-muted: #4a5468;
+  /* Control borders 4.4:1 on white; subtle borders are decorative. */
+  --color-border: #6b7894;
+  --color-border-subtle: #dfe4ed;
+  /* Actions. */
+  --color-primary: #1f3a6e;
+  --color-primary-hover: #0f1e3d;
   --color-on-primary: #ffffff;
-  --color-danger: #b91c1c;
-  --color-danger-hover: #991b1b;
+  --color-danger: #b42318;
+  --color-danger-hover: #912018;
   --color-on-danger: #ffffff;
-  --color-focus: #1d4ed8;
-  --color-warning-bg: #fef3c7;
-  --color-warning-text: #78350f;
-  --color-warning-border: #b45309;
-  --color-info-bg: #e8f0fe;
-  --color-info-text: #1e3a8a;
+  /* The focus ring: 4.5:1 on white, 4.1:1 on the canvas (inside the header band it turns gold). */
+  --color-focus: #9a7020;
+  /* Notices. */
+  --color-warning-bg: #fbf3df;
+  --color-warning-text: #6b4a0b;
+  --color-warning-border: #9a7020;
+  --color-info-bg: #edf2fa;
+  --color-info-text: #1f3a6e;
+  --color-success-bg: #ecf6ef;
   --color-success-text: #166534;
-  --color-error-bg: #fdecec;
-  --color-error-text: #991b1b;
-  --color-disabled-bg: #e8eaee;
-  --color-disabled-text: #4a4f57;
+  --color-error-bg: #fdeeec;
+  --color-error-text: #9b1c1c;
+  --color-disabled-bg: #e3e8f0;
+  --color-disabled-text: #4a5468;
+  /* Gold: a decorative rule (3.2:1 on white, 5.2:1 on navy) and eyebrow text (5.3:1 on white). */
+  --color-gold-rule: #b8892b;
+  --color-gold-text: #8a6514;
+  /* The navy header band. */
+  --color-band: #0f1e3d;
+  --color-band-hover: #16294f;
+  --color-on-band: #ffffff;
+  --color-on-band-muted: #c8d1e0;
+  --color-band-accent: #e0b54f;
+  --color-band-border: #8592ab;
+  /* Shape. */
   --radius: 8px;
+  --radius-card: 12px;
+  --shadow-sm: 0 1px 2px rgb(15 30 61 / 6%);
+  --shadow-md: 0 1px 3px rgb(15 30 61 / 8%), 0 8px 24px rgb(15 30 61 / 6%);
+  --shadow-lg: 0 16px 48px rgb(15 30 61 / 20%);
   --content-width: 48rem;
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
 }
@@ -50,30 +77,42 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg);
+  background: var(--color-canvas);
   color: var(--color-text);
   font-family: var(--font-sans);
   font-size: 1rem;
-  line-height: 1.55;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
 
 h1,
 h2,
-h3 {
+h3,
+h4 {
+  color: var(--color-heading);
   line-height: 1.25;
   margin: 0 0 0.75rem;
+  letter-spacing: -0.01em;
 }
 
 h1 {
-  font-size: 1.75rem;
+  font-size: 1.875rem;
+  font-weight: 700;
 }
 
 h2 {
   font-size: 1.3rem;
+  font-weight: 700;
 }
 
 h3 {
   font-size: 1.1rem;
+  font-weight: 650;
+}
+
+h4 {
+  font-size: 1rem;
+  font-weight: 650;
 }
 
 p {
@@ -82,11 +121,13 @@ p {
 
 a {
   color: var(--color-primary);
-  text-underline-offset: 0.15em;
+  text-underline-offset: 0.18em;
+  text-decoration-thickness: 1px;
 }
 
 a:hover {
   color: var(--color-primary-hover);
+  text-decoration-thickness: 2px;
 }
 
 /* Visible focus for keyboard users on every interactive element. */
@@ -128,6 +169,7 @@ a:hover {
   border: 2px solid var(--color-primary);
   border-radius: var(--radius);
   font-weight: 600;
+  box-shadow: var(--shadow-md);
 }
 
 .skip-link:focus {

@@ -1,14 +1,16 @@
 .dialog {
   width: min(32rem, calc(100vw - 2rem));
-  padding: 1.5rem;
-  border: 2px solid var(--color-border);
-  border-radius: var(--radius);
+  padding: 1.75rem;
+  border: 1px solid var(--color-border-subtle);
+  border-top: 4px solid var(--color-gold-rule);
+  border-radius: var(--radius-card);
   background: var(--color-bg);
   color: var(--color-text);
+  box-shadow: var(--shadow-lg);
 }
 
 .dialog::backdrop {
-  background: rgb(15 17 21 / 60%);
+  background: rgb(15 30 61 / 62%);
 }
 
 .title {

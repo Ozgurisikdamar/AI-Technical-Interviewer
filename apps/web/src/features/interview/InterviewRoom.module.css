@@ -96,25 +96,29 @@
   margin-bottom: 0.35rem;
 }
 
+/* The question: a card with a gold rule along its top. */
 .prompt {
-  padding: 1rem 1.25rem;
-  border: 2px solid var(--color-primary);
-  border-radius: var(--radius);
+  padding: 1.15rem 1.4rem 1.3rem;
+  border: 1px solid var(--color-border-subtle);
+  border-top: 4px solid var(--color-gold-rule);
+  border-radius: var(--radius-card);
   background: var(--color-bg);
+  box-shadow: var(--shadow-md);
 }
 
 .promptHeading {
-  font-size: 1rem;
+  font-size: 0.85rem;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--color-text-muted);
-  margin-bottom: 0.35rem;
+  letter-spacing: 0.1em;
+  color: var(--color-gold-text);
+  margin-bottom: 0.45rem;
 }
 
 .promptText {
   margin: 0;
-  font-size: 1.2rem;
-  line-height: 1.5;
+  font-size: 1.25rem;
+  line-height: 1.55;
+  color: var(--color-heading);
   white-space: pre-line;
 }
 
@@ -125,9 +129,9 @@
 }
 
 .textForm {
-  padding: 1rem 1.25rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  padding: 1.1rem 1.35rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-card);
   background: var(--color-surface);
 }
 

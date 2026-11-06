@@ -160,7 +160,7 @@ export function watch(page, seen = current) {
 let current = null;
 
 /**
- * WCAG 2.1 A/AA audit of the current screen with axe-core (BP18 accessibility). axe is evaluated
+ * WCAG 2.2 A/AA audit of the current screen with axe-core (BP18 accessibility). axe is evaluated
  * through the DevTools protocol, so the page's CSP stays in force (no inline script is added).
  * Serious and critical violations fail the flow at the end; the others are reported.
  */
@@ -178,7 +178,10 @@ export async function audit(page, label) {
     ),
   );
   const results = await page.evaluate(async () =>
-    window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] }),
+    window.axe.run(document, {
+      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] },
+      resultTypes: ['violations'],
+    }),
   );
   current.audited.push(label);
   for (const v of results.violations) {
