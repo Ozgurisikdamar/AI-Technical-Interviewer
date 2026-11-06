@@ -1,8 +1,65 @@
 # HANDOVER — Latest Review & Implementation Instructions for Claude
 
-> **LATEST UPDATE — 2026-11-04 (UTC): review pass of the review console (Milestone D) on `main`**
+> **LATEST UPDATE — 2026-11-06 (UTC): Milestone E (candidate sign-in, Turkish and English, navy and gold design) on `main`**
 >
-> Read this update first, then the Milestone D, B/C and A updates below it. The owner's review further down (based on `545983f`) remains the instruction baseline.
+> Read this update first, then the review pass and the Milestone D, B/C and A updates below it. The owner's review further down (based on `545983f`) remains the instruction baseline.
+
+### Done in Milestone E
+
+- **Candidate sign-in (ADR-024).** A candidate can enter with an application number and an access code instead of the
+  invitation link; the link keeps working.
+  - `POST /api/v1/interviews` also returns both values: the code once, as with the link. Migration 00009 stores the
+    number on the interview and only an argon2id hash of the code on the invitation.
+  - `POST /api/v1/candidate/session` opens the same session cookie as the link, through the same code path, so
+    either way in ends the other's session and T01 is unchanged (it records the cause).
+  - Every refusal is the same 401, with exactly one hash verification per attempt. Five wrong codes in a row lock
+    code sign-in for 15 minutes (attempts are counted before verification), sign-ins are rate-limited per client
+    (`ATI_CANDIDATE_SIGNINS_PER_MINUTE`), and concurrent verifications are bounded.
+  - Typing is forgiving, with the same rules in the page and the control plane (`contracts/fixtures/sign-in-codes`).
+  - The candidate view names the matched application: the number, the interview's title and its language. Reviewers
+    never see the number.
+- **Web.** The start page (`/`) is the sign-in. After it, the notice and setup screens show the application card and
+  the steps; the interview starts after the notice is answered, as before.
+- **Languages.** Turkish by default, English from the header's switch (remembered in `ati_lang`, applied without a
+  reload). Every string lives in `src/i18n/tr.ts` and `en.ts`, and tests keep them complete. Dates, decimals and
+  counts follow the language.
+- **Design.** Navy and gold tokens and a restyle of every screen, checked against WCAG 2.2 AA; the browser flows'
+  axe audits now include `wcag22aa`. The audits found two hover states that broke contrast or hid an error; both
+  are fixed.
+- **Tests added:** sign-in service, API, access-code, role and config tests; catalog parity, formatter, parser and
+  step tests; the browser flow `signin_flow.mjs` with database checks; the log scan now also looks for access codes.
+- **Code review** (`/code-review`) found six defects, each fixed with a test that fails on the old code:
+  - verification slots were held while a session opened;
+  - old wrong codes never stopped counting;
+  - a right code whose session could not open left its lock;
+  - production could start without `ATI_TRUSTED_PROXY_CIDRS` (one sign-in budget for every browser);
+  - a closed tab was logged as a 500;
+  - refusal paths ran different numbers of statements.
+- **Also:** `github.com/klauspost/compress` upgraded to v1.20.2 (GO-2026-6865, not reached).
+
+### Verification at this revision
+
+Each command below ran on 2026-11-06 in this environment:
+
+| Command | Result |
+|---|---|
+| `make test` | pass in 61 s: repository checks and import boundaries; 145 contract tests; Go lint and 18 Go packages (race detector); 198 agent tests; 114 Tier-2 tests; web lint, typecheck, 317 unit tests in 21 files, build and bundle scan (364 files, 10 rules) |
+| `make e2e` | 32 passed from a fresh stack in 13 min 51 s (scripted engine, reference evaluator, loopback), including the Turkish candidate sign-in flow and its database checks |
+| `make audit` | ok in 12 s: no vulnerable symbol reached in the control plane (one advisory in a required module, GO-2026-5932, is not called by the code; GO-2026-6865 was fixed by an upgrade); no known vulnerabilities in any Python lockfile or in the web production dependencies |
+| `make provider-smoke` | BLOCKED (no key) |
+
+### Still open
+
+- The Turkish interface text needs a native-speaker review; the notices need legal review in both languages.
+- No command lifts a sign-in lock (it ends after 15 minutes); a known number lets anyone keep code sign-in locked.
+- A number's existence may be measurable by timing. A lost code cannot be shown again.
+- Everything still open from the review pass and Milestone D below.
+
+---
+
+> **UPDATE — 2026-11-04 (UTC): review pass of the review console (Milestone D) on `main` (kept as written)**
+>
+> At that point it was read first, then the Milestone D, B/C and A updates below it. The owner's review further down (based on `545983f`) remains the instruction baseline.
 
 ### Done in the review pass
 

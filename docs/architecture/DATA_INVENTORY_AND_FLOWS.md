@@ -21,6 +21,7 @@ The gaps it identifies are listed at the end and tracked in the
  staff browser (session cookie, ADR-023) ──HTTPS──┤
                                      ▲    │
  candidate browser ──HTTPS (cookie)──┘    │ room, tokens, dispatch (server API)
+   (invitation link, or sign-in with an application number and access code, ADR-024)
         │                                 ▼
         └──WebRTC (microphone only)──► LiveKit ◄──WebRTC── Tier-1 agent ──WSS──► OpenAI Realtime API
                                           │                    │                 (candidate audio, instructions,
@@ -46,6 +47,7 @@ The gaps it identifies are listed at the end and tracked in the
 | F8 | Logs and metrics | None by design | Redacting log filter (tokens, keys, transcripts, extras); metric labels are routes, bounded methods and event names |
 | F9 | Tier-2 evaluation (ADR-022) | Answer transcripts, questions and rubrics (text) to the evaluator, and with a model evaluator to an LLM provider; evaluator output (quotes of candidate speech) back to the control plane | Queue entries carry identifiers only; the evaluator role reads evidence and two narrow views, sees no candidate identity and writes nothing; attempts go through the internal API with a service token; synthetic test speech is never sent; every answer is reviewed by a person. Only the deterministic reference evaluator runs in this build: no provider is called. Model evaluators send `store: false` (OpenAI) and use pinned endpoints; provider terms are unverified (G4) |
 | F10 | Review and report (ADR-022) | Reviewer scores and rationale, and whether the reviewer opened the AI draft; the report snapshot (scores, rationales, AI evidence quotes) | Staff-only, tenant-scoped, roles `reviewer`/`admin` decide and `admin`/`recruiter`/`reviewer` read reports; reviewers never see candidate identity, including the staff view of an interview (ADR-023); the report list holds no scores; audit entries carry no rationale; candidates see no score |
+| F12 | Candidate sign-in (ADR-024) | The application number (an identifier) and the access code (a credential), typed by the candidate and sent once to the control plane; the session cookie afterwards; the language choice | The code is returned once at creation, stored only as an argon2id hash and never in a replay, an audit or a log. It goes only in a same-origin POST body from fields without a `name`, cleared after use. Every refusal is the same; five wrong codes in a row lock code sign-in for 15 minutes; a per-client rate limit applies (`ATI_CANDIDATE_SIGNINS_PER_MINUTE`). The number is shown to admins and recruiters, never to reviewers, and the Tier-1 and Tier-2 roles cannot read it. The `ati_lang` cookie holds only `tr` or `en` |
 | F11 | Staff sign-in to the review console (ADR-023) | The staff token, sent once to the control plane; the session cookie afterwards | The token goes only in a same-origin POST body: never in an address, storage or a log, and it is cleared from the page. The session is an opaque cookie (HttpOnly, SameSite=Strict, `Path=/api`, Secure outside dev), stored as a hash, 8 hours by default (`ATI_STAFF_SESSION_TTL`, at most 24) and never longer than its token; it is accepted only by review, report and session operations. Sign-ins are rate-limited; audits hold the token id, and actions through a session also its session id, never the token, its hash or its label |
 
 ## Inventory (PostgreSQL schema `ati`)
@@ -55,13 +57,13 @@ The gaps it identifies are listed at the end and tracked in the
 | `tenants`, `staff_tokens` | Tenant settings; staff token hashes, roles, labels | Staff token label (free text, shown to its holder in the console) | `ati-admin` | Control plane | Until revoked or expired | `ati-admin revoke-staff-token` (audited; rows are kept, because outcomes reference them) |
 | `staff_sessions` | Review console sessions: the token they came from, the session hash, creation, expiry, revocation | None (hashes only) | Control plane | Control plane | Until expiry or revocation (8 hours at most by default) | `ati-admin purge-operational` deletes ended sessions (audited) |
 | `candidates` | `external_ref` per tenant | Pseudonymous reference | Control plane | Control plane | Not defined | **None (G1)** |
-| `interview_sessions` | State, plan, language, retention and recording policy snapshots | Linked to the candidate | Control plane | Control plane, Tier-1 views (limited columns) | Not defined | **None (G1)** |
-| `invitations`, `candidate_sessions` | Token hashes, expiry, revocation | None (hashes only) | Control plane | Control plane | Until expiry | **None (G1)** |
+| `interview_sessions` | State, plan, language, retention and recording policy snapshots; the application number (ADR-024) | Linked to the candidate; the application number identifies the interview to the candidate and the hiring team | Control plane | Control plane, Tier-1 views (limited columns) | Not defined | **None (G1)** |
+| `invitations`, `candidate_sessions` | Token hashes, expiry, revocation; the access code's argon2id hash, the count of wrong codes in a row, the time of the last attempt and the lock (ADR-024) | None (hashes only) | Control plane | Control plane | Until expiry | **None (G1)** |
 | `consent_records` | Purpose-level decisions, notice version | Consent decisions | Control plane | Control plane | Not defined (consent evidence) | Append-only, **none (G1)** |
 | `question_activations`, `candidate_answers`, `completion_requests`, `pause_intervals` | Interview timeline and answer metadata | Linked to the candidate | Control plane | Control plane, Tier-1 views (open question only) | Policy per session (`transcript_days`) | **None (G1)** |
 | `transcript_segments` | What the candidate and the interviewer said or typed, with timings and provenance | **Candidate speech and text** | Control plane (from the agent and from text mode) | Control plane; Tier-1 sees only the open question's text inputs (ADR-018); the Tier-2 role (NOLOGIN) | Policy per session (`transcript_days`) | Append-only, **no purge job (G1)** |
 | `session_events`, `integrity_events` | State transitions and integrity flags | Linked to the candidate | Control plane | Control plane | Policy per session (`session_events_days`) | Append-only, **no purge job (G1)** |
-| `audit_logs` | Security-relevant actions and outcomes | Actor identifiers | Control plane, `ati-admin` | Operators | Not defined | Append-only by design |
+| `audit_logs` | Security-relevant actions and outcomes, including `candidate.sign_in` and `candidate.sign_in.locked` (ADR-024), which hold no number or code | Actor identifiers | Control plane, `ati-admin` | Operators | Not defined | Append-only by design |
 | `outbox_events` | `answer.finalized`, `interview.completed`: identifiers only | None (identifiers) | Control plane | Outbox relay; Tier-2 role | Not defined | None |
 | `rubrics` | Versioned rubrics: criteria, references, weights; synthetic demo rubrics carry indicator phrases | None | `ati-admin seed-plans` | Control plane, Tier-2 role | Immutable versions | None (immutable) |
 | `evaluation_attempts` | Every evaluator response as received, its outcome and problems, provider, model, request id, tokens | **Quotes of candidate speech** in `raw_output` | Control plane (from the Tier-2 API) | Control plane | `retention_until` from the session's `assessment_output_days` | Append-only, **no purge job (G1)** |
@@ -73,6 +75,8 @@ The gaps it identifies are listed at the end and tracked in the
 | `webhook_events` | LiveKit event ids and types | None | Control plane | Control plane | 24 h by default | `ati-admin purge-operational` (audited) |
 | `agent_dispatches`, `agent_leases`, `session_usage` | Agent dispatch and lease records; provider usage counters | None | Control plane | Control plane | Not defined | None |
 | `audio_recordings` (+ object storage) | Object key, status, timeline bounds; the audio file | **Candidate voice** (object) | Control plane, LiveKit egress | Operators | Explicit `audio_recording_days` (required) | `ati-admin recordings purge-expired` deletes the object and leaves an audited tombstone |
+
+In the browser, the only value kept is the language choice: the `ati_lang` cookie (`tr` or `en`, one year, written only when someone picks a language). It holds no personal data.
 
 Roles (least privilege; ADR-016, ADR-020):
 - `ati_control_plane` has no DELETE and no DDL. Append-only tables are protected by triggers.
@@ -96,5 +100,6 @@ Roles (least privilege; ADR-016, ADR-020):
 - Recording, purge and redaction behaviour: control-plane and agent tests (`internal/recording`, `cmd/ati-admin`, `tests/test_monitor_worker_logging.py`).
 - Least-privilege grants: `internal/store` tests (including `TestTier2EvaluatorRoleReadsOnlyEvidenceAndNarrowViews` and `TestControlPlaneOnlyCreatesAndRevokesStaffSessions`).
 - Staff sessions: `internal/api` tests (`TestStaffSign…`, `TestStaffSession…`) and `tests/e2e/test_browser.py` (`test_reviewer_decides_every_answer_in_the_browser`: no credential in the page, the database or the logs).
+- Candidate sign-in: `internal/accesscode`, `internal/interview` (`signin_test.go`) and `internal/api` (`signin_test.go`, `TestCredentialsAreNeverStoredForReplays`) tests, the store tests (neither the Tier-1 nor the Tier-2 role reads invitations), and `tests/e2e/test_browser.py` (`test_candidate_signs_in_with_an_application_number_and_access_code`: no code in the page, the database or the logs).
 - Tier-2 flows: `internal/interview` and `internal/api` tests, the worker's tests, and `tests/e2e/test_tier2.py` (the log scan includes the worker).
 - The gaps above are open: nothing in this repository closes them yet.

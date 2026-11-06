@@ -10,7 +10,11 @@ make e2e
 
 `make e2e` starts the stack, runs the tests, scans every process log and the file system, and stops the stack.
 Set `ATI_E2E_REUSE_STACK=1` to run against a stack that is already up (`make stack-up`), and
-`ATI_E2E_KEEP_STACK=1` to leave it running afterwards.
+`ATI_E2E_KEEP_STACK=1` to leave it running afterwards. `ATI_E2E_SCREENSHOTS=<dir>` saves screenshots of the sign-in
+and review console flows.
+
+The web UI is Turkish by default. Browser flows choose English with the `ati_lang` cookie unless they are about
+Turkish (`launch({ locale })` in `browser/common.mjs`); the sign-in flow starts without a choice.
 
 ## What it verifies
 
@@ -43,9 +47,10 @@ Set `ATI_E2E_REUSE_STACK=1` to run against a stack that is already up (`make sta
 | `test_a_refused_microphone_falls_back_to_text` (`browser/mic_denied_flow.mjs`) | voice consented but the browser refuses the microphone: the device check explains it is blocked, voice cannot start, a written answer finalizes the first question |
 | `test_no_microphone_device_falls_back_to_text` (`browser/no_device_flow.mjs`) | no capture device at all: "no microphone was found", text mode offered |
 | `test_leaving_the_page_pauses_and_returning_resumes` (`browser/reconnect_flow.mjs`) | leaving the room page pauses as `network`; returning rejoins the media room while paused (no microphone published) and resumes as a new activation of the same question |
+| `test_candidate_signs_in_with_an_application_number_and_access_code` (`browser/signin_flow.mjs`) | candidate sign-in (ADR-024) in Turkish, the default, on the Turkish demo plan. **Start page:** document headers; `html[lang=tr]` with no language chosen; fields without `name`, not remembered, the code hidden; switching to English and back keeps the typed number (no reload) and sets `ati_lang` (Lax, a year). **Refusals:** a malformed number sends no request; a wrong code gets 401, takes focus, marks both fields and opens no session. **Sign-in:** the right code typed in lower case with a space; an HttpOnly, SameSite=Strict cookie scoped to `/api`; the code in no address, storage, script-readable cookie or page. **Afterwards:** the notice in Turkish with the matched application (the number, a `lang="tr"` title), the steps and the TASLAK label; typed answers, setup, the room, withdrawal. An accessibility audit of every screen. **Database checks:** one `candidate.sign_in` audit and no exchange or lock; T01 once with cause `access_code_sign_in`; the counter reset; an argon2id hash with the stored parameters; the canonical number; the interview withdrawn; neither form of the code in audits, stored replays or the invitation row |
 | `test_reviewer_decides_every_answer_in_the_browser` (`browser/reviewer_flow.mjs`) | the review console (ADR-023) on a typed interview evaluated by the reference evaluator. **Sign-in:** console headers (nonce CSP, no microphone, `noindex`, `no-store`); the token field has no `name`; a malformed token is caught in the browser, an unknown one is refused without a cookie; the session cookie is HttpOnly, SameSite=Strict and scoped to `/api`; the token is gone from the address, markup, inputs, storage and `document.cookie`. **Review:** for every answer, the form starts empty and the AI draft is closed and unrendered, with no AI-derived reason before it; cited passages are highlighted; an empty decision lists its problems and takes focus; opening the draft keeps focus on its button, shows the AI scores and prefills nothing; the weighted preview reads 49.00; one answer is decided by keyboard only. **Afterwards:** the report with the AI parts folded; sign-out (the old cookie is refused); a recruiter who reads reports but may not review. **Database checks:** the reviewer's own scores, with the AI scores as prior; `ai_draft_viewed` true except for the keyboard answer; T17 and one report; one session per staff member, hashed, at most 8 hours, the reviewer's revoked; start and end audits; no credential in audits or stored replays |
 | accessibility (every browser flow) | axe-core 4.14.0 (pinned in `browser/package-lock.json`) audits each screen against WCAG 2.1 A/AA after transitions settle; serious or critical violations fail the flow |
-| post-run scans | no credential (including the review console's session cookies, which the flow records in the stack's state directory with mode 0600), JWT or transcript text in any process log (including the Tier-2 worker's); no audio file written anywhere |
+| post-run scans | no credential (including the session cookies the review console and candidate sign-in flows record in the stack's state directory with mode 0600, and every access code issued during the run, in both forms), JWT or transcript text in any process log (including the Tier-2 worker's); no audio file written anywhere |
 
 ## Limits and preconditions
 

@@ -1,6 +1,6 @@
 # Implementation status and repository audit
 
-**Last updated:** 2026-11-04 (a review pass of Milestone D; Milestone D: reviewer web UI, ADR-023; Milestone C: data and ML lifecycle, offline benchmark harness; Milestone B: Tier-2 evaluation MVP, ADR-022; earlier the same day, Milestone A: Phase 1 audit closure, see [PHASE1_AUDIT.md](../qa/PHASE1_AUDIT.md); 2026-11-03: Phase 0 and Phase 1 milestones M1–M9 and a completion pass)
+**Last updated:** 2026-11-06 (Milestone E: candidate sign-in, ADR-024, Turkish by default with English, and the navy and gold design; 2026-11-04: a review pass of Milestone D; Milestone D: reviewer web UI, ADR-023; Milestone C: data and ML lifecycle, offline benchmark harness; Milestone B: Tier-2 evaluation MVP, ADR-022; earlier the same day, Milestone A: Phase 1 audit closure, see [PHASE1_AUDIT.md](../qa/PHASE1_AUDIT.md); 2026-11-03: Phase 0 and Phase 1 milestones M1–M9 and a completion pass)
 **Rule:** a capability counts as implemented only when its code, tests and integration are verified. Status labels:
 
 | Label | Meaning |
@@ -10,7 +10,7 @@
 | **Implemented — unverified** | Code exists, but the integration cannot be verified in the current environment (blocker given) |
 | **Not started** | No implementation yet (target phase given) |
 
-All contracts and ADR-011 to ADR-023 are **Proposed**. The Phase 0 exit gate ("contracts reviewed") requires human architecture review, which automation cannot provide. Phase 1 work builds on Proposed contracts.
+All contracts and ADR-011 to ADR-024 are **Proposed**. The Phase 0 exit gate ("contracts reviewed") requires human architecture review, which automation cannot provide. Phase 1 work builds on Proposed contracts.
 
 **Summary.** The Phase 1 voice MVP runs end to end in this repository with the deterministic scripted voice engine: a candidate opens an invitation in Chromium, consents per purpose, checks the microphone, and completes a voice or text interview against the real control plane, PostgreSQL, LiveKit OSS and the Tier-1 agent, with pause, refresh, disconnect, agent crash, provider failures (recognition, synthesis, model timeout, dropped stream), barge-in, staff revocation and withdrawal handled by the backend-enforced state machine. The completion pass applied per-question turn profiles, measured `low_energy`, aligned the latency metrics with BLUEPRINT §5, and fixed four defects found by new tests: credentials stored at rest for idempotent replays, a recording start that hung without an egress service, extra agent participants that were not removed, and a refused microphone explained as a generic failure. What is **not** verified: the OpenAI Realtime engine against the live provider (no credentials), real recording egress (no egress service), real networks (no TURN, loss or jitter emulation), container images (no Docker daemon), and every human gate (architecture, legal, benchmarks, production gates). Nothing here is cleared for real candidates (ADR-020).
 
@@ -138,6 +138,45 @@ found the defects below. Each is fixed and covered by a test.
 - **Browser flow:** while the last answer is being decided, the reviewer signs out in another tab. The form keeps
   what was typed, sign-in happens in a new tab, and the decision is then recorded under the new session.
 
+**Milestone E (2026-11-06).** Candidates can sign in, the interface speaks Turkish first, and every screen shares one
+design.
+- **Candidate sign-in** (ADR-024, the owner's choice). Creating an interview now also returns an application number
+  (`XXXX-XXXX`) and an access code (`XXXXX-XXXXX`). The hiring team sends them; the invitation link keeps working
+  beside them (also the owner's choice).
+  - The code is a second credential of the same invitation: its expiry and revocation apply, and a sign-in opens the
+    same session cookie as the link. The two ways in end each other's sessions, and the state machine is unchanged
+    (T01 records which way the candidate came).
+  - The code is shown once and stored only as an argon2id hash (OWASP parameters). Typing is forgiving: case, spaces
+    and hyphens are ignored, O reads as 0, I and L as 1, with the same rules in the page and the control plane.
+  - Every refusal is the same 401, and every attempt verifies exactly one hash, so the reason cannot be told apart.
+    Five wrong codes in a row lock code sign-in for 15 minutes; attempts are counted before verification, so parallel
+    guesses cannot exceed that. Sign-ins are rate-limited per client, and argon2's memory is bounded by a semaphore.
+  - After sign-in, the notice and setup screens show the matched application (the interview's title, in the
+    interview's language, and the number) and the steps: notice and choices, setup, interview. The interview starts
+    only after the candidate has answered the notice, as before.
+  - Recruiters see the number on the interview; reviewers never do, and the Tier-1 and Tier-2 roles cannot read it.
+- **Languages.** Turkish is the default; English is one click away in every page's header and is remembered in the
+  `ati_lang` cookie. The switch re-renders without a reload, so nothing held in memory is lost. Dates, decimals and
+  counts follow the language. Both catalogs are checked for the same keys and full translation. The Turkish text has
+  not had a native-speaker review, and the notices have not had legal review.
+- **Design.** Navy and gold: a navy header band with a gold rule, white cards on a light canvas, gold for eyebrow
+  labels, the focus ring and the chosen language. Every colour pair meets WCAG 2.2 AA, and the browser flows' axe
+  audits now include `wcag22aa`. The audits found that hovering the chosen language put navy text on navy, and that
+  hovering an invalid field hid its error border; both are fixed.
+- **Code review** (`/code-review`) of the milestone found, and each is fixed with a test that fails on the old code:
+  - a verification slot was held while the session opened, so sign-ins waiting for a busy interview could make all
+    others busy. Slots are now held only while an attempt is looked up, counted and verified;
+  - wrong codes never stopped counting, so a candidate's old typos could add up to a lock days later. Only wrong
+    codes within 15 minutes of each other add up now;
+  - a right code whose session could not open (a transient failure, a closed tab) left the lock it had engaged. It
+    is now undone;
+  - production started without `ATI_TRUSTED_PROXY_CIDRS`, which makes every browser share one sign-in budget
+    behind the web app's proxy. Production now refuses to start without it;
+  - a client that went away was answered 500 and logged as an error. It is now answered 499;
+  - the refusal paths ran different numbers of statements; one statement now looks the attempt up and counts it, and
+    the dummy hash is made at start-up.
+- **Also:** `github.com/klauspost/compress` was upgraded to v1.20.2 (GO-2026-6865, not reached).
+
 ## 1. Baseline audit (repository state before implementation)
 
 The repository contained architecture documents only: `README.md`, `LICENSE` (Apache-2.0) and six files in `docs/architecture/` (about 1,500 lines). There were no source files, build files, tests, CI or infrastructure definitions.
@@ -160,6 +199,7 @@ The repository contained architecture documents only: `README.md`, `LICENSE` (Ap
 | B — Tier-2 evaluation MVP (2026-11-04) | ADR-022; state machine v1.2 (T17 in Phase 2); rubric contract and synthetic demo rubrics; migration 00007 (rubrics, raw attempts, canonical evaluations, review tasks and outcomes, reports; evaluator LOGIN with narrow views; `reviewer` role); outbox relay to Redis Streams; deterministic validator; internal Tier-2 API; reviewer queue, task, outcome and report endpoints; `services/tier2-evaluator` (consumer, evidence loader, reference/OpenAI/Anthropic adapters, configuration refusals); stack integration | **Verified (local)**: G (validator, relay with a real redis-server, service, API, store grants, architecture), T2 (`make tier2-test`: config, prompt pin and drift, reference evaluator, adapters against recorded shapes, consumer against a real redis-server, worker flow, redaction), E (`test_tier2.py`; synthetic voice answers abstained in `test_voice_interview.py`). Model evaluators **Implemented — unverified** (no credentials) |
 | C — Data and ML foundations (2026-11-04) | Data and ML lifecycle document; offline benchmark harness (`tier2_evaluator.bench`: dataset manifest and leakage checks, quadratic-weighted kappa, Krippendorff's alpha, MAE, within-10, percentiles); `ati-admin validate-evaluations` (the Go validator offline); synthetic TR/EN dataset `synthetic-v1` | **Verified (local)**: metrics against hand-computed values and Krippendorff's published example, dataset integrity and leakage refusal (T2), the offline validator (G), `make tier2-bench` (every reference attempt accepted). **No benchmark of evaluator quality**: the labels are synthetic |
 | D — Reviewer web UI (2026-11-04) | ADR-023; staff browser sessions (migration 00008: `staff_sessions`, `review_outcomes.ai_draft_viewed`; `ATI_STAFF_SESSION_TTL`, `ATI_STAFF_SIGNINS_PER_MINUTE`); `/api/v1/staff/session` sign-in, who-am-I and sign-out; report list; queue filter by interview, in answer order; reviewers refused the staff interview view; `ati-admin revoke-staff-token`, `list-staff-tokens`, session purge; web route groups `(candidate)` and `staff`; console screens (sign-in, queue, task with the AI draft closed until opened, report list, report); quote highlighter tested with the validator's cases | **Verified (local)**: G (sessions, refusals, rate limit, CSRF, cookie scope, revocation, reviewer 403, queue filter, report list, grants, admin commands, shared quote cases), contracts (security schemes per operation), W (highlighter, weighted score, decision checks, parsers, query allow-list). **Verified (scripted, loopback)** in Chromium: `reviewer_flow.mjs` with the database checks of `test_reviewer_decides_every_answer_in_the_browser` |
+| E — Candidate sign-in, languages and design (2026-11-06) | ADR-024; migration 00009 (application numbers; access-code hashes, failure counters and locks on invitations); `internal/accesscode`; `POST /api/v1/candidate/session` (`ATI_CANDIDATE_SIGNINS_PER_MINUTE`); the code returned once at creation; the matched application in the candidate view; shared sign-in cases (`contracts/fixtures/sign-in-codes`); web sign-in page, application card and steps; Turkish catalog and language switch (`ati_lang`); locale-aware formatting; navy and gold tokens and restyle; axe `wcag22aa` | **Verified (local)**: G (sign-in service and API: uniform refusals, one verification per attempt, lock and its race, busy refusals, revocation race, collisions, cookie, CSRF, body checks, rate limit, no code at rest or in logs, reviewers never see the number, role grants, config), C (OpenAPI), W (shared cases, catalogs, formatters, parsers, steps). **Verified (scripted, loopback)** in Chromium: `signin_flow.mjs` with the database checks of `test_candidate_signs_in_with_an_application_number_and_access_code` |
 | R — Review pass of Milestone D (2026-11-04) | `/code-review` and `/simplify` of the review console: credential failures answer 500, `changed_from_ai` by value, queue orders, report list query, session ids in audits, `rubric_ref`, parsers within the server's limits, no double submit, work kept when a session ends, return address after sign-in, shared UI pieces | **Verified (local)**: `make test`. **Verified (scripted, loopback)**: `make e2e`, including the extended reviewer flow |
 | M9 — Text mode | `POST /text-responses` (text mode only, activation-bound, refused during a pending completion; control-plane-written `candidate_text` segments; audit without text); Tier-1 view of the open question's text answers; agent passes each once as user input; text-mode greeting; UI offers text mode without a microphone | **Verified (local)**: G API tests (binding, mode, length, ordering, contract-valid context, manifest-free confirmation, no text in logs), A tests (user input only, once, other activations ignored). **Verified (scripted, loopback)** in Chromium with the microphone refused (`text_flow.mjs`): captions, no published track, completion |
 
@@ -281,16 +321,28 @@ The repository does not use GitHub Actions (repository convention, enforced by `
 |---|---|---|
 | `make checks` | repository hygiene (secrets, media files, PII patterns), Python import boundaries, generated state diagram | pass |
 | `make contracts-test` | schema meta-validation and fixtures, state-machine structure, doc drift, isolation, OpenAPI (including the security scheme of every operation), model registry, rubrics | 145 passed |
-| `make go-lint` / `make go-test` | gofmt, vet, staticcheck; Go tests with the race detector against PostgreSQL 16 | pass (17 packages with tests, 0 skipped, including the Phase 1 audit regressions, the Tier-2 validator, relay, service, API and grant tests, and the staff session, review console API, admin and shared quote-rule tests; the review pass adds the outage, route-by-route cookie and queue-order tests) |
+| `make go-lint` / `make go-test` | gofmt, vet, staticcheck; Go tests with the race detector against PostgreSQL 16 | pass (18 packages with tests, 0 skipped, including the candidate sign-in service, API, access-code and role tests, including the Phase 1 audit regressions, the Tier-2 validator, relay, service, API and grant tests, and the staff session, review console API, admin and shared quote-rule tests; the review pass adds the outage, route-by-route cookie and queue-order tests) |
 | `make agent-test` | ruff, mypy (strict), pytest for the Tier-1 agent | 198 passed |
 | `make tier2-test` | ruff, mypy (strict), pytest for the Tier-2 worker (consumer tests against a throwaway redis-server) and the benchmark harness | 114 passed |
-| `make web-test` | eslint, tsc, vitest, production build, bundle secret scan (including staff tokens) | 299 passed; build and scan pass (10 rules) |
-| `make e2e` | local stack (with Redis and the Tier-2 worker); synthetic WebRTC candidate (voice interview, failure injection and signals, recording, media security) and typed interviews through Tier-2; Chromium flows, including the review console (every kind of screen audited with axe-core); log scans for credentials (including session cookies), JWTs and transcript text; audio-file scan | 31 passed from a fresh stack in 14 min 5 s (scripted engine, reference evaluator, loopback), 2026-11-04, including the extended review console flow |
-| `make audit` | govulncheck v1.9.0 (control plane), pip-audit 2.9.0 (every uv lockfile, including the Tier-2 worker's), pnpm audit (web, production) | ok in 19 s: no vulnerable symbol reached in the control plane (one advisory in a required module is not called by the code); no known vulnerabilities in any Python lockfile or in the web production dependencies |
+| `make web-test` | eslint, tsc, vitest, production build, bundle secret scan (including staff tokens) | 317 passed (21 files); build and scan pass (10 rules) |
+| `make e2e` | local stack (with Redis and the Tier-2 worker); synthetic WebRTC candidate (voice interview, failure injection and signals, recording, media security) and typed interviews through Tier-2; Chromium flows, including candidate sign-in in Turkish and the review console (every kind of screen audited with axe-core, WCAG 2.2 A/AA); log scans for credentials (including session cookies and access codes), JWTs and transcript text; audio-file scan | 32 passed from a fresh stack in 13 min 51 s (scripted engine, reference evaluator, loopback), 2026-11-06, including the candidate sign-in flow |
+| `make audit` | govulncheck v1.9.0 (control plane), pip-audit 2.9.0 (every uv lockfile, including the Tier-2 worker's), pnpm audit (web, production) | ok, 2026-11-06: no vulnerable symbol reached in the control plane (one advisory in a required module, GO-2026-5932, is not called by the code; GO-2026-6865 was fixed by an upgrade); no known vulnerabilities in any Python lockfile or in the web production dependencies |
 | `make provider-smoke` | opt-in live OpenAI check (ADR-021) | BLOCKED: no `OPENAI_API_KEY` in this environment |
 | `make tier2-bench` | offline benchmark on `synthetic-v1` with the reference evaluator and the Go validator (DATA_AND_ML_LIFECYCLE.md) | pass: 14/14 reference attempts accepted by the Go validator, 1 abstention (no candidate speech); agreement figures are on synthetic labels and say nothing about quality |
 
 ## 10. Known gaps and follow-ups
+
+Milestone E (candidate sign-in, languages, design):
+- The Turkish interface text needs a native-speaker review, and the notices (both languages) a legal review.
+- There is no command to lift a sign-in lock: it ends by itself after 15 minutes, and the invitation link keeps
+  working meanwhile. Anyone who knows an application number can keep code sign-in locked (ADR-024).
+- Clients are told apart by address: everyone behind one shared address shares one sign-in budget.
+- Whether an application number exists may be measurable by timing (an unknown number skips one database update).
+- A lost access code cannot be shown again: the hiring team creates a new interview, or the candidate uses the link.
+- The code is delivered by the hiring team, outside the system; there is no email or SMS delivery.
+- Interviews created before migration 00009 have no application number and can be entered only through the link.
+- Plan titles are now visible to candidates, so a plan's title must not carry internal notes.
+- No screen-reader run of the sign-in page; keyboard use, focus and automated WCAG 2.2 A/AA checks are browser-tested.
 
 Milestone D (review console):
 - Staff sign in by pasting a token. Single sign-on is not built; a production deployment needs it. Browsers may offer to
@@ -325,5 +377,5 @@ Phase 1:
 - Blocked autoplay (the enable-audio control) is unit-tested only: automated Chromium grants a user activation to every scripted evaluation, so it cannot be reproduced end to end.
 - Data packets from the candidate are dropped by LiveKit; the end-to-end test asserts the server-side permission, because a drop cannot be observed without a second legitimate subscriber.
 - An agent-kind token minted with a leaked API key while no lease is held cannot be told apart from the dispatched replacement until it claims (claiming needs the single-use nonce); this is the documented trusted-infrastructure residual risk.
-- No screen-reader run; keyboard, ARIA wiring and automated WCAG 2.1 A/AA checks (axe-core) are browser-tested.
+- No screen-reader run; keyboard, ARIA wiring and automated WCAG 2.2 A/AA checks (axe-core) are browser-tested.
 - Container images and deployment manifests are not built (no Docker daemon).
