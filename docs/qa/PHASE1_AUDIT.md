@@ -49,7 +49,7 @@ Reviewed and found to be correct:
 
 | Scanner | Scope | Result |
 |---|---|---|
-| govulncheck v1.9.0 | Control plane | No vulnerable symbol reached. `golang.org/x/net` was upgraded to v0.62.0 (GO-2026-6866, GO-2026-6860) and `github.com/google/cel-go` to v0.30.0 (GO-2026-6094); none of these was reached. GO-2026-5932 (`golang.org/x/crypto` v0.58.0, not reached) has no tagged release with the fix yet |
+| govulncheck v1.9.0 | Control plane | No vulnerable symbol reached. `golang.org/x/net` was upgraded to v0.62.0 (GO-2026-6866, GO-2026-6860), `github.com/google/cel-go` to v0.30.0 (GO-2026-6094) and `github.com/klauspost/compress` to v1.20.2 (GO-2026-6865, through minio-go); none of these was reached. GO-2026-5932 (`golang.org/x/crypto` v0.58.0, not reached) has no tagged release with the fix yet |
 | pip-audit 2.9.0 | `services/tier1-voice-agent`, `contracts`, `tests/e2e` lockfiles | No known vulnerabilities |
 | pnpm audit | `apps/web` production dependencies | No known vulnerabilities |
 
